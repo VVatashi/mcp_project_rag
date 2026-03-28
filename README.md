@@ -38,7 +38,7 @@ Node.js/TypeScript MCP-сервер для локального RAG по нес�
 - `ProjectRegistry` хранит метаданные проектов в `data/projects.json`.
 - `ProjectIndexStateCache` хранит persisted состояние файлов и их chunk manifest в `data/index-state/<projectId>.json`.
 - `ProjectOperationLock` сериализует mutating операции на уровне конкретного `projectId`.
-- `FileDiscoveryService` обходит файловую систему с учётом `.gitignore` и excludes.
+- `FileDiscoveryService` обходит файловую систему с учётом `.gitignore`, project-level excludes, exclude paths/extensions и лимита размера файла.
 - `ChunkingService` режет код по окнам строк, а документацию по абзацам.
 - `TransformersEmbeddingFunction` строит локальные эмбеддинги через `@xenova/transformers`.
 - `NeuralReranker` делает второй этап ранжирования.

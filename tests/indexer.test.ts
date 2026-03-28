@@ -8,6 +8,9 @@ function createProject(rootPath = "/repo"): ProjectRegistration {
     rootPath,
     includeGlobs: ["**/*"],
     excludeGlobs: [],
+    excludePaths: [],
+    excludeExtensions: [],
+    maxFileSizeBytes: 8 * 1024 * 1024,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
   };

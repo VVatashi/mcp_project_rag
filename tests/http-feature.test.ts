@@ -96,6 +96,9 @@ describe("HTTP MCP feature flow", () => {
           description?: string;
           includeGlobs?: string[];
           excludeGlobs?: string[];
+          excludePaths?: string[];
+          excludeExtensions?: string[];
+          maxFileSizeBytes?: number;
         }
       | undefined;
     let lastIndexedAt = "2026-01-01T00:00:00.000Z";
@@ -110,6 +113,9 @@ describe("HTTP MCP feature flow", () => {
                 description: lastRegisteredInput?.description,
                 includeGlobs: ["**/*"],
                 excludeGlobs: [],
+                excludePaths: [],
+                excludeExtensions: [],
+                maxFileSizeBytes: 8 * 1024 * 1024,
                 createdAt: "2026-01-01T00:00:00.000Z",
                 updatedAt: lastIndexedAt,
                 lastIndexedAt,
@@ -125,6 +131,9 @@ describe("HTTP MCP feature flow", () => {
                   description: lastRegisteredInput?.description,
                   includeGlobs: ["**/*"],
                   excludeGlobs: [],
+                  excludePaths: [],
+                  excludeExtensions: [],
+                  maxFileSizeBytes: 8 * 1024 * 1024,
                   createdAt: "2026-01-01T00:00:00.000Z",
                   updatedAt: lastIndexedAt,
                   lastIndexedAt,
@@ -136,6 +145,9 @@ describe("HTTP MCP feature flow", () => {
           description?: string;
           includeGlobs?: string[];
           excludeGlobs?: string[];
+          excludePaths?: string[];
+          excludeExtensions?: string[];
+          maxFileSizeBytes?: number;
         }) => {
           projectId = input.id;
           lastRegisteredInput = input;
@@ -146,6 +158,9 @@ describe("HTTP MCP feature flow", () => {
             description: input.description,
             includeGlobs: input.includeGlobs ?? ["**/*"],
             excludeGlobs: input.excludeGlobs ?? [],
+            excludePaths: input.excludePaths ?? [],
+            excludeExtensions: input.excludeExtensions ?? [],
+            maxFileSizeBytes: input.maxFileSizeBytes ?? 8 * 1024 * 1024,
             createdAt: "2026-01-01T00:00:00.000Z",
             updatedAt: lastIndexedAt,
             lastIndexedAt,
@@ -154,12 +169,20 @@ describe("HTTP MCP feature flow", () => {
         update: (requestedProjectId: string, input: {
           rootPath: string;
           description?: string;
+          includeGlobs?: string[];
+          excludeGlobs?: string[];
+          excludePaths?: string[];
+          excludeExtensions?: string[];
+          maxFileSizeBytes?: number;
         }) => ({
           id: requestedProjectId,
           rootPath: input.rootPath,
           description: input.description,
-          includeGlobs: ["**/*"],
-          excludeGlobs: [],
+          includeGlobs: input.includeGlobs ?? ["**/*"],
+          excludeGlobs: input.excludeGlobs ?? [],
+          excludePaths: input.excludePaths ?? [],
+          excludeExtensions: input.excludeExtensions ?? [],
+          maxFileSizeBytes: input.maxFileSizeBytes ?? 8 * 1024 * 1024,
           createdAt: "2026-01-01T00:00:00.000Z",
           updatedAt: lastIndexedAt,
           lastIndexedAt,
@@ -263,15 +286,28 @@ describe("HTTP MCP feature flow", () => {
           id: "fresh-project",
           rootPath: "/workspace/fresh",
           description: "fresh registration",
+          excludePaths: ["dist", "coverage"],
+          excludeExtensions: [".log", ".tmp"],
+          maxFileSizeBytes: 1024,
         },
       });
       expect(createApi.status).toBe(201);
       const createApiJson = JSON.parse(createApi.body) as {
-        project: { id: string; rootPath: string; description?: string };
+        project: {
+          id: string;
+          rootPath: string;
+          description?: string;
+          excludePaths: string[];
+          excludeExtensions: string[];
+          maxFileSizeBytes: number;
+        };
       };
       expect(createApiJson.project.id).toBe("fresh-project");
       expect(createApiJson.project.rootPath).toBe("/workspace/fresh");
       expect(createApiJson.project.description).toBe("fresh registration");
+      expect(createApiJson.project.excludePaths).toEqual(["dist", "coverage"]);
+      expect(createApiJson.project.excludeExtensions).toEqual([".log", ".tmp"]);
+      expect(createApiJson.project.maxFileSizeBytes).toBe(1024);
 
       const updateApi = await httpRequest(baseUrl, {
         method: "PUT",
@@ -280,14 +316,26 @@ describe("HTTP MCP feature flow", () => {
         body: {
           rootPath: "/workspace/updated",
           description: "updated project",
+          excludePaths: ["artifacts"],
+          excludeExtensions: [".bin"],
+          maxFileSizeBytes: 2048,
         },
       });
       expect(updateApi.status).toBe(200);
       const updateApiJson = JSON.parse(updateApi.body) as {
-        project: { rootPath: string; description?: string };
+        project: {
+          rootPath: string;
+          description?: string;
+          excludePaths: string[];
+          excludeExtensions: string[];
+          maxFileSizeBytes: number;
+        };
       };
       expect(updateApiJson.project.rootPath).toBe("/workspace/updated");
       expect(updateApiJson.project.description).toBe("updated project");
+      expect(updateApiJson.project.excludePaths).toEqual(["artifacts"]);
+      expect(updateApiJson.project.excludeExtensions).toEqual([".bin"]);
+      expect(updateApiJson.project.maxFileSizeBytes).toBe(2048);
 
       const reindexApi = await httpRequest(baseUrl, {
         method: "POST",
@@ -515,6 +563,9 @@ describe("HTTP MCP feature flow", () => {
                 rootPath: "/workspace/demo",
                 includeGlobs: ["**/*"],
                 excludeGlobs: [],
+                excludePaths: [],
+                excludeExtensions: [],
+                maxFileSizeBytes: 8 * 1024 * 1024,
                 createdAt: "2026-01-01T00:00:00.000Z",
                 updatedAt: "2026-01-01T00:00:00.000Z",
               }
@@ -525,6 +576,9 @@ describe("HTTP MCP feature flow", () => {
             rootPath: "/workspace/demo",
             includeGlobs: ["**/*"],
             excludeGlobs: [],
+            excludePaths: [],
+            excludeExtensions: [],
+            maxFileSizeBytes: 8 * 1024 * 1024,
             createdAt: "2026-01-01T00:00:00.000Z",
             updatedAt: "2026-01-01T00:00:00.000Z",
           },
@@ -623,6 +677,9 @@ describe("HTTP MCP feature flow", () => {
                 rootPath: "/workspace/demo",
                 includeGlobs: ["**/*"],
                 excludeGlobs: [],
+                excludePaths: [],
+                excludeExtensions: [],
+                maxFileSizeBytes: 8 * 1024 * 1024,
                 createdAt: "2026-01-01T00:00:00.000Z",
                 updatedAt: "2026-01-01T00:00:00.000Z",
               }
@@ -633,6 +690,9 @@ describe("HTTP MCP feature flow", () => {
             rootPath: "/workspace/demo",
             includeGlobs: ["**/*"],
             excludeGlobs: [],
+            excludePaths: [],
+            excludeExtensions: [],
+            maxFileSizeBytes: 8 * 1024 * 1024,
             createdAt: "2026-01-01T00:00:00.000Z",
             updatedAt: "2026-01-01T00:00:00.000Z",
           },

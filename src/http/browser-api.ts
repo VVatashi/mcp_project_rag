@@ -122,9 +122,27 @@ async function handleProjectCreateApi(
   res: ServerResponse,
 ): Promise<void> {
   const body = parseBrowserApiBody(createProjectRequestSchema, await readJsonBody(req));
-  const { id, rootPath, description } = body;
+  const {
+    id,
+    rootPath,
+    description,
+    includeGlobs,
+    excludeGlobs,
+    excludePaths,
+    excludeExtensions,
+    maxFileSizeBytes,
+  } = body;
   const created = await runProjectMutation(deps, id, async () => {
-    const project = deps.registry.register({ id, rootPath, description });
+    const project = deps.registry.register({
+      id,
+      rootPath,
+      description,
+      includeGlobs,
+      excludeGlobs,
+      excludePaths,
+      excludeExtensions,
+      maxFileSizeBytes,
+    });
     const inspection = await inspectProjectSummary(deps, project.id, 5);
     const diagnostics = deps.indexDiagnostics.get(project.id);
 
@@ -153,10 +171,26 @@ async function handleProjectUpdateApi(
   }
 
   const body = parseBrowserApiBody(updateProjectRequestSchema, await readJsonBody(req));
-  const { rootPath, description } = body;
+  const {
+    rootPath,
+    description,
+    includeGlobs,
+    excludeGlobs,
+    excludePaths,
+    excludeExtensions,
+    maxFileSizeBytes,
+  } = body;
 
   const updated = await runProjectMutation(deps, projectId, async () => {
-    const project = deps.registry.update(projectId, { rootPath, description });
+    const project = deps.registry.update(projectId, {
+      rootPath,
+      description,
+      includeGlobs,
+      excludeGlobs,
+      excludePaths,
+      excludeExtensions,
+      maxFileSizeBytes,
+    });
     if (!project) {
       throw new HttpError(404, "Project not found");
     }

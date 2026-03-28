@@ -18,6 +18,9 @@ RAG pipeline в проекте делится на два основных ре�
 - `description`
 - `includeGlobs`
 - `excludeGlobs`
+- `excludePaths`
+- `excludeExtensions`
+- `maxFileSizeBytes`
 - `createdAt`
 - `updatedAt`
 - `lastIndexedAt`
@@ -66,10 +69,12 @@ RAG pipeline в проекте делится на два основных ре�
 
 1. Загружается `.gitignore` проекта.
 2. Поверх него добавляются internal excludes из `ProjectRegistry`.
-3. Рекурсивно обходится файловая система в `stat-only` режиме.
-4. Для каждого файла собираются только `relativePath`, `mtimeMs` и `size`.
-5. Оставляются только типы, распознаваемые через `guessFileKind`.
-6. Содержимое файла читается на полном rebuild и на incremental run, чтобы каждый раз пересчитать актуальный `contentHash`.
+3. Дополнительно применяются project-level `excludePaths` и `excludeExtensions`.
+4. Рекурсивно обходится файловая система в `stat-only` режиме.
+5. Для каждого файла собираются только `relativePath`, `mtimeMs` и `size`.
+6. Игнорируются файлы больше `maxFileSizeBytes` проекта. По умолчанию это `8 MiB`.
+7. Оставляются только типы, распознаваемые через `guessFileKind`.
+8. Содержимое файла читается на полном rebuild и на incremental run, чтобы каждый раз пересчитать актуальный `contentHash`.
 
 ### Важное решение
 

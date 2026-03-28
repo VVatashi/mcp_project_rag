@@ -36,6 +36,38 @@
               <input id="create-project-description" name="description" type="text" />
             </label>
 
+            <label class="field">
+              <span class="field-label">Excluded Paths</span>
+              <textarea
+                id="create-project-exclude-paths"
+                name="excludePaths"
+                rows="3"
+                placeholder="One relative path per line, for example:&#10;dist&#10;coverage&#10;docs/generated/api.md"
+              ></textarea>
+            </label>
+
+            <label class="field">
+              <span class="field-label">Excluded Extensions</span>
+              <textarea
+                id="create-project-exclude-extensions"
+                name="excludeExtensions"
+                rows="2"
+                placeholder="One extension per line, for example:&#10;.log&#10;tmp"
+              ></textarea>
+            </label>
+
+            <label class="field">
+              <span class="field-label">Max File Size (bytes)</span>
+              <input
+                id="create-project-max-file-size"
+                name="maxFileSizeBytes"
+                type="number"
+                min="1"
+                step="1"
+                value="8388608"
+              />
+            </label>
+
             <button id="create-project-button" class="ghost-button" type="submit">
               Add Project
             </button>
@@ -91,6 +123,38 @@
               <label class="field">
                 <span class="field-label">Description</span>
                 <textarea id="project-description-input" name="description" rows="4"></textarea>
+              </label>
+
+              <label class="field">
+                <span class="field-label">Excluded Paths</span>
+                <textarea
+                  id="project-exclude-paths-input"
+                  name="excludePaths"
+                  rows="4"
+                  placeholder="One relative path per line"
+                ></textarea>
+              </label>
+
+              <label class="field">
+                <span class="field-label">Excluded Extensions</span>
+                <textarea
+                  id="project-exclude-extensions-input"
+                  name="excludeExtensions"
+                  rows="3"
+                  placeholder="One extension per line"
+                ></textarea>
+              </label>
+
+              <label class="field">
+                <span class="field-label">Max File Size (bytes)</span>
+                <input
+                  id="project-max-file-size-input"
+                  name="maxFileSizeBytes"
+                  type="number"
+                  min="1"
+                  step="1"
+                  required
+                />
               </label>
 
               <div class="query-actions">

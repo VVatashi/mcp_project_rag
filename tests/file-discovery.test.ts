@@ -25,6 +25,9 @@ function createProject(rootPath: string): ProjectRegistration {
     rootPath,
     includeGlobs: ["**/*"],
     excludeGlobs: ["dist/**", "node_modules/**"],
+    excludePaths: [],
+    excludeExtensions: [],
+    maxFileSizeBytes: 8 * 1024 * 1024,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
   };
@@ -66,5 +69,25 @@ describe("FileDiscoveryService", () => {
     expect(files.every((file) => typeof file.mtimeMs === "number" && file.mtimeMs > 0)).toBe(true);
     expect(files.every((file) => typeof file.size === "number" && file.size > 0)).toBe(true);
     expect(files.every((file) => typeof file.contentHash === "string" && file.contentHash.length > 0)).toBe(true);
+  });
+
+  it("skips excluded paths, extensions, and oversized files", () => {
+    const root = createTempDir();
+    mkdirSync(join(root, "src"), { recursive: true });
+    mkdirSync(join(root, "generated"), { recursive: true });
+
+    writeFileSync(join(root, "src", "keep.ts"), "export const keep = true;\n");
+    writeFileSync(join(root, "src", "skip.log"), "skip\n");
+    writeFileSync(join(root, "generated", "schema.ts"), "export const generated = true;\n");
+    writeFileSync(join(root, "large.md"), "# ".padEnd(2048, "x"));
+
+    const project = createProject(root);
+    project.excludePaths = ["generated"];
+    project.excludeExtensions = [".log"];
+    project.maxFileSizeBytes = 1024;
+
+    const files = new FileDiscoveryService().discover(project);
+
+    expect(files.map((file) => file.relativePath)).toEqual(["src/keep.ts"]);
   });
 });

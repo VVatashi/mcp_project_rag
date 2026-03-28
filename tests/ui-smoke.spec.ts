@@ -13,6 +13,9 @@ type ProjectRecord = {
   description?: string;
   includeGlobs: string[];
   excludeGlobs: string[];
+  excludePaths: string[];
+  excludeExtensions: string[];
+  maxFileSizeBytes: number;
   createdAt: string;
   updatedAt: string;
   lastIndexedAt?: string;
@@ -43,6 +46,9 @@ test("browser ui smoke flow", async ({ page }) => {
         description: "demo project",
         includeGlobs: ["**/*"],
         excludeGlobs: [],
+        excludePaths: [],
+        excludeExtensions: [],
+        maxFileSizeBytes: 8 * 1024 * 1024,
         createdAt: now,
         updatedAt: now,
       },
@@ -77,6 +83,9 @@ test("browser ui smoke flow", async ({ page }) => {
       description?: string;
       includeGlobs?: string[];
       excludeGlobs?: string[];
+      excludePaths?: string[];
+      excludeExtensions?: string[];
+      maxFileSizeBytes?: number;
     }) => {
       const existing = projects.get(input.id);
       const project: ProjectRecord = {
@@ -85,6 +94,9 @@ test("browser ui smoke flow", async ({ page }) => {
         description: input.description,
         includeGlobs: input.includeGlobs ?? existing?.includeGlobs ?? ["**/*"],
         excludeGlobs: input.excludeGlobs ?? existing?.excludeGlobs ?? [],
+        excludePaths: input.excludePaths ?? existing?.excludePaths ?? [],
+        excludeExtensions: input.excludeExtensions ?? existing?.excludeExtensions ?? [],
+        maxFileSizeBytes: input.maxFileSizeBytes ?? existing?.maxFileSizeBytes ?? 8 * 1024 * 1024,
         createdAt: existing?.createdAt ?? now,
         updatedAt: "2026-01-01T00:00:01.000Z",
         lastIndexedAt: existing?.lastIndexedAt,
@@ -95,7 +107,13 @@ test("browser ui smoke flow", async ({ page }) => {
       previewChunks.set(input.id, previewChunks.get(input.id) ?? []);
       return project;
     },
-    update: (projectId: string, input: { rootPath: string; description?: string }) => {
+    update: (projectId: string, input: {
+      rootPath: string;
+      description?: string;
+      excludePaths?: string[];
+      excludeExtensions?: string[];
+      maxFileSizeBytes?: number;
+    }) => {
       const existing = projects.get(projectId);
       if (!existing) {
         return undefined;
@@ -105,6 +123,9 @@ test("browser ui smoke flow", async ({ page }) => {
         ...existing,
         rootPath: input.rootPath,
         description: input.description,
+        excludePaths: input.excludePaths ?? existing.excludePaths,
+        excludeExtensions: input.excludeExtensions ?? existing.excludeExtensions,
+        maxFileSizeBytes: input.maxFileSizeBytes ?? existing.maxFileSizeBytes,
         updatedAt: "2026-01-01T00:00:02.000Z",
       };
       projects.set(projectId, updated);
@@ -230,17 +251,29 @@ test("browser ui smoke flow", async ({ page }) => {
     await page.locator("#create-project-id").fill("fresh-project");
     await page.locator("#create-project-root").fill("/workspace/fresh");
     await page.locator("#create-project-description").fill("fresh registration");
+    await page.locator("#create-project-exclude-paths").fill("dist\ncoverage");
+    await page.locator("#create-project-exclude-extensions").fill(".log\n.tmp");
+    await page.locator("#create-project-max-file-size").fill("1024");
     await page.locator("#create-project-button").click();
 
     await expect(page.locator("#create-project-status")).toContainText("fresh-project");
     await expect(page.locator("#project-title")).toContainText("fresh-project");
+    await expect(page.locator("#project-exclude-paths-input")).toHaveValue("dist\ncoverage");
+    await expect(page.locator("#project-exclude-extensions-input")).toHaveValue(".log\n.tmp");
+    await expect(page.locator("#project-max-file-size-input")).toHaveValue("1024");
 
     await page.locator("#project-root-input").fill("/workspace/updated");
     await page.locator("#project-description-input").fill("updated project");
+    await page.locator("#project-exclude-paths-input").fill("artifacts");
+    await page.locator("#project-exclude-extensions-input").fill(".bin");
+    await page.locator("#project-max-file-size-input").fill("2048");
     await page.locator("#save-project").click();
 
     await expect(page.locator("#action-feedback")).toContainText("updated successfully");
     await expect(page.locator("#project-root-input")).toHaveValue("/workspace/updated");
+    await expect(page.locator("#project-exclude-paths-input")).toHaveValue("artifacts");
+    await expect(page.locator("#project-exclude-extensions-input")).toHaveValue(".bin");
+    await expect(page.locator("#project-max-file-size-input")).toHaveValue("2048");
 
     await page.locator("#reindex-project").click();
     await expect(page.locator("#action-feedback")).toContainText("Reindex completed");
@@ -291,6 +324,9 @@ test("shows index warning in the project list when index inspection fails", asyn
               description: "broken index",
               includeGlobs: ["**/*"],
               excludeGlobs: [],
+              excludePaths: [],
+              excludeExtensions: [],
+              maxFileSizeBytes: 8 * 1024 * 1024,
               createdAt: now,
               updatedAt: now,
             }
@@ -302,6 +338,9 @@ test("shows index warning in the project list when index inspection fails", asyn
           description: "broken index",
           includeGlobs: ["**/*"],
           excludeGlobs: [],
+          excludePaths: [],
+          excludeExtensions: [],
+          maxFileSizeBytes: 8 * 1024 * 1024,
           createdAt: now,
           updatedAt: now,
         },

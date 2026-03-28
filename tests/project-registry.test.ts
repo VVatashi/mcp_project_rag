@@ -2,7 +2,10 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import { ProjectRegistry } from "../src/services/project-registry.js";
+import {
+  DEFAULT_MAX_FILE_SIZE_BYTES,
+  ProjectRegistry,
+} from "../src/services/project-registry.js";
 
 const tempDirs: string[] = [];
 
@@ -42,6 +45,9 @@ describe("ProjectRegistry", () => {
     expect(second.createdAt).toBe(first.createdAt);
     expect(second.excludeGlobs).toContain("custom/**");
     expect(second.excludeGlobs).toContain("node_modules/**");
+    expect(second.excludePaths).toEqual([]);
+    expect(second.excludeExtensions).toEqual([]);
+    expect(second.maxFileSizeBytes).toBe(DEFAULT_MAX_FILE_SIZE_BYTES);
 
     const stored = JSON.parse(readFileSync(registryFile, "utf8"));
     expect(stored.projects).toHaveLength(1);
@@ -68,6 +74,31 @@ describe("ProjectRegistry", () => {
     expect(updated?.description).toBe("second version");
     expect(updated?.excludeGlobs.filter((pattern) => pattern === "node_modules/**")).toHaveLength(1);
     expect(updated?.excludeGlobs).toContain("custom/**");
+  });
+
+  it("stores per-project exclude paths, extensions, and max file size", () => {
+    const root = createTempDir();
+    const registry = new ProjectRegistry(join(root, "projects.json"));
+
+    registry.register({
+      id: "demo",
+      rootPath: join(root, "project-a"),
+      excludePaths: ["dist", "./coverage/", "docs\\generated"],
+      excludeExtensions: ["log", ".tmp", "  .cache  "],
+      maxFileSizeBytes: 1024,
+    });
+
+    const updated = registry.update("demo", {
+      rootPath: join(root, "project-b"),
+      description: "second version",
+      excludePaths: ["artifacts", "reports/daily.md"],
+      excludeExtensions: [".bin"],
+      maxFileSizeBytes: 2048,
+    });
+
+    expect(updated?.excludePaths).toEqual(["artifacts", "reports/daily.md"]);
+    expect(updated?.excludeExtensions).toEqual([".bin"]);
+    expect(updated?.maxFileSizeBytes).toBe(2048);
   });
 
   it("updates index stats and unregisters a project", () => {

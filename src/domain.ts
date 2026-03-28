@@ -6,6 +6,9 @@ export interface ProjectRegistration {
   description?: string;
   includeGlobs: string[];
   excludeGlobs: string[];
+  excludePaths: string[];
+  excludeExtensions: string[];
+  maxFileSizeBytes: number;
   createdAt: string;
   updatedAt: string;
   lastIndexedAt?: string;

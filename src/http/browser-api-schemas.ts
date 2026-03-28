@@ -5,11 +5,21 @@ export const createProjectRequestSchema = z.object({
   id: z.string().trim().min(2, "Project id must contain at least 2 characters"),
   rootPath: z.string().trim().min(1, "Project rootPath is required"),
   description: z.string().trim().optional().transform((value) => value || undefined),
+  includeGlobs: z.array(z.string().trim().min(1)).optional(),
+  excludeGlobs: z.array(z.string().trim().min(1)).optional(),
+  excludePaths: z.array(z.string().trim().min(1)).optional(),
+  excludeExtensions: z.array(z.string().trim().min(1)).optional(),
+  maxFileSizeBytes: z.number().int().positive().optional(),
 });
 
 export const updateProjectRequestSchema = z.object({
   rootPath: z.string().trim().min(1, "Project rootPath is required"),
   description: z.string().trim().optional().transform((value) => value || undefined),
+  includeGlobs: z.array(z.string().trim().min(1)).optional(),
+  excludeGlobs: z.array(z.string().trim().min(1)).optional(),
+  excludePaths: z.array(z.string().trim().min(1)).optional(),
+  excludeExtensions: z.array(z.string().trim().min(1)).optional(),
+  maxFileSizeBytes: z.number().int().positive().optional(),
 });
 
 export const searchRequestSchema = z.object({

@@ -35,6 +35,9 @@ export function createRagMcpServer(deps: ServerDeps): McpServer {
             id: z.string(),
             rootPath: z.string(),
             description: z.string().optional(),
+            excludePaths: z.array(z.string()),
+            excludeExtensions: z.array(z.string()),
+            maxFileSizeBytes: z.number(),
             lastIndexedAt: z.string().optional(),
           }),
         ),
@@ -45,6 +48,9 @@ export function createRagMcpServer(deps: ServerDeps): McpServer {
         id: project.id,
         rootPath: project.rootPath,
         description: project.description,
+        excludePaths: project.excludePaths,
+        excludeExtensions: project.excludeExtensions,
+        maxFileSizeBytes: project.maxFileSizeBytes,
         lastIndexedAt: project.lastIndexedAt,
       }));
 
@@ -65,12 +71,18 @@ export function createRagMcpServer(deps: ServerDeps): McpServer {
         description: z.string().optional(),
         includeGlobs: z.array(z.string()).optional(),
         excludeGlobs: z.array(z.string()).optional(),
+        excludePaths: z.array(z.string()).optional(),
+        excludeExtensions: z.array(z.string()).optional(),
+        maxFileSizeBytes: z.number().int().positive().optional(),
       },
       outputSchema: {
         project: z.object({
           id: z.string(),
           rootPath: z.string(),
           description: z.string().optional(),
+          excludePaths: z.array(z.string()),
+          excludeExtensions: z.array(z.string()),
+          maxFileSizeBytes: z.number(),
         }),
       },
     },
@@ -90,6 +102,9 @@ export function createRagMcpServer(deps: ServerDeps): McpServer {
             id: project.id,
             rootPath: project.rootPath,
             description: project.description,
+            excludePaths: project.excludePaths,
+            excludeExtensions: project.excludeExtensions,
+            maxFileSizeBytes: project.maxFileSizeBytes,
           },
         },
       };

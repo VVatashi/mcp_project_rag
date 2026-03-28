@@ -4,6 +4,9 @@ const createProjectForm = document.getElementById("create-project-form");
 const createProjectIdInput = document.getElementById("create-project-id");
 const createProjectRootInput = document.getElementById("create-project-root");
 const createProjectDescriptionInput = document.getElementById("create-project-description");
+const createProjectExcludePathsInput = document.getElementById("create-project-exclude-paths");
+const createProjectExcludeExtensionsInput = document.getElementById("create-project-exclude-extensions");
+const createProjectMaxFileSizeInput = document.getElementById("create-project-max-file-size");
 const createProjectButton = document.getElementById("create-project-button");
 const createProjectStatus = document.getElementById("create-project-status");
 const projectTitle = document.getElementById("project-title");
@@ -17,6 +20,9 @@ const projectForm = document.getElementById("project-form");
 const projectIdInput = document.getElementById("project-id-input");
 const projectRootInput = document.getElementById("project-root-input");
 const projectDescriptionInput = document.getElementById("project-description-input");
+const projectExcludePathsInput = document.getElementById("project-exclude-paths-input");
+const projectExcludeExtensionsInput = document.getElementById("project-exclude-extensions-input");
+const projectMaxFileSizeInput = document.getElementById("project-max-file-size-input");
 const saveProjectButton = document.getElementById("save-project");
 const reindexProjectButton = document.getElementById("reindex-project");
 const deleteProjectButton = document.getElementById("delete-project");
@@ -34,6 +40,17 @@ const searchHitTemplate = document.getElementById("search-hit-template");
 
 let selectedProjectId = null;
 let projectsCache = [];
+
+function parseMultilineList(value) {
+  return value
+    .split(/\r?\n|,/u)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function formatMultilineList(values) {
+  return (values || []).join("\n");
+}
 
 function setActionFeedback(message, tone = "neutral") {
   actionFeedback.textContent = message;
@@ -118,6 +135,9 @@ function setCreateProjectPending(isPending, label) {
   createProjectIdInput.disabled = isPending;
   createProjectRootInput.disabled = isPending;
   createProjectDescriptionInput.disabled = isPending;
+  createProjectExcludePathsInput.disabled = isPending;
+  createProjectExcludeExtensionsInput.disabled = isPending;
+  createProjectMaxFileSizeInput.disabled = isPending;
   createProjectButton.disabled = isPending;
   createProjectStatus.textContent = label;
 }
@@ -129,12 +149,21 @@ function renderProjectDetails(project, index, indexError, indexErrorAt, diagnost
   projectIdInput.value = project.id;
   projectRootInput.value = project.rootPath;
   projectDescriptionInput.value = project.description || "";
+  projectExcludePathsInput.value = formatMultilineList(project.excludePaths);
+  projectExcludeExtensionsInput.value = formatMultilineList(project.excludeExtensions);
+  projectMaxFileSizeInput.value = String(project.maxFileSizeBytes);
 
   const detailEntries = [
     ["Path", project.rootPath],
     ["Updated", project.updatedAt],
     ["Indexed", project.lastIndexedAt || "Not indexed yet"],
     ["Collection", index?.collectionName || "Unavailable"],
+    ["Excluded paths", project.excludePaths.length ? String(project.excludePaths.length) : "0"],
+    [
+      "Excluded extensions",
+      project.excludeExtensions.length ? project.excludeExtensions.join(", ") : "None",
+    ],
+    ["Max file size", `${project.maxFileSizeBytes} bytes`],
   ];
 
   projectDetails.innerHTML = detailEntries
@@ -165,6 +194,9 @@ function setProjectActionsPending(isPending, label) {
   const disabled = isPending || !selectedProjectId;
   projectRootInput.disabled = disabled;
   projectDescriptionInput.disabled = disabled;
+  projectExcludePathsInput.disabled = disabled;
+  projectExcludeExtensionsInput.disabled = disabled;
+  projectMaxFileSizeInput.disabled = disabled;
   saveProjectButton.disabled = disabled;
   reindexProjectButton.disabled = disabled;
   deleteProjectButton.disabled = disabled;
@@ -265,11 +297,17 @@ function resetProjectDetails(message) {
   projectIdInput.value = "";
   projectRootInput.value = "";
   projectDescriptionInput.value = "";
+  projectExcludePathsInput.value = "";
+  projectExcludeExtensionsInput.value = "";
+  projectMaxFileSizeInput.value = "8388608";
   projectDetails.innerHTML = `
     <div><dt>Path</dt><dd>-</dd></div>
     <div><dt>Updated</dt><dd>-</dd></div>
     <div><dt>Indexed</dt><dd>-</dd></div>
     <div><dt>Collection</dt><dd>-</dd></div>
+    <div><dt>Excluded paths</dt><dd>-</dd></div>
+    <div><dt>Excluded extensions</dt><dd>-</dd></div>
+    <div><dt>Max file size</dt><dd>-</dd></div>
   `;
   indexStatus.innerHTML = "<p>No project selected yet.</p>";
   chunksList.innerHTML = "";
@@ -336,6 +374,9 @@ createProjectForm.addEventListener("submit", async (event) => {
   const id = createProjectIdInput.value.trim();
   const rootPath = createProjectRootInput.value.trim();
   const description = createProjectDescriptionInput.value.trim();
+  const excludePaths = parseMultilineList(createProjectExcludePathsInput.value);
+  const excludeExtensions = parseMultilineList(createProjectExcludeExtensionsInput.value);
+  const maxFileSizeBytes = Number.parseInt(createProjectMaxFileSizeInput.value, 10);
 
   if (id.length < 2) {
     createProjectStatus.textContent = "Project ID must contain at least 2 characters.";
@@ -349,6 +390,12 @@ createProjectForm.addEventListener("submit", async (event) => {
     return;
   }
 
+  if (!Number.isFinite(maxFileSizeBytes) || maxFileSizeBytes < 1) {
+    createProjectStatus.textContent = "Max file size must be a positive integer.";
+    setActionFeedback("Max file size must be a positive integer.", "error");
+    return;
+  }
+
   setCreateProjectPending(true, "Creating project...");
 
   try {
@@ -358,11 +405,15 @@ createProjectForm.addEventListener("submit", async (event) => {
         id,
         rootPath,
         description,
+        excludePaths,
+        excludeExtensions,
+        maxFileSizeBytes,
       },
     });
 
     selectedProjectId = payload.project.id;
     createProjectForm.reset();
+    createProjectMaxFileSizeInput.value = "8388608";
     setCreateProjectPending(false, `Project ${payload.project.id} created.`);
     setActionFeedback(`Project ${payload.project.id} created successfully.`, "success");
     await loadProjects();
@@ -381,10 +432,19 @@ projectForm.addEventListener("submit", async (event) => {
 
   const rootPath = projectRootInput.value.trim();
   const description = projectDescriptionInput.value.trim();
+  const excludePaths = parseMultilineList(projectExcludePathsInput.value);
+  const excludeExtensions = parseMultilineList(projectExcludeExtensionsInput.value);
+  const maxFileSizeBytes = Number.parseInt(projectMaxFileSizeInput.value, 10);
 
   if (!rootPath) {
     indexStatus.innerHTML = '<p class="error-state">Project rootPath is required.</p>';
     setActionFeedback("Project rootPath is required.", "error");
+    return;
+  }
+
+  if (!Number.isFinite(maxFileSizeBytes) || maxFileSizeBytes < 1) {
+    indexStatus.innerHTML = '<p class="error-state">Max file size must be a positive integer.</p>';
+    setActionFeedback("Max file size must be a positive integer.", "error");
     return;
   }
 
@@ -396,6 +456,9 @@ projectForm.addEventListener("submit", async (event) => {
       body: {
         rootPath,
         description,
+        excludePaths,
+        excludeExtensions,
+        maxFileSizeBytes,
       },
     });
     await loadProjects();

@@ -23,6 +23,41 @@ const DEFAULT_EXCLUDES = [
   "data/**",
 ];
 
+export const DEFAULT_MAX_FILE_SIZE_BYTES = 8 * 1024 * 1024;
+
+function dedupe(values: readonly string[]): string[] {
+  return [...new Set(values)];
+}
+
+function normalizeExcludePath(value: string): string {
+  return value.trim().replaceAll("\\", "/").replace(/^\.\/+/u, "").replace(/\/+$/u, "");
+}
+
+function normalizeExtension(value: string): string {
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) {
+    return "";
+  }
+
+  return trimmed.startsWith(".") ? trimmed : `.${trimmed}`;
+}
+
+function normalizeProject(project: ProjectRegistration): ProjectRegistration {
+  return {
+    ...project,
+    includeGlobs: dedupe(project.includeGlobs?.length ? project.includeGlobs : ["**/*"]),
+    excludeGlobs: dedupe([...DEFAULT_EXCLUDES, ...(project.excludeGlobs ?? [])]),
+    excludePaths: dedupe((project.excludePaths ?? []).map(normalizeExcludePath).filter(Boolean)),
+    excludeExtensions: dedupe(
+      (project.excludeExtensions ?? []).map(normalizeExtension).filter(Boolean),
+    ),
+    maxFileSizeBytes:
+      typeof project.maxFileSizeBytes === "number" && Number.isFinite(project.maxFileSizeBytes)
+        ? Math.max(1, Math.floor(project.maxFileSizeBytes))
+        : DEFAULT_MAX_FILE_SIZE_BYTES,
+  };
+}
+
 export class ProjectRegistry {
   public constructor(private readonly registryFile: string) {}
 
@@ -40,19 +75,25 @@ export class ProjectRegistry {
     description?: string;
     includeGlobs?: string[];
     excludeGlobs?: string[];
+    excludePaths?: string[];
+    excludeExtensions?: string[];
+    maxFileSizeBytes?: number;
   }): ProjectRegistration {
     const payload = this.read();
     const rootPath = resolve(input.rootPath);
     const now = new Date().toISOString();
-    const project: ProjectRegistration = {
+    const project = normalizeProject({
       id: input.id.trim(),
       rootPath,
       description: input.description?.trim() || undefined,
       includeGlobs: input.includeGlobs?.length ? input.includeGlobs : ["**/*"],
-      excludeGlobs: [...DEFAULT_EXCLUDES, ...(input.excludeGlobs ?? [])],
+      excludeGlobs: input.excludeGlobs ?? [],
+      excludePaths: input.excludePaths ?? [],
+      excludeExtensions: input.excludeExtensions ?? [],
+      maxFileSizeBytes: input.maxFileSizeBytes ?? DEFAULT_MAX_FILE_SIZE_BYTES,
       createdAt: now,
       updatedAt: now,
-    };
+    });
 
     const existingIndex = payload.projects.findIndex(
       (existing) => existing.id === project.id,
@@ -78,6 +119,11 @@ export class ProjectRegistry {
     input: {
       rootPath: string;
       description?: string;
+      includeGlobs?: string[];
+      excludeGlobs?: string[];
+      excludePaths?: string[];
+      excludeExtensions?: string[];
+      maxFileSizeBytes?: number;
     },
   ): ProjectRegistration | undefined {
     const existingProject = this.get(projectId);
@@ -89,10 +135,13 @@ export class ProjectRegistry {
       id: existingProject.id,
       rootPath: input.rootPath,
       description: input.description,
-      includeGlobs: existingProject.includeGlobs,
-      excludeGlobs: existingProject.excludeGlobs.filter(
-        (pattern) => !DEFAULT_EXCLUDES.includes(pattern),
-      ),
+      includeGlobs: input.includeGlobs ?? existingProject.includeGlobs,
+      excludeGlobs:
+        input.excludeGlobs ??
+        existingProject.excludeGlobs.filter((pattern) => !DEFAULT_EXCLUDES.includes(pattern)),
+      excludePaths: input.excludePaths ?? existingProject.excludePaths,
+      excludeExtensions: input.excludeExtensions ?? existingProject.excludeExtensions,
+      maxFileSizeBytes: input.maxFileSizeBytes ?? existingProject.maxFileSizeBytes,
     });
   }
 
@@ -127,7 +176,12 @@ export class ProjectRegistry {
       return emptyPayload;
     }
 
-    return readJsonFile<RegistryPayload>(this.registryFile);
+    const payload = readJsonFile<RegistryPayload>(this.registryFile);
+    return {
+      projects: (payload.projects ?? []).map((project) =>
+        normalizeProject(project as ProjectRegistration),
+      ),
+    };
   }
 
   private write(payload: RegistryPayload): void {
