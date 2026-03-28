@@ -3,3 +3,10 @@ __pycache__
 /.tmp/
 /data/
 /venv/
+/node_modules/
+/dist/
+/data/models/
+/coverage/
+/node_modules/
+/legacy/
+.env

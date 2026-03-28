@@ -1,58 +1,201 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>MCP Memory</title>
-    <link rel="stylesheet" href="/styles.css" />
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MCP Project RAG UI</title>
+    <link rel="stylesheet" href="/ui/styles.css" />
   </head>
   <body>
-    <main class="page">
-      <header class="header">
-        <div>
-          <div class="eyebrow">MCP Memory Server</div>
-          <h1>Факты проекта</h1>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <p class="eyebrow">Dark Mode</p>
+          <h1>MCP Project RAG</h1>
+          <p class="subtitle">Projects, chunks, and index state in one place.</p>
         </div>
-        <button id="reloadBtn" class="btn ghost">Обновить</button>
-      </header>
 
-      <section class="panel">
-        <form id="memoryForm" class="form">
-          <input type="hidden" id="editId" />
-          <label class="field">
-            <span>Проект</span>
-            <div class="project-row">
-              <select id="projectSelect">
-                <option value="">Выберите проект</option>
-              </select>
-              <input id="newProjectInput" type="text" placeholder="Новый код проекта" />
-              <button id="createProjectBtn" type="button" class="btn ghost">Создать</button>
-            </div>
-          </label>
-          <label class="field">
-            <span>Факт</span>
-            <textarea id="contentInput" rows="4" placeholder="Короткий факт о проекте"></textarea>
-          </label>
-          <label class="field">
-            <span>Теги (через запятую)</span>
-            <input id="tagsInput" type="text" placeholder="backend, api, infra" />
-          </label>
-          <div class="actions">
-            <button id="submitBtn" type="submit" class="btn primary">Добавить</button>
-            <button id="cancelBtn" type="button" class="btn ghost hidden">Отмена</button>
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Projects</h2>
+            <button id="refresh-projects" class="ghost-button" type="button">Refresh</button>
           </div>
-        </form>
-      </section>
+          <form id="create-project-form" class="compact-form">
+            <label class="field">
+              <span class="field-label">New Project ID</span>
+              <input id="create-project-id" name="id" type="text" minlength="2" required />
+            </label>
 
-      <section class="panel">
-        <div class="list-head">
-          <div class="title">Список фактов</div>
-          <div id="count" class="count">0</div>
+            <label class="field">
+              <span class="field-label">Root Path</span>
+              <input id="create-project-root" name="rootPath" type="text" required />
+            </label>
+
+            <label class="field">
+              <span class="field-label">Description</span>
+              <input id="create-project-description" name="description" type="text" />
+            </label>
+
+            <button id="create-project-button" class="ghost-button" type="submit">
+              Add Project
+            </button>
+          </form>
+          <div id="create-project-status" class="caption">Create a project registration from the browser.</div>
+          <div id="projects-list" class="project-list" aria-live="polite"></div>
         </div>
-        <div id="list" class="list"></div>
-      </section>
-    </main>
+      </aside>
 
-    <script src="/app.js"></script>
+      <main class="content">
+        <section class="hero">
+          <div>
+            <p class="eyebrow">Index Explorer</p>
+            <h2 id="project-title">Select a project</h2>
+            <p id="project-subtitle" class="subtitle">
+              Choose a project on the left to inspect the registered path and indexed chunks.
+            </p>
+          </div>
+          <div class="hero-metric">
+            <span class="metric-label">Chunks</span>
+            <strong id="chunk-count">0</strong>
+          </div>
+        </section>
+
+        <section class="content-grid">
+          <article class="panel">
+            <div class="panel-header">
+              <h2>Project Details</h2>
+            </div>
+            <dl id="project-details" class="details-grid">
+              <div><dt>Path</dt><dd>-</dd></div>
+              <div><dt>Updated</dt><dd>-</dd></div>
+              <div><dt>Indexed</dt><dd>-</dd></div>
+              <div><dt>Collection</dt><dd>-</dd></div>
+            </dl>
+          </article>
+
+          <article class="panel">
+            <div class="panel-header">
+              <h2>Project Actions</h2>
+            </div>
+            <form id="project-form" class="query-form">
+              <label class="field">
+                <span class="field-label">Project ID</span>
+                <input id="project-id-input" name="id" type="text" readonly />
+              </label>
+
+              <label class="field">
+                <span class="field-label">Root Path</span>
+                <input id="project-root-input" name="rootPath" type="text" required />
+              </label>
+
+              <label class="field">
+                <span class="field-label">Description</span>
+                <textarea id="project-description-input" name="description" rows="4"></textarea>
+              </label>
+
+              <div class="query-actions">
+                <button id="save-project" class="ghost-button" type="submit">Save</button>
+                <button id="reindex-project" class="ghost-button" type="button">Reindex</button>
+                <button id="delete-project" class="danger-button" type="button">Delete</button>
+              </div>
+            </form>
+            <div id="index-status" class="status-card">
+              <p>No project selected yet.</p>
+            </div>
+            <div id="action-feedback" class="feedback-banner" aria-live="polite"></div>
+          </article>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>Query Playground</h2>
+              <p class="caption">Send semantic queries directly from the browser.</p>
+            </div>
+            <span id="query-status" class="caption">Select a project to start</span>
+          </div>
+
+          <form id="query-form" class="query-form">
+            <label class="field">
+              <span class="field-label">Mode</span>
+              <select id="query-mode" name="mode">
+                <option value="search">Search hits</option>
+                <option value="context">Context bundle</option>
+              </select>
+            </label>
+
+            <label class="field query-field">
+              <span class="field-label">Prompt</span>
+              <textarea
+                id="query-input"
+                name="query"
+                rows="4"
+                placeholder="Например: where is project indexing configured?"
+                minlength="3"
+                required
+              ></textarea>
+            </label>
+
+            <div class="query-actions">
+              <label class="field limit-field">
+                <span class="field-label">Limit</span>
+                <input id="query-limit" name="limit" type="number" min="1" max="20" value="6" />
+              </label>
+              <button id="submit-query" class="ghost-button" type="submit">Run Query</button>
+            </div>
+          </form>
+
+          <div id="query-result" class="query-result">
+            <div class="empty-state">Choose a project and submit a query to see results here.</div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Indexed Chunks</h2>
+            <span id="chunk-caption" class="caption">Nothing loaded</span>
+          </div>
+          <div id="chunks-list" class="chunks-list"></div>
+        </section>
+      </main>
+    </div>
+
+    <template id="project-item-template">
+      <button class="project-item" type="button">
+        <span class="project-header">
+          <span class="project-name"></span>
+          <span class="project-alert" hidden>Index issue</span>
+        </span>
+        <span class="project-meta"></span>
+      </button>
+    </template>
+
+    <template id="chunk-card-template">
+      <article class="chunk-card">
+        <header class="chunk-header">
+          <div>
+            <h3 class="chunk-source"></h3>
+            <p class="chunk-meta"></p>
+          </div>
+          <span class="chunk-kind"></span>
+        </header>
+        <pre class="chunk-text"></pre>
+      </article>
+    </template>
+
+    <template id="search-hit-template">
+      <article class="chunk-card result-card">
+        <header class="chunk-header">
+          <div>
+            <h3 class="chunk-source"></h3>
+            <p class="chunk-meta"></p>
+          </div>
+          <span class="chunk-kind"></span>
+        </header>
+        <pre class="chunk-text"></pre>
+      </article>
+    </template>
+
+    <script type="module" src="/ui/app.js"></script>
   </body>
   </html>

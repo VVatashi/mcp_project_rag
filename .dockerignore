@@ -1,0 +1,11 @@
+node_modules
+dist
+.git
+.gitignore
+.env
+data
+coverage
+.tmp
+venv
+legacy/python-reference/__pycache__
+legacy/python-reference/.pytest_cache

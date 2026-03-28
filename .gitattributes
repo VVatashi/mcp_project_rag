@@ -1,0 +1,14 @@
+# Lockfiles are generated artifacts: keep them in git, but reduce review noise.
+package-lock.json linguist-generated=true -diff
+npm-shrinkwrap.json linguist-generated=true -diff
+yarn.lock linguist-generated=true -diff
+pnpm-lock.yaml linguist-generated=true -diff
+
+# Generated bundles and sourcemaps, if they are ever committed.
+*.min.js linguist-generated=true
+*.min.css linguist-generated=true
+*.map linguist-generated=true
+
+# Common generated metadata files.
+dist/** linguist-generated=true
+coverage/** linguist-generated=true
