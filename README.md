@@ -1,179 +1,128 @@
-# MCP Project RAG Server
+# ProjectRAG
 
-Node.js/TypeScript MCP-сервер для локального RAG по нескольким проектам с хранением чанков в ChromaDB.
+ProjectRAG indexes Markdown documents for retrieval. It cuts a file into chunks along its headings, embeds every chunk with the `Qdrant/Qwen3-Embedding-0.6B-onnx` export of Qwen3-Embedding-0.6B through ONNX Runtime, and stores the text and the vector in PostgreSQL. A search runs over the words with a full text index, or over the meaning with a vector index.
 
-## Что уже есть
+## Requirements
 
-- MCP-сервер на официальном TypeScript SDK с поддержкой `stdio` и Streamable HTTP.
-- Простой встроенный web UI для просмотра проектов и чанков индекса в обязательной тёмной теме.
-- Реестр локальных проектов с явной регистрацией путей.
-- Индексация кода и документации по чанкам.
-- Persisted file state с `mtime`, `size`, `contentHash`, `chunkIds` и `chunkHashes` для инкрементальной реиндексации.
-- Project-level lock для mutating операций, чтобы не смешивать параллельные `reindex/update/delete/register`.
-- Atomic write для `projects.json` и `index-state/*.json`.
-- Разделение данных по проектам через отдельные Chroma collections.
-- Двухэтапный поиск: retrieval в Chroma + локальный neural rerank.
-- Сборка контекста под задачу агента через MCP tool `context.build`.
-- Python-референс сохранён в `legacy/python-reference`.
+1. Install the .NET SDK 10.0 or newer.
+2. Install Docker with the Compose plugin.
+3. Keep about 1.2 GB of disk for the model and about 2 GB of memory for a run.
 
-## Критический разбор требований
+The project references `Tokenizers.DotNet.runtime.win-x64`, so it builds for Windows on x64. On another platform, replace that package with the runtime package of your platform.
 
-1. Нужен жизненный цикл индекса: полная переиндексация, обработка удалений и rename-файлов, а позже инкрементальные обновления.
-2. Нужна строгая фильтрация файлов: без неё в индекс попадут `dist`, `coverage`, lock-файлы и сгенерированный код.
-3. Нужна политика контекстного бюджета: RAG должен уметь не просто искать, а собирать компактный контекст под лимит.
-4. Нужен lifecycle локальных моделей: кэш, прогрев, fallback и контроль памяти.
-5. Нужны наблюдаемость и диагностика: статусы индексации, размеры коллекций, время поиска и ошибки файловой системы.
-6. Нужны будущие ограничения безопасности: сейчас проект ориентирован на локальное/внутреннее использование, без auth и ACL.
-7. Нужна дальнейшая оптимизация incremental indexing: теперь проект уже не читает всю collection на каждый `reindex`, но файловая система всё ещё сканируется целиком, а для гарантии корректности `contentHash` пересчитывается по содержимому файла на каждом incremental run.
+## Set up the database
 
-## Архитектура
+The application needs PostgreSQL 18 with the pgvector extension. The Compose file builds that image from `docker/postgres/Dockerfile`.
 
-- `projects.register`: регистрирует локальный проект.
-- `index.run`: сканирует проект, инкрементально переиндексирует только изменившиеся файлы и удаляет чанки для исчезнувших файлов. При первом запуске выполняется полная сборка индекса.
-- `search.query`: делает семантический поиск с rerank.
-- `context.build`: собирает готовый контекст для агента.
-
-Ключевые слои:
-
-- `ProjectRegistry` хранит метаданные проектов в `data/projects.json`.
-- `ProjectIndexStateCache` хранит persisted состояние файлов и их chunk manifest в `data/index-state/<projectId>.json`.
-- `ProjectOperationLock` сериализует mutating операции на уровне конкретного `projectId`.
-- `FileDiscoveryService` обходит файловую систему с учётом `.gitignore`, project-level excludes, exclude paths/extensions и лимита размера файла.
-- `ChunkingService` режет код по окнам строк, а документацию по абзацам.
-- `TransformersEmbeddingFunction` строит локальные эмбеддинги через `@xenova/transformers`.
-- `NeuralReranker` делает второй этап ранжирования.
-- `ChromaProjectStore` изолирует проекты по коллекциям `rag_project_<projectId>`.
-- `ContextBuilderService` собирает стандартизированный контекст для MCP-ответа.
-
-## Быстрый старт
-
-1. Скопируйте пример конфига и при необходимости настройте `.env`:
+1. Copy `.env.example` to `.env` if you want other credentials than the defaults.
+2. Start the container:
 
 ```bash
-cp .env.example .env
+docker compose up -d
 ```
 
-2. Если хотите локальный запуск без Docker, установите зависимости:
+The first start builds pgvector from source and takes a few minutes. The init script `docker/postgres/init/01-extensions.sql` creates the `vector` extension in the fresh database.
+
+## Get the embedding model
+
+The model does not live in the repository. Download two files from the Hugging Face repository `Qdrant/Qwen3-Embedding-0.6B-onnx` and place them like this:
+
+```
+models/
+  Qwen3-Embedding-0.6B/
+    tokenizer.json
+    onnx/
+      model_quantized.onnx
+```
+
+The Hugging Face client writes that layout on its own:
 
 ```bash
-npm install
+hf download Qdrant/Qwen3-Embedding-0.6B-onnx tokenizer.json onnx/model_quantized.onnx --local-dir models/Qwen3-Embedding-0.6B
 ```
 
-3. Для запуска через Docker Compose:
+Older versions of the client name this command `huggingface-cli download`. You can also download both files from the model page by hand.
+
+The application looks for the two paths from the working directory upwards, and then from the directory of the binary upwards. The `models` folder at the root of the repository therefore works for `dotnet run` and for a published binary. Another export of the same model works as well, as long as it returns a 1024 wide `last_hidden_state` and you point the settings at its files.
+
+## Build and test
 
 ```bash
-docker compose up --build
+dotnet build
 ```
-
-Сервисы будут доступны так:
-
-- ChromaDB: `http://127.0.0.1:8000`
-- MCP server: `http://127.0.0.1:3123/mcp`
-- Web UI: `http://127.0.0.1:3123/ui`
-
-4. Для локального MCP-клиента без Docker:
 
 ```bash
-npm run dev:stdio
+dotnet test
 ```
 
-5. Для локального Streamable HTTP без Docker:
+The tests that need the database skip themselves when nothing answers on the connection string. The tests that need the model skip themselves when the model files are missing.
+
+## Commands
+
+Create or update the schema:
 
 ```bash
-$env:MCP_TRANSPORT="http"
-npm run dev:http
+dotnet run --project src/ProjectRAG.Cli -- migrate
 ```
 
-## Docker Compose
-
-В репозитории есть готовые:
-
-- [docker-compose.yml](./docker-compose.yml)
-- [Dockerfile](./Dockerfile)
-
-Compose поднимает два сервиса:
-
-- `chroma` с постоянным volume для векторной БД
-- `rag-server` с Node.js MCP-сервером
-
-По умолчанию текущий репозиторий монтируется в контейнер как `/workspace/current-project`. Это сделано специально: чтобы сервер внутри контейнера мог индексировать локальный код, проект должен быть примонтирован внутрь контейнера как bind mount.
-
-Если нужно подключать другие локальные проекты, добавьте новые bind mounts в `rag-server.volumes`, например:
-
-```yaml
-volumes:
-  - ./:/workspace/current-project:ro
-  - /absolute/path/to/another-project:/workspace/another-project:ro
-```
-
-После этого регистрируйте проект в MCP уже по контейнерному пути, например `/workspace/another-project`.
-
-## Конфигурация
-
-Проект в текущем виде рассчитан прежде всего на локальный или внутренний контур разработки. Публиковать его как внешний публичный сервис без отдельного слоя аутентификации, авторизации и network hardening не предполагается.
-
-Сервер автоматически читает переменные из `.env` в корне проекта. Переменные окружения процесса имеют приоритет над значениями из файла.
-
-- `MCP_TRANSPORT=stdio|http`
-- `MCP_HTTP_HOST=127.0.0.1`
-- `MCP_HTTP_PORT=3123`
-- `MCP_HTTP_PATH=/mcp`
-- `MCP_DATA_DIR=./data`
-- `CHROMA_URL=http://127.0.0.1:8000`
-- `EMBEDDING_MODEL=Xenova/all-MiniLM-L6-v2`
-- `RERANK_MODEL=Xenova/all-MiniLM-L6-v2`
-- `MAX_CONTEXT_CHARS=12000`
-
-Сервер также автоматически использует служебные директории внутри `MCP_DATA_DIR`:
-
-- `projects.json` для реестра проектов
-- `index-state/` для persisted file state (`mtime`, `size`, `contentHash`, `chunkIds`, `chunkHashes`)
-- `models/` для локального кэша моделей
-
-## Правило по путям
-
-- Код, документация и примеры не должны содержать абсолютные локальные пути текущего окружения.
-- В репозитории допускаются только относительные пути внутри проекта или нейтральные placeholders вроде `/absolute/path/to/project`.
-- Нельзя публиковать пути вида домашнего каталога разработчика, рабочей папки машины или иного environment-specific location.
-
-## Основные MCP tools
-
-- `projects.list`
-- `projects.register`
-- `projects.unregister`
-- `index.run`
-- `search.query`
-- `context.build`
-
-## Web UI
-
-В HTTP-режиме сервер также поднимает простой интерфейс:
-
-- `GET /ui` — тёмная панель просмотра, создания, редактирования, удаления и реиндексации проектов
-- `GET /api/projects` — список зарегистрированных проектов и краткая сводка по индексу
-- `POST /api/projects` — регистрация нового проекта из браузера
-- `GET /api/projects/{projectId}` — подробности проекта и preview чанков из текущего индекса
-- если index inspection временно недоступен, UI показывает warning прямо в списке проектов и отдельный `indexError` в карточке проекта вместо подмены пустым индексом
-- browser API также возвращает timestamp последней ошибки inspection/reindex через diagnostics-поля, чтобы UI мог показывать свежесть проблемы
-- `PUT /api/projects/{projectId}` — редактирование `rootPath` и `description` проекта
-- `DELETE /api/projects/{projectId}` — удаление проекта и его коллекции из индекса
-- `POST /api/projects/{projectId}/reindex` — ручной запуск реиндексации проекта; после первого полного прогона используется инкрементальный режим с persisted file state и пересчётом `contentHash` для защиты от stale index
-- `POST /api/projects/{projectId}/search` — семантический поиск из браузера, принимает `{ "query": string, "limit"?: number }`
-- `POST /api/projects/{projectId}/context` — сборка `context.build` через browser UI, принимает `{ "query": string }`
-
-## Проверка
+Index one Markdown file. This command runs the pending migrations first, so it also works on an empty database:
 
 ```bash
-npm run check
-npm run test
-npm run test:e2e
-npm run build
+dotnet run --project src/ProjectRAG.Cli -- index docs/architecture.md
 ```
 
-Последний smoke-status:
+Search by meaning, which embeds the query and compares vectors:
 
-- `GET /ui` отдаётся успешно;
-- `POST /api/projects` и повторный `POST /api/projects/{projectId}/reindex` дают переход `full -> incremental`;
-- второй `reindex` возвращает `unchangedFileCount=1` для неизменённого smoke-файла;
-- MCP `initialize` и `tools/call search.query` успешно проходят поверх `/mcp`.
-- `npm run test:e2e` прогоняет browser-level UI smoke через Playwright.
+```bash
+dotnet run --project src/ProjectRAG.Cli -- search "how does the render hardware interface work"
+```
+
+Search by words, which uses the full text index:
+
+```bash
+dotnet run --project src/ProjectRAG.Cli -- search-text "render hardware interface"
+```
+
+Both search commands take an optional number of hits after the query. `ProjectRAG.Cli help` prints the whole list.
+
+Both searches return the five best chunks with the document path, the line range and the heading path. Neither of them touches the schema, so a search needs read rights only. The word search never loads the model, so it starts without the second that the model costs.
+
+The word index holds the heading path as well as the body, and a heading match weighs more than a body match.
+
+`index` reads the file, hashes the content and compares the hash with the stored one. A file that did not change keeps the rows it already has. A changed file replaces its document row and all of its chunks in one transaction.
+
+The key of a document is its path as an absolute `file:///` URI, compared without case. The same file therefore stays one document, whatever spelling of the path you pass.
+
+## Settings
+
+`src/ProjectRAG.Cli/appsettings.json` holds the defaults:
+
+| Section | Key | Default |
+| --- | --- | --- |
+| `Database` | `ConnectionString` | `Host=localhost;Port=5432;Database=projectrag;Username=projectrag;Password=projectrag` |
+| `Embedding` | `TokenizerFile` | `models/Qwen3-Embedding-0.6B/tokenizer.json` |
+| `Embedding` | `ModelFile` | `models/Qwen3-Embedding-0.6B/onnx/model_quantized.onnx` |
+| `Embedding` | `BatchSize` | `8` |
+| `Chunking` | `MaxTokens` | `512` |
+| `Logging` | `LogLevel:Default` | `Information` |
+
+To override a value, create `src/ProjectRAG.Cli/appsettings.Local.json` with the same shape. Git ignores that file, so it is the place for your own credentials.
+
+## What the index holds
+
+The migration creates two tables.
+
+1. `documents` keeps one row per file: the path, the title, the SHA-256 of the content, the whole text and the time of the last indexing.
+2. `chunks` keeps one row per chunk: the heading path, the first and the last line in the file, the text, its `tsvector`, the 1024 wide embedding and the token count.
+
+An HNSW index over the embedding serves the vector search. A GIN index over the `tsvector` serves the word search. Both searches sort by their own score and return the same shape of result.
+
+## Project layout
+
+```
+docker/postgres/       the PostgreSQL image with pgvector
+src/ProjectRAG.Cli/    the application
+  Migrations/          the database schema
+tests/                 the xunit tests
+models/                the model files, ignored by git
+```

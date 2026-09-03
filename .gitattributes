@@ -1,14 +1,37 @@
-# Lockfiles are generated artifacts: keep them in git, but reduce review noise.
-package-lock.json linguist-generated=true -diff
-npm-shrinkwrap.json linguist-generated=true -diff
-yarn.lock linguist-generated=true -diff
-pnpm-lock.yaml linguist-generated=true -diff
+# Normalize line endings on commit, check out native
+* text=auto
 
-# Generated bundles and sourcemaps, if they are ever committed.
-*.min.js linguist-generated=true
-*.min.css linguist-generated=true
-*.map linguist-generated=true
+# Source and config files
+*.cs text diff=csharp
+*.csproj text eol=crlf
+*.props text eol=crlf
+*.targets text eol=crlf
+*.slnx text eol=crlf
+*.sln text eol=crlf
+*.json text
+*.md text
+*.xml text
+*.yml text
+*.yaml text
+*.editorconfig text
+*.gitattributes text
+*.gitignore text
 
-# Common generated metadata files.
-dist/** linguist-generated=true
-coverage/** linguist-generated=true
+# Scripts keep their platform endings
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.sh text eol=lf
+
+# Binary files
+*.dll binary
+*.exe binary
+*.pdb binary
+*.snk binary
+*.nupkg binary
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary

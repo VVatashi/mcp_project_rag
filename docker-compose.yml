@@ -1,60 +1,26 @@
 services:
-  chroma:
-    image: chromadb/chroma:latest
-    container_name: mcp-rag-chroma
-    restart: unless-stopped
-    ports:
-      - "8000:8000"
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "python3",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v2/heartbeat', timeout=3)"
-        ]
-      interval: 15s
-      timeout: 5s
-      retries: 10
-      start_period: 20s
-    volumes:
-      - chroma_data:/data
-
-  rag-server:
+  postgres:
     build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: mcp-project-rag-server
+      context: ./docker/postgres
+    image: projectrag-postgres:18-alpine
+    container_name: projectrag-postgres
     restart: unless-stopped
-    depends_on:
-      - chroma
-    env_file:
-      - .env
     environment:
-      MCP_TRANSPORT: http
-      MCP_HTTP_HOST: 0.0.0.0
-      MCP_HTTP_PORT: 3123
-      MCP_HTTP_PATH: /mcp
-      CHROMA_URL: http://chroma:8000
-      MCP_DATA_DIR: /app/data
+      POSTGRES_DB: ${POSTGRES_DB:-projectrag}
+      POSTGRES_USER: ${POSTGRES_USER:-projectrag}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-projectrag}
+      POSTGRES_INITDB_ARGS: --data-checksums
     ports:
-      - "3123:3123"
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "node",
-          "-e",
-          "require('node:http').get('http://127.0.0.1:3123/health', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
-        ]
-      interval: 15s
-      timeout: 5s
-      retries: 10
-      start_period: 20s
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - rag_server_data:/app/data
-      - ./:/workspace/current-project:ro
+      - postgres-data:/var/lib/postgresql
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-projectrag} -d ${POSTGRES_DB:-projectrag}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
 volumes:
-  chroma_data:
-  rag_server_data:
+  postgres-data:

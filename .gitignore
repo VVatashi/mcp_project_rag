@@ -1,12 +1,50 @@
-__pycache__
-/.pytest_cache/
-/.tmp/
-/data/
-/venv/
-/node_modules/
-/dist/
-/data/models/
-/coverage/
-/node_modules/
-/legacy/
+# Build output
+artifacts/
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+publish/
+
+# Test and coverage results
+TestResults/
+coverage/
+*.coverage
+*.trx
+
+# NuGet
+*.nupkg
+*.snupkg
+packages/
+!packages/build/
+.nuget/
+
+# Visual Studio / Rider / VS Code
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.userprefs
+*.DotSettings.user
+
+# Build logs
+*.binlog
+msbuild.log
+*.tlog
+
+# Local settings and secrets
+appsettings.Development.json
+appsettings.Local.json
 .env
+.env.*
+!.env.example
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+models/
