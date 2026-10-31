@@ -33,6 +33,15 @@ internal sealed class PageBuilder(int number, double width = 612, double height 
         return x;
     }
 
+    /// <summary>
+    /// Adds one glyph with its outline, such as a piece of a large delimiter, whose baseline lies at its top.
+    /// </summary>
+    public PageBuilder Glyph(string text, double left, double right, double baseline, double size, GlyphStyle style, string font, double boxTop, double boxBottom)
+    {
+        _glyphs.Add(new Glyph(text, left, right, baseline, size, style, font, boxTop, boxBottom));
+        return this;
+    }
+
     public PageBuilder Rule(double left, double right, double y)
     {
         _rules.Add(new Rule(left, right, y));
@@ -45,5 +54,5 @@ internal sealed class PageBuilder(int number, double width = 612, double height 
         return this;
     }
 
-    public PdfPageModel Build() => new(number, width, height, _glyphs, _rules, _links);
+    public PdfPageModel Build(bool turned = false) => new(number, width, height, _glyphs, _rules, _links, turned);
 }

@@ -47,6 +47,8 @@ internal static class MathWriter
         ["ω"] = "\\omega",
         ["Γ"] = "\\Gamma",
         ["Δ"] = "\\Delta",
+        // The sign of an increment looks like the capital delta.
+        ["∆"] = "\\Delta",
         ["Θ"] = "\\Theta",
         ["Λ"] = "\\Lambda",
         ["Ξ"] = "\\Xi",
@@ -283,6 +285,8 @@ internal static class MathWriter
     /// </summary>
     public static string EscapeText(string text)
     {
+        // KaTeX has no slash of negation in text, and no increment sign in its text font.
+        text = text.Replace("̸=", "≠", StringComparison.Ordinal).Replace("̸", string.Empty, StringComparison.Ordinal).Replace('∆', 'Δ');
         StringBuilder builder = new(text.Length);
         foreach (char c in text)
         {
@@ -291,6 +295,8 @@ internal static class MathWriter
 
             builder.Append(c switch
             {
+                // KaTeX sets "≠" only in math, so the text closes around it.
+                '≠' => "}\\ne\\text{",
                 '\\' => "\\textbackslash{}",
                 '{' or '}' or '#' or '$' or '%' or '&' or '_' => $"\\{c}",
                 '^' => "\\textasciicircum{}",

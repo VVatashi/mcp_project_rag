@@ -63,7 +63,7 @@ public static partial class PdfMarkdownImporter
         for (int i = 0; i < pages.Count; i++)
             blocks.AddRange(BuildBlocks(pages[i].Number, lines[i], unmatched.GetValueOrDefault(pages[i].Number) ?? []));
 
-        MarkBoldHeadings(blocks);
+        MarkBoldHeadings(blocks, [.. pages.Where(static page => page.Turned).Select(static page => page.Number)]);
         JoinPageBreaks(blocks);
         Dictionary<(int Page, int Index), string> linkTargets = AnchorLinkTargets(pages, blocks);
         PdfMarkdownWriter writer = new(vocabulary, pages.ToDictionary(static page => page.Number), linkTargets);
@@ -308,20 +308,31 @@ public static partial class PdfMarkdownImporter
         double right = lines.Where(static line => line.Kind == LineKind.Text && !line.InTable).Select(static line => line.Right).DefaultIfEmpty(0).Max();
 
         // TeX indents or centers a display formula. A line of a formula at the margin right after a line of text ends the sentence of that text.
+        // After a full line the sentence goes on at the indent of its list item, and a tall inline formula widens the gap between the lines.
         for (int i = 1; i < lines.Count; i++)
         {
-            if (lines[i].Kind == LineKind.Math && lines[i - 1].Kind == LineKind.Text && !lines[i].InTable && Math.Abs(lines[i].Left - margin) < lines[i].Size
-                && lines[i - 1].Baseline - lines[i].Baseline < lines[i].Size * 1.6 && !lines[i].Items.Any(static item => item.IsTall))
-                lines[i].Kind = LineKind.Text;
+            Line line = lines[i];
+            Line previous = lines[i - 1];
+            if (line.Kind != LineKind.Math || previous.Kind != LineKind.Text || line.InTable)
+                continue;
+
+            double gap = previous.Baseline - line.Baseline;
+            bool atMargin = Math.Abs(line.Left - margin) < line.Size && gap < line.Size * 1.6 && !line.Items.Any(static item => item.IsTall);
+            bool goesOn = previous.Right >= right - (line.Size * 2) && line.Left - margin < line.Size * 3 && gap < line.Size * 2.2 && !previous.PlainText.TrimEnd().EndsWith(':');
+            if (atMargin || goesOn)
+                line.Kind = LineKind.Text;
         }
 
-        // A lone line of code inside a paragraph is a long name of the API that the paragraph wraps.
+        // A lone line of code inside a paragraph is a long name of the API that the paragraph wraps. A statement of code ends otherwise.
         for (int i = 1; i < lines.Count - 1; i++)
         {
             if (lines[i].Kind == LineKind.Code && lines[i - 1].Kind == LineKind.Text && lines[i + 1].Kind == LineKind.Text && !lines[i].InTable
-                && lines[i - 1].Baseline - lines[i].Baseline < lines[i].Size * 1.6 && lines[i].Baseline - lines[i + 1].Baseline < lines[i].Size * 1.6)
+                && lines[i - 1].Baseline - lines[i].Baseline < lines[i].Size * 1.6 && lines[i].Baseline - lines[i + 1].Baseline < lines[i].Size * 1.6
+                && lines[i].PlainText.TrimEnd() is not [.., '{' or '}' or ';'])
                 lines[i].Kind = LineKind.Text;
         }
+
+        ExtendCode(lines);
 
         Queue<PdfBookmark> pending = new(headings.OrderByDescending(static bookmark => bookmark.Top ?? double.MaxValue));
         foreach (Line line in lines)
@@ -366,6 +377,85 @@ public static partial class PdfMarkdownImporter
         return blocks;
     }
 
+    // The pseudocode of a specification sets the keywords in monospace, the names of commands in the text font, the variables in math italics
+    // and the braces as math symbols. Such a line is not mostly monospace, so a run of code takes in the lines next to it that look like code.
+    private static void ExtendCode(List<Line> lines)
+    {
+        for (int i = 0; i < lines.Count; i++)
+        {
+            if (lines[i].Kind != LineKind.Code || lines[i].InTable)
+                continue;
+
+            for (int j = i - 1; j >= 0 && LooksLikeCode(lines[j], lines[j + 1]); j--)
+                lines[j].Kind = LineKind.Code;
+
+            for (int j = i + 1; j < lines.Count && LooksLikeCode(lines[j], lines[j - 1]); j++)
+                lines[j].Kind = LineKind.Code;
+        }
+
+        // A comment of the pseudocode is one word with hyphens in the text font, such as "append-shader-info-log", between two lines of code.
+        for (int i = 1; i < lines.Count - 1; i++)
+        {
+            if (lines[i].Kind != LineKind.Code && lines[i - 1].Kind == LineKind.Code && lines[i + 1].Kind == LineKind.Code && IsNear(lines[i], lines[i - 1]) && IsNear(lines[i], lines[i + 1])
+                && !lines[i].InTable && !lines[i].PlainText.Contains(' ', StringComparison.Ordinal) && !lines[i].Items.Any(static item => item.IsMath))
+                lines[i].Kind = LineKind.Code;
+        }
+
+        // A call that wraps puts its arguments on the next line. Outside code such a line goes on with the sentence of the call.
+        foreach (Line line in lines.Where(static line => line.Kind == LineKind.Math && IsArgumentList(line)))
+            line.Kind = LineKind.Text;
+    }
+
+    private static bool IsNear(Line line, Line neighbor) => Math.Abs(neighbor.Baseline - line.Baseline) < line.Size * 2.2;
+
+    private static bool LooksLikeCode(Line line, Line neighbor)
+    {
+        if (line.Kind == LineKind.Code)
+            return true;
+
+        if (line.InTable || line.IsFootnote || line.HeadingLevel != 0 || !IsNear(line, neighbor) || line.Items.Any(static item => item.IsTall || item.IsLatex))
+            return false;
+
+        string text = line.PlainText.Trim();
+        if (text.Length == 0 || text.All(static c => c is '{' or '}' or '(' or ')' or '[' or ']' or ';' or ' '))
+            return true;
+
+        if (IsArgumentList(line))
+            return true;
+
+        if (text.EndsWith('.'))
+            return false;
+
+        // A line of code holds some monospace and at most one word of the text font, the name of a command. A sentence holds more words.
+        int mono = 0;
+        int words = 0;
+        Item? previous = null;
+        foreach (Item item in line.Items)
+        {
+            bool isMono = (item.Style & GlyphStyle.Mono) != 0;
+            bool isWord = !isMono && !item.IsMath && item.Text.Any(char.IsLetter);
+            if (isMono)
+                mono++;
+
+            bool previousWord = previous is not null && (previous.Style & GlyphStyle.Mono) == 0 && !previous.IsMath && previous.Text.Any(char.IsLetter);
+            if (isWord && (!previousWord || PdfLayout.NeedsSpace(previous!, item)))
+                words++;
+
+            previous = item;
+        }
+
+        return mono > 0 && words <= 1;
+    }
+
+    // The arguments of a call in math italics: "index, count, length, name);". A formula holds operators, scripts or numbers alone.
+    private static bool IsArgumentList(Line line)
+    {
+        string text = line.PlainText.Trim();
+        return text.Contains(',', StringComparison.Ordinal) && text[^1] is ',' or ';' or ')' && !line.Items.Any(static item => item.IsTall || item.IsLatex || item.Sub.Count > 0 || item.Sup.Count > 0)
+            && text.All(static c => char.IsLetterOrDigit(c) || c is ',' or '(' or ')' or ';' or '&' or '*' or '[' or ']' or '_' or ' ')
+            && ArgumentRegex().IsMatch(text);
+    }
+
     private static bool Continues(PdfBlock block, PdfBlockKind kind, Line line, double margin, double right)
     {
         if (block.Lines.Count == 0)
@@ -388,8 +478,14 @@ public static partial class PdfMarkdownImporter
         }
 
         // A paragraph or a list item goes on while the lines keep the leading, the size and the left edge. An indented first line starts a paragraph.
-        if (kind is not (PdfBlockKind.Paragraph) || gap > line.Size * 1.6 || Math.Abs(previous.Size - line.Size) > 1)
+        // A tall inline formula, such as a fraction, widens the gap by the part that reaches out of the line.
+        double reach = Math.Max(0, line.Top - (line.Baseline + (line.Size * 0.75))) + Math.Max(0, previous.Baseline - (previous.Size * 0.25) - previous.Bottom);
+        if (kind is not (PdfBlockKind.Paragraph) || gap > (line.Size * 1.6) + reach || Math.Abs(previous.Size - line.Size) > 1)
             return false;
+
+        // The arguments of a call that wraps go on with the call.
+        if (previous.PlainText.TrimEnd().EndsWith(',') && IsArgumentList(line))
+            return true;
 
         double indent = line.Left - previous.Left;
         if (block.Kind == PdfBlockKind.ListItem)
@@ -403,9 +499,10 @@ public static partial class PdfMarkdownImporter
     }
 
     // A short line of bold text alone, without an end of a sentence, is a heading below the outline, such as "Errors" or "Texture-Combined Samplers".
-    private static void MarkBoldHeadings(List<PdfBlock> blocks)
+    private static void MarkBoldHeadings(List<PdfBlock> blocks, HashSet<int> turnedPages)
     {
         // The labels of a diagram are bold lines too, but they come in groups. A heading stands alone between other blocks.
+        // A page with turned text holds a figure or a wide table, so its bold lines are labels.
         bool[] candidates = [.. blocks.Select(IsBoldLine)];
         int level = 0;
         for (int i = 0; i < blocks.Count; i++)
@@ -423,7 +520,7 @@ public static partial class PdfMarkdownImporter
             if (continues)
                 continue;
 
-            if (!candidates[i] || !alone || level is 0 or >= 6)
+            if (!candidates[i] || !alone || level is 0 or >= 6 || turnedPages.Contains(block.Page))
                 continue;
 
             block.Kind = PdfBlockKind.Heading;
@@ -529,6 +626,9 @@ public static partial class PdfMarkdownImporter
 
     [GeneratedRegex(@"\p{L}{3,}")]
     private static partial Regex WordRegex();
+
+    [GeneratedRegex(@"(?:^|[\s,(])\p{L}[\p{L}\d]{3,}(?:[\s,)]|$)")]
+    private static partial Regex ArgumentRegex();
 }
 
 /// <summary>

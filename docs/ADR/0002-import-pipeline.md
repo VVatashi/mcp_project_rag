@@ -48,12 +48,14 @@ PdfPig gives each glyph with its font, size and position, each thin vector line 
 
 | Element | How the importer finds it |
 | --- | --- |
+| Turned pages | The direction of most baselines. A page with its text turned by a quarter turns back, and the lines of other directions, such as a turned running header, go away. A bold line of a turned page is a label of a figure, not a heading |
 | Word spaces | Gaps between glyphs, a smaller gap at a change of the font |
 | Running headers and footers | Lines at the top or the bottom that repeat on many pages, or capitals with a page number |
 | Headings | Bookmarks with their target height, matched to a line by its text. A chapter of LaTeX searches farther. A bookmark without a line becomes a heading of its own. Short bold lines become headings below the outline, such as "Errors" |
 | Paragraphs | Leading, size and the indent of the first line. A full line inside a framed box continues its paragraph |
 | Hyphens | A hyphen at a line end goes when the document uses the joined word elsewhere: "compo-nent" becomes "component", "two-dimensional" stays |
-| Code | Lines in a monospace font. A prototype with italic parameters still counts as code |
+| Code | Lines in a monospace font. A prototype with italic parameters still counts as code. Pseudocode sets its variables in math italics and its braces as math symbols. A run of code takes in the lines next to it with some monospace and one word of the text font at most. It also takes in the lines of braces |
+| Wrapped calls | A line of arguments in math italics, such as "index, count, name);", goes on with the call above it instead of becoming a formula |
 | Tables | Lines between wide rules with columns, and the rows right after the last rule that keep the columns |
 | Footnotes | Smaller lines at the bottom of a page that start with a number |
 | Links | Link annotations with a target page and height. The target block gets an anchor |
@@ -66,7 +68,9 @@ The specifications set formulas in the fonts of Computer Modern. The importer re
 | --- | --- | --- |
 | Subscript and superscript | A smaller glyph with a shifted baseline | `x_{i}`, `x^{2}`, `u'` |
 | Fraction | Glyphs above and below a short rule | `\frac{a}{b}` |
-| Large delimiter | A stack of CMEX pieces | `\{`, `|` |
+| Large delimiter | A stack of CMEX pieces that touch. The pieces without Unicode in the private area, such as the top of a brace, map to their delimiters | `\{`, `|` |
+| Root | The sign √ and a rule from its top over the radicand | `\sqrt{…}` |
+| Script of a tall item | A smaller glyph next to the top of a large parenthesis, or next to a larger letter in a row of small capitals | `(…)^{2}`, `Z^{+}` |
 | Cases | A large brace with several lines on its right | `\begin{cases} … \end{cases}` |
 | Large operator | A CMEX operator with centered limits or with scripts | `\sum_{i=1}^{N}` |
 | Names | Upright letters of CMR, italic letters of CMMI | `\max`, `\mathit{wrap}` |
@@ -132,7 +136,8 @@ Every chunk has balanced fences of code and formulas. The tests of the chunker c
 
 ## Consequences
 
-- KaTeX reads every formula, but a valid formula may still differ from the original. A matrix becomes rows in `gathered` without brackets, and a root becomes `\surd` without its bar.
+- KaTeX reads every formula, but a valid formula may still differ from the original. A matrix becomes rows in `gathered` without brackets.
+  Two fractions close one above the other in the rows of `cases` may merge, and a root with an index loses the index.
   The view of a chunk next to its PDF page is the way to check the meaning.
 - The importer reads one column. A page with two columns mixes the lines of both columns.
 - A table needs wide rules above and below it. A table without rules becomes paragraphs of text, and a table with unclear columns becomes a fenced block of plain text. The text stays searchable, but the columns are lost.
