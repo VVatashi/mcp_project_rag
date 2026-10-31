@@ -186,7 +186,7 @@ The server reads `src/ProjectRag.Server/appsettings.json`. Put the settings of o
 | `Chunking:MaxChars` | 1800 | The size of a chunk. A change reads every file again |
 | `Chunking:AtomicMaxChars` | 3000 | The size of a chunk with code, a formula or a table, which splits only beyond it |
 | `Chunking:OverlapChars` | 300 | The most characters that a chunk repeats from the previous one when a block splits |
-| `Chunking:MinChars` | 400 | A shorter chunk at the end of a small section takes in the next small sections of the same parent. 0 keeps each chunk in one section |
+| `Chunking:MinChars` | 400 | A shorter chunk at the end of a section takes in the next sections of the third level or deeper: its subsections and its siblings. 0 keeps each chunk in one section |
 | `Chunking:MaxFileBytes` | 64 MB | The size of the largest file |
 | `Indexing:ScanIntervalMinutes` | 10 | The interval of the scans of all sources. 0 turns them off |
 

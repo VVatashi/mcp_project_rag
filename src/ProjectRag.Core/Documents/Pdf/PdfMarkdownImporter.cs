@@ -114,21 +114,21 @@ public static partial class PdfMarkdownImporter
                 if (i < indexes.Count && indexes[i] - indexes[i - 1] <= 2)
                     continue;
 
-                // A run of four pages or more is a running line.
-                for (int j = everywhere ? start : start + 1; j < i && (everywhere || i - start >= 4); j++)
+                // A run of four pages or more is a running line. A line of a word or less, such as the "}" at the end of a listing, is no header.
+                for (int j = everywhere ? start : start + 1; j < i && (everywhere || (i - start >= 4 && key.Count(char.IsLetter) >= 3)); j++)
                     running.Add((key, indexes[j]));
 
                 start = i;
             }
         }
 
-        // A word that stands at the edges of many pages, such as "ECMA-334", marks the first and the last line of a page as a running line,
-        // also on the first page of a chapter and in a short chapter.
+        // A name with a number that stands at the edges of many pages, such as "ECMA-334", marks the first and the last line of a page as a running line,
+        // also on the first page of a chapter and in a short chapter. A word without a number, such as "the", is no mark.
         Dictionary<string, int> words = new(StringComparer.Ordinal);
         for (int i = 0; i < pages.Count; i++)
         {
             List<Line> page = lines[i];
-            foreach (string word in page.Where(line => IsEdge(pages[i], page, line)).SelectMany(static line => EdgeWords(line.PlainText)).Distinct(StringComparer.Ordinal))
+            foreach (string word in page.Where(line => IsEdge(pages[i], page, line)).SelectMany(static line => EdgeWords(line.PlainText)).Where(static word => word.Contains('#', StringComparison.Ordinal)).Distinct(StringComparer.Ordinal))
                 words[word] = words.GetValueOrDefault(word) + 1;
         }
 
@@ -257,16 +257,16 @@ public static partial class PdfMarkdownImporter
     // A bookmark marks its heading line: the line near the top of the target whose text matches the title, with or without its number.
     // A chapter of LaTeX sets "Chapter 8" and its name on two lines far below the target, so a chapter searches farther and drops the line "Chapter 8".
     // A bookmark without a matching line becomes a heading of its own at its place.
-    // A file of a word processor may keep its internal bookmarks, such as "OLE_LINK6", all on the first page or on no page.
-    // Such an outline names no sections, so the headings come from the fonts. A useful outline reaches a page in every fifty, or ten pages.
-    private static IReadOnlyList<PdfBookmark> UsefulOutline(IReadOnlyList<PdfPageModel> pages, IReadOnlyList<PdfBookmark> bookmarks)
+    // A file of a word processor may keep its internal bookmarks, such as "OLE_LINK6", on the first page or on no page.
+    // Such an outline names no sections, so the headings come from the fonts. A useful outline has titles that reach two pages at least.
+    private static List<PdfBookmark> UsefulOutline(IReadOnlyList<PdfPageModel> pages, IReadOnlyList<PdfBookmark> bookmarks)
     {
         HashSet<int> numbers = [.. pages.Select(static page => page.Number)];
-        int targets = bookmarks.Where(bookmark => numbers.Contains(bookmark.Page)).Select(static bookmark => bookmark.Page).Distinct().Count();
-        return targets >= Math.Min(10, Math.Max(1, pages.Count / 50)) ? bookmarks : [];
+        List<PdfBookmark> titles = [.. bookmarks.Where(bookmark => numbers.Contains(bookmark.Page) && !InternalBookmarkRegex().IsMatch(bookmark.Title))];
+        return titles.Select(static bookmark => bookmark.Page).Distinct().Count() >= Math.Min(2, pages.Count) ? titles : [];
     }
 
-    private static Dictionary<int, List<PdfBookmark>> MarkHeadings(IReadOnlyList<PdfPageModel> pages, List<List<Line>> lines, IReadOnlyList<PdfBookmark> bookmarks, double bodySize)
+    private static Dictionary<int, List<PdfBookmark>> MarkHeadings(IReadOnlyList<PdfPageModel> pages, List<List<Line>> lines, List<PdfBookmark> bookmarks, double bodySize)
     {
         Dictionary<int, List<PdfBookmark>> unmatched = [];
         Dictionary<int, int> indexes = pages.Select(static (page, index) => (page.Number, index)).ToDictionary(static pair => pair.Number, static pair => pair.index);
@@ -439,21 +439,26 @@ public static partial class PdfMarkdownImporter
         }
 
         // An item of a list goes on at the indent of its text, also with a long identifier in monospace on the next line.
+        // A listing under an item, after a line that ends with a colon or with more than one word per line, stays code.
         double? bulletLeft = null;
         for (int i = 0; i < lines.Count; i++)
         {
             Line line = lines[i];
             if (line.Kind == LineKind.Text && BulletStartRegex().IsMatch(line.PlainText))
             {
-                bulletLeft = line.Left;
+                bulletLeft = line.PlainText.TrimEnd().EndsWith(':') ? null : line.Left;
                 continue;
             }
 
             bool goesOn = bulletLeft is { } left && line.Left > left + (line.Size * 0.3) && lines[i - 1].Baseline - line.Baseline < line.Size * 1.6 && !line.InTable;
-            if (goesOn && line.Kind == LineKind.Code)
+            if (goesOn && line.Kind == LineKind.Code && !line.PlainText.Trim().Contains(' ', StringComparison.Ordinal))
+            {
                 line.Kind = LineKind.Text;
+                bulletLeft = null;
+                continue;
+            }
 
-            if (!goesOn || line.Kind != LineKind.Text)
+            if (!goesOn || line.Kind != LineKind.Text || line.PlainText.TrimEnd().EndsWith(':'))
                 bulletLeft = null;
         }
 
@@ -630,7 +635,7 @@ public static partial class PdfMarkdownImporter
     // A page of the table of contents lists the headings with their page numbers at the ends of the lines.
     private static bool IsContentsPage(List<Line> page)
     {
-        List<Line> texts = [.. page.Where(static line => line.Kind == LineKind.Text && !line.IsFootnote)];
+        List<Line> texts = [.. page.Where(static line => line.Kind == LineKind.Text && !line.IsFootnote && !line.InTable)];
         return texts.Count >= 5 && texts.Count(static line => PageNumberEndRegex().IsMatch(line.PlainText)) * 3 >= texts.Count;
     }
 
@@ -775,6 +780,10 @@ public static partial class PdfMarkdownImporter
 
     [GeneratedRegex(@"^\s*[•◦▪‣]\s")]
     private static partial Regex BulletStartRegex();
+
+    // The hidden bookmarks of a word processor: "OLE_LINK6", "_Toc123", "_Ref456".
+    [GeneratedRegex(@"^(?:OLE_LINK|_Toc|_Ref|_Hlk|DD)\w*$", RegexOptions.CultureInvariant)]
+    private static partial Regex InternalBookmarkRegex();
 
     [GeneratedRegex(@"^\s*(?:NOTE|WARNING|CAUTION|TIP|IMPORTANT)\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex NoteLabelRegex();

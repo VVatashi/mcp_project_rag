@@ -94,6 +94,9 @@ internal sealed class KnowledgeTools(SearchService search, SourceStore sources, 
             sourceIds = [.. found.Values];
         }
 
+        if (!string.IsNullOrWhiteSpace(category) && !(await documents.GetCategoriesAsync(null, cancellationToken)).Any(item => item.Name == category.Trim()))
+            throw new McpException($"The knowledge base has no category {category}. Call list_categories.");
+
         (IReadOnlyList<DocumentSummary> items, _) = await documents.ListAsync(sourceIds, category ?? string.Empty, text ?? string.Empty, 0, Math.Clamp(limit ?? 20, 1, 100), cancellationToken);
         return items;
     }

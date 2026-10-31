@@ -52,7 +52,7 @@ PdfPig gives each glyph with its font, size and position, each thin vector line 
 | Word spaces | Gaps between glyphs, a smaller gap at a change of the font |
 | Running headers and footers | Lines at the top or the bottom that repeat on many pages, or capitals with a page number. A header of a chapter repeats on a run of pages. A first or last line with a word of the headers, such as "ECMA-334", is a header too |
 | Headings | Bookmarks with their target height, matched to a line by its text. A chapter of LaTeX searches farther. A bookmark without a line becomes a heading of its own. Short bold lines become headings below the outline, such as "Errors" |
-| Headings without an outline | An outline that reaches no page, such as the bookmarks "OLE_LINK6" of a word processor, does not count. Then a bold or a much larger line is a heading. The depth of its number, such as "II.22.2", gives the level. A page of contents and a line in a larger regular font give no headings |
+| Headings without an outline | The hidden bookmarks of a word processor, such as "OLE_LINK6", do not count, and an outline that reaches fewer than two pages does not count. Then a bold or a much larger line is a heading. The depth of its number, such as "II.22.2", gives the level. A page of contents and a line in a larger regular font give no headings |
 | Notes | The label "NOTE" in a column left of a box goes away, so the text of the box stays one paragraph |
 | Lists | A line with a bullet stays an item of a list, also when it names identifiers in monospace |
 | Paragraphs | Leading, size and the indent of the first line. A full line inside a framed box continues its paragraph |
@@ -88,7 +88,8 @@ A formula that still has unbalanced braces becomes a fenced block of plain text,
 The chunker reads the blocks of Markdig, not lines:
 
 1. A chunk stays inside one section and collects whole blocks up to 1800 characters.
-   A chunk under 400 characters at the end of a section of the third level or deeper takes in the next small sections of the same parent, with their headings in its text.
+   A chunk under 400 characters at the end of a section takes in the next sections of the third level or deeper, its subsections and its siblings, while the chunk stays under the limit.
+   The headings of these sections stay in its text. The chunk keeps the section of its start, and a section counts the chunks that overlap its text.
    The Vulkan specification has thousands of sections such as "Revision" or "Contact" with one line each, and a chunk of one line gives the search no context.
 2. A chunk with code, a formula or a table may grow to 3000 characters, so such a block stays whole. Code and TeX hold about three characters per token, so 3000 characters fit the slot of 2048 tokens.
 3. A caption "Table 8.20:" stays with its table. A lead-in that ends with a colon stays with the formula or the code after it.

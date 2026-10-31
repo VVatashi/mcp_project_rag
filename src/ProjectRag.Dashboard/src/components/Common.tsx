@@ -12,7 +12,7 @@ export function Pager({ offset, pageSize, total, onChange }: { offset: number; p
         Previous
       </button>
       <span className="muted small">
-        {formatNumber(offset + 1)}–{formatNumber(Math.min(total, offset + pageSize))} of {formatNumber(total)}
+        {formatNumber(Math.min(offset + 1, total))}–{formatNumber(Math.min(total, offset + pageSize))} of {formatNumber(total)}
       </span>
       <button type="button" className="button button--small" disabled={offset + pageSize >= total} onClick={() => onChange(offset + pageSize)}>
         Next

@@ -177,14 +177,20 @@ public sealed partial class DocumentStore(Database database)
             SELECT c.chunk_id, c.ordinal, c.heading, c.body, c.char_start, c.char_end, c.section_id, c.page_start, c.page_end, c.overlap_chars,
                    EXISTS (SELECT 1 FROM chunk_embedding e WHERE e.chunk_id = c.chunk_id AND e.model_id = @ModelId) AS has_embedding
             FROM chunk c
-            WHERE c.document_id = @DocumentId AND (@SectionId::bigint IS NULL OR c.section_id = @SectionId)
+            WHERE c.document_id = @DocumentId AND (@SectionId::bigint IS NULL OR c.section_id = @SectionId OR EXISTS (
+                SELECT 1 FROM section s
+                WHERE s.section_id = @SectionId AND c.char_start < coalesce((SELECT n.char_start FROM section n WHERE n.document_id = s.document_id AND n.ordinal = s.ordinal + 1), s.char_end)
+                  AND c.char_end > s.char_start))
             ORDER BY c.ordinal
             OFFSET @Offset LIMIT @Limit
             """,
             parameters, cancellationToken: cancellationToken));
         (long total, long embedded) = await connection.QuerySingleAsync<(long, long)>(new CommandDefinition(
             """
-            SELECT count(*) FILTER (WHERE @SectionId::bigint IS NULL OR c.section_id = @SectionId),
+            SELECT count(*) FILTER (WHERE @SectionId::bigint IS NULL OR c.section_id = @SectionId OR EXISTS (
+                       SELECT 1 FROM section s
+                       WHERE s.section_id = @SectionId AND c.char_start < coalesce((SELECT n.char_start FROM section n WHERE n.document_id = s.document_id AND n.ordinal = s.ordinal + 1), s.char_end)
+                         AND c.char_end > s.char_start)),
                    count(*) FILTER (WHERE EXISTS (SELECT 1 FROM chunk_embedding e WHERE e.chunk_id = c.chunk_id AND e.model_id = @ModelId))
             FROM chunk c
             WHERE c.document_id = @DocumentId
@@ -291,14 +297,14 @@ public sealed partial class DocumentStore(Database database)
         await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
         long documentId = await connection.ExecuteScalarAsync<long>(new CommandDefinition(
             """
-            INSERT INTO document (source_id, path, title, content, content_hash, parser_version, size_bytes, modified_at)
-            VALUES (@SourceId, @Path, @Title, @Content, @ContentHash, @ParserVersion, @SizeBytes, @ModifiedAt)
+            INSERT INTO document (source_id, path, title, content, content_hash, parser_version, size_bytes, modified_at, category)
+            VALUES (@SourceId, @Path, @Title, @Content, @ContentHash, @ParserVersion, @SizeBytes, @ModifiedAt, @Category)
             ON CONFLICT (source_id, path) DO UPDATE
             SET title = EXCLUDED.title, content = EXCLUDED.content, content_hash = EXCLUDED.content_hash, parser_version = EXCLUDED.parser_version,
-                size_bytes = EXCLUDED.size_bytes, modified_at = EXCLUDED.modified_at, indexed_at = now()
+                size_bytes = EXCLUDED.size_bytes, modified_at = EXCLUDED.modified_at, category = EXCLUDED.category, indexed_at = now()
             RETURNING document_id
             """,
-            new { SourceId = sourceId, Path = path, structure.Title, structure.Content, file.ContentHash, file.ParserVersion, file.SizeBytes, file.ModifiedAt },
+            new { SourceId = sourceId, Path = path, structure.Title, structure.Content, file.ContentHash, file.ParserVersion, file.SizeBytes, file.ModifiedAt, file.Category },
             transaction, cancellationToken: cancellationToken));
 
         long[] oldIds = [.. await connection.QueryAsync<long>(new CommandDefinition(
@@ -468,4 +474,5 @@ public sealed partial class DocumentStore(Database database)
 /// <param name="ParserVersion">The version of the importers and the options of the chunker.</param>
 /// <param name="SizeBytes">The size in bytes.</param>
 /// <param name="ModifiedAt">The time of the last write in UTC, cut to microseconds like the timestamps of PostgreSQL.</param>
-internal sealed record DocumentFile(string ContentHash, string ParserVersion, long SizeBytes, DateTime ModifiedAt);
+/// <param name="Category">The category from the rules of the source.</param>
+internal sealed record DocumentFile(string ContentHash, string ParserVersion, long SizeBytes, DateTime ModifiedAt, string Category);
