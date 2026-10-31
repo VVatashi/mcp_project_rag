@@ -1,0 +1,574 @@
+using System.Globalization;
+using System.Text.RegularExpressions;
+
+using UglyToad.PdfPig;
+
+namespace ProjectRag.Core.Documents.Pdf;
+
+/// <summary>
+/// Turns a PDF file into Markdown, the intermediate form of the pipeline.
+/// </summary>
+/// <remarks>
+/// <para>
+/// The importer reads the glyphs, the thin rules and the link annotations of each page, see <see cref="PdfLayout"/>. It drops the running headers and footers.
+/// Then it groups the lines into blocks: headings from the bookmarks, paragraphs, lists, code, display formulas, tables and footnotes.
+/// </para>
+/// <list type="bullet">
+/// <item>A paragraph joins its lines. A word with a hyphen at the end of a line loses the hyphen when the document uses the joined word elsewhere.
+/// A run of a monospace font becomes a code span, and a run of a math font becomes an inline formula <c>$…$</c>.</item>
+/// <item>A block of monospace lines becomes fenced code with its indentation.</item>
+/// <item>A display formula becomes <c>$$…$$</c> in LaTeX, see <see cref="MathWriter"/>. A large brace over several lines becomes <c>cases</c>.
+/// A number such as "(8.3)" at the right becomes <c>\tag</c> and the anchor <c>equation-8.3</c>.</item>
+/// <item>The lines between wide rules with columns become a table: a pipe table when the columns are clear, or else a fenced block of text.</item>
+/// <item>A link annotation becomes a Markdown link to the anchor of the block at its target. A caption "Table 8.20:" gives its table the anchor <c>table-8.20</c>.</item>
+/// <item>Each page starts with the mark <c>&lt;!-- rag:page N --&gt;</c>. A paragraph that runs over a page break keeps the mark inside.</item>
+/// </list>
+/// <para>
+/// The importer reads one column. A page with two columns comes out in the order of the lines across both columns.
+/// </para>
+/// </remarks>
+public static partial class PdfMarkdownImporter
+{
+    /// <summary>
+    /// Reads a PDF file.
+    /// </summary>
+    /// <param name="bytes">The bytes of the file.</param>
+    /// <param name="fallbackTitle">The title when the file names none.</param>
+    /// <returns>The document in Markdown.</returns>
+    public static DocumentText Read(byte[] bytes, string fallbackTitle)
+    {
+        using PdfDocument pdf = PdfDocument.Open(bytes);
+        string title = PdfPigSource.Normalize(pdf.Information.Title ?? string.Empty);
+        return Convert(title.Length == 0 ? fallbackTitle : title, PdfPigSource.ReadPages(pdf), PdfPigSource.ReadBookmarks(pdf));
+    }
+
+    /// <summary>
+    /// Converts the pages of a document into Markdown.
+    /// </summary>
+    internal static DocumentText Convert(string title, IReadOnlyList<PdfPageModel> pages, IReadOnlyList<PdfBookmark> bookmarks)
+    {
+        Func<Glyph, bool> isMath = MathFonts(pages);
+        double bodySize = BodySize(pages);
+        List<List<Line>> lines = [.. pages.Select(page => PdfLayout.BuildLines(page, isMath))];
+        RemoveRunningLines(pages, lines);
+        for (int i = 0; i < pages.Count; i++)
+        {
+            MarkTables(pages[i], lines[i]);
+            MarkFootnotes(lines[i], bodySize);
+        }
+
+        Dictionary<int, List<PdfBookmark>> unmatched = MarkHeadings(pages, lines, bookmarks, bodySize);
+        HashSet<string> vocabulary = Vocabulary(lines);
+        List<PdfBlock> blocks = [];
+        for (int i = 0; i < pages.Count; i++)
+            blocks.AddRange(BuildBlocks(pages[i].Number, lines[i], unmatched.GetValueOrDefault(pages[i].Number) ?? []));
+
+        MarkBoldHeadings(blocks);
+        JoinPageBreaks(blocks);
+        Dictionary<(int Page, int Index), string> linkTargets = AnchorLinkTargets(pages, blocks);
+        PdfMarkdownWriter writer = new(vocabulary, pages.ToDictionary(static page => page.Number), linkTargets);
+        return new DocumentText(title, writer.Write(blocks));
+    }
+
+    // The fonts of Computer Modern are math only in a document whose body uses another font.
+    private static Func<Glyph, bool> MathFonts(IReadOnlyList<PdfPageModel> pages)
+    {
+        string body = pages.SelectMany(static page => page.Glyphs).GroupBy(static glyph => glyph.Font).MaxBy(static group => group.Count())?.Key ?? string.Empty;
+        bool bodyIsComputerModern = body.StartsWith("CM", StringComparison.Ordinal);
+        return glyph => glyph.IsMath && !(bodyIsComputerModern && (glyph.Font.StartsWith("CMR", StringComparison.Ordinal) || glyph.Font.StartsWith("CMBX", StringComparison.Ordinal)
+            || glyph.Font.StartsWith("CMTI", StringComparison.Ordinal) || glyph.Font.StartsWith("CMSL", StringComparison.Ordinal) || glyph.Font.StartsWith("CMSS", StringComparison.Ordinal)));
+    }
+
+    private static double BodySize(IReadOnlyList<PdfPageModel> pages) =>
+        pages.SelectMany(static page => page.Glyphs).GroupBy(static glyph => Math.Round(glyph.Size * 2) / 2).MaxBy(static group => group.Count())?.Key ?? 10;
+
+    // A line at the top or the bottom of a page that repeats on many pages is a running header or footer. A number counts as any number.
+    private static void RemoveRunningLines(IReadOnlyList<PdfPageModel> pages, List<List<Line>> lines)
+    {
+        Dictionary<string, int> counts = new(StringComparer.Ordinal);
+        for (int i = 0; i < pages.Count; i++)
+        {
+            List<Line> page = lines[i];
+            foreach (string key in page.Where(line => IsEdge(pages[i], page, line)).Select(static line => LineKey(line.PlainText)).Distinct(StringComparer.Ordinal))
+                counts[key] = counts.GetValueOrDefault(key) + 1;
+        }
+
+        int threshold = Math.Max(3, (int)Math.Ceiling(pages.Count * 0.3));
+        for (int i = 0; i < pages.Count; i++)
+        {
+            PdfPageModel page = pages[i];
+            List<Line> pageLines = lines[i];
+            HashSet<Line> edges = [.. pageLines.Where(line => IsEdge(page, pageLines, line))];
+            pageLines.RemoveAll(line => edges.Contains(line) && (counts[LineKey(line.PlainText)] >= threshold || PageHeaderRegex().IsMatch(line.PlainText)));
+        }
+    }
+
+    // A running line is among the first two or the last two lines, in the top quarter or the bottom sixth of the page.
+    private static bool IsEdge(PdfPageModel page, List<Line> lines, Line line)
+    {
+        int index = lines.IndexOf(line);
+        return (index < 2 && line.Bottom > page.Height * 0.75) || (index >= lines.Count - 2 && line.Top < page.Height * 0.17);
+    }
+
+    private static string LineKey(string text) => DigitsRegex().Replace(text.Replace(" ", string.Empty, StringComparison.Ordinal), "#").ToUpperInvariant();
+
+    // The lines between wide rules form a table when many of them have columns: gaps of more than a character.
+    private static void MarkTables(PdfPageModel page, List<Line> lines)
+    {
+        if (lines.Count == 0)
+            return;
+
+        double textWidth = lines.Max(static line => line.Right) - lines.Min(static line => line.Left);
+        List<double> rules = [.. page.Rules.Where(rule => rule.Width >= textWidth * 0.3).Select(static rule => rule.Y).Distinct().OrderByDescending(static y => y)];
+        int start = 0;
+        while (start < rules.Count - 1)
+        {
+            int end = start;
+            while (end + 1 < rules.Count && IsTabular(lines.Where(line => line.Baseline < rules[end] && line.Baseline > rules[end + 1]).ToList()))
+                end++;
+
+            if (end > start)
+            {
+                List<Line> table = [.. lines.Where(line => line.Baseline < rules[start] && line.Baseline > rules[end])];
+                foreach (Line line in table)
+                    line.InTable = true;
+
+                ExtendTable(lines, table);
+            }
+
+            start = end + 1;
+        }
+    }
+
+    // A row past the last rule still belongs to the table when its cells start at the columns of the table and it follows closely.
+    private static void ExtendTable(List<Line> lines, List<Line> table)
+    {
+        if (table.Count == 0)
+            return;
+
+        List<double> columns = [.. table.SelectMany(static line => Segments(line)).Select(static segment => segment[0].Left)];
+        int index = lines.IndexOf(table[^1]) + 1;
+        Line previous = table[^1];
+        while (index < lines.Count && lines[index] is { InTable: false } next && previous.Baseline - next.Baseline < next.Size * 2.5)
+        {
+            List<List<Item>> segments = Segments(next);
+            if (segments.Count < 2 || !segments.All(segment => columns.Any(column => Math.Abs(column - segment[0].Left) < 8)))
+                break;
+
+            next.InTable = true;
+            previous = next;
+            index++;
+        }
+    }
+
+    private static bool IsTabular(List<Line> lines) =>
+        lines.Count > 0 && (lines.Count(static line => Segments(line).Count >= 2) * 2 >= lines.Count || lines.All(static line => line.Kind != LineKind.Text || line.Items.Count <= 3));
+
+    /// <summary>
+    /// Splits a line at its wide gaps: the cells of a table row.
+    /// </summary>
+    internal static List<List<Item>> Segments(Line line)
+    {
+        List<List<Item>> segments = [[line.Items[0]]];
+        for (int i = 1; i < line.Items.Count; i++)
+        {
+            Item previous = line.Items[i - 1];
+            Item item = line.Items[i];
+            double gap = item.Left - Math.Max(previous.Right, previous.Sub.Concat(previous.Sup).Select(static script => script.Right).DefaultIfEmpty(previous.Right).Max());
+            if (gap > Math.Max(item.Size, previous.Size) * 1.2)
+                segments.Add([item]);
+            else
+                segments[^1].Add(item);
+        }
+
+        return segments;
+    }
+
+    // The smaller lines at the bottom of a page that start with a number are footnotes.
+    private static void MarkFootnotes(List<Line> lines, double bodySize)
+    {
+        int first = lines.Count;
+        for (int i = lines.Count - 1; i >= 0; i--)
+        {
+            // A footnote may hold code or a formula, so only the size and a table end it.
+            Line line = lines[i];
+            if (line.InTable || line.Size > bodySize * 0.93)
+                break;
+
+            if (i < lines.Count - 1 && lines[i].Baseline - lines[i + 1].Baseline > line.Size * 2.5)
+                break;
+
+            first = i;
+        }
+
+        if (first < lines.Count && FootnoteStartRegex().IsMatch(lines[first].PlainText))
+        {
+            for (int i = first; i < lines.Count; i++)
+                lines[i].IsFootnote = true;
+        }
+    }
+
+    // A bookmark marks its heading line: the line near the top of the target whose text matches the title, with or without its number.
+    // A chapter of LaTeX sets "Chapter 8" and its name on two lines far below the target, so a chapter searches farther and drops the line "Chapter 8".
+    // A bookmark without a matching line becomes a heading of its own at its place.
+    private static Dictionary<int, List<PdfBookmark>> MarkHeadings(IReadOnlyList<PdfPageModel> pages, List<List<Line>> lines, IReadOnlyList<PdfBookmark> bookmarks, double bodySize)
+    {
+        Dictionary<int, List<PdfBookmark>> unmatched = [];
+        Dictionary<int, int> indexes = pages.Select(static (page, index) => (page.Number, index)).ToDictionary(static pair => pair.Number, static pair => pair.index);
+        if (bookmarks.Count > 0)
+        {
+            foreach (PdfBookmark bookmark in bookmarks)
+            {
+                if (!indexes.TryGetValue(bookmark.Page, out int index))
+                    continue;
+
+                string title = Compact(bookmark.Title);
+                string name = Compact(LeadingNumberRegex().Replace(bookmark.Title, string.Empty, 1));
+                double reach = bookmark.Level == 0 ? 300 : 80;
+                List<Line> candidates = [.. lines[index].Where(line => line.HeadingLevel == 0 && !line.IsFootnote && (bookmark.Top is not { } top || (line.Baseline <= top + 4 && line.Baseline >= top - reach)))];
+                Line? heading = candidates.FirstOrDefault(line => Compact(line.PlainText) is { Length: > 0 } text
+                        && (title.StartsWith(text, StringComparison.Ordinal) || text.StartsWith(title, StringComparison.Ordinal) || (name.Length > 3 && (name.StartsWith(text, StringComparison.Ordinal) || text == name))))
+                    ?? candidates.FirstOrDefault(line => line.Items.Any(static item => (item.Style & GlyphStyle.Bold) != 0) && line.Size >= bodySize && bookmark.Level > 0);
+                if (heading is null)
+                {
+                    if (!unmatched.TryGetValue(bookmark.Page, out List<PdfBookmark>? list))
+                        unmatched[bookmark.Page] = list = [];
+
+                    list.Add(bookmark);
+                    continue;
+                }
+
+                foreach (Line chapter in candidates.Where(line => line != heading && ChapterRegex().IsMatch(line.PlainText) && line.Baseline > heading.Baseline))
+                    chapter.HeadingLevel = -2;
+
+                heading.HeadingLevel = Math.Clamp(bookmark.Level + 1, 1, 6);
+                heading.HeadingTitle = bookmark.Title;
+                // A long title wraps onto the next line with the same font.
+                int next = lines[index].IndexOf(heading) + 1;
+                while (next < lines[index].Count && lines[index][next] is { HeadingLevel: 0 } wrapped && Math.Abs(wrapped.Size - heading.Size) < 0.5
+                    && heading.Baseline - wrapped.Baseline < heading.Size * 1.6 && title.Contains(Compact(wrapped.PlainText), StringComparison.Ordinal) && Compact(wrapped.PlainText).Length > 0)
+                {
+                    wrapped.HeadingLevel = -1;
+                    next++;
+                }
+            }
+
+            return unmatched;
+        }
+
+        // Without an outline, a short bold or larger line is a heading. A larger size gives a higher level.
+        List<double> sizes = [.. lines.SelectMany(static page => page).Where(line => line.Size > bodySize * 1.15 && line.Kind == LineKind.Text).Select(static line => Math.Round(line.Size)).Distinct().OrderDescending().Take(5)];
+        foreach (Line line in lines.SelectMany(static page => page))
+        {
+            string text = line.PlainText;
+            bool bold = line.Items.All(static item => (item.Style & GlyphStyle.Bold) != 0);
+            if (line.Kind != LineKind.Text || line.InTable || line.IsFootnote || text.Length > 120 || text.EndsWith('.') || !char.IsLetterOrDigit(text[0]))
+                continue;
+
+            int rank = sizes.IndexOf(Math.Round(line.Size));
+            if (rank >= 0)
+                line.HeadingLevel = rank + 1;
+            else if (bold && SectionNumberRegex().IsMatch(text))
+                line.HeadingLevel = Math.Min(6, sizes.Count + 1 + SectionNumberRegex().Match(text).Groups["number"].Value.Count(static c => c == '.'));
+        }
+
+        return unmatched;
+    }
+
+    private static string Compact(string text) => string.Concat(text.Where(char.IsLetterOrDigit)).ToUpperInvariant();
+
+    private static HashSet<string> Vocabulary(List<List<Line>> lines)
+    {
+        HashSet<string> words = new(StringComparer.OrdinalIgnoreCase);
+        foreach (Line line in lines.SelectMany(static page => page).Where(static line => line.Kind == LineKind.Text))
+        {
+            foreach (Match match in WordRegex().Matches(line.PlainText))
+                words.Add(match.Value);
+        }
+
+        return words;
+    }
+
+    private static List<PdfBlock> BuildBlocks(int page, List<Line> lines, List<PdfBookmark> headings)
+    {
+        List<PdfBlock> blocks = [];
+        lines.RemoveAll(static line => line.HeadingLevel == -2);
+        foreach (Line line in lines.Where(static line => line.Kind == LineKind.Math))
+        {
+            foreach (Item brace in line.Items.Where(static item => item.IsTall && item.Text is "{" or "\\{"))
+            {
+                foreach (Line other in lines.Where(other => other.Baseline <= brace.Top && other.Baseline >= brace.Bottom && other.Left > brace.Left))
+                    other.Kind = LineKind.Math;
+            }
+        }
+
+        // The left edge of the text of the page: a paragraph whose first line starts to the right of it is indented.
+        double margin = lines.Where(static line => line.Kind == LineKind.Text && !line.InTable).Select(static line => Math.Round(line.Left)).GroupBy(static left => left)
+            .OrderByDescending(static group => group.Count()).Select(static group => group.Key).DefaultIfEmpty(0).First();
+        double right = lines.Where(static line => line.Kind == LineKind.Text && !line.InTable).Select(static line => line.Right).DefaultIfEmpty(0).Max();
+
+        // TeX indents or centers a display formula. A line of a formula at the margin right after a line of text ends the sentence of that text.
+        for (int i = 1; i < lines.Count; i++)
+        {
+            if (lines[i].Kind == LineKind.Math && lines[i - 1].Kind == LineKind.Text && !lines[i].InTable && Math.Abs(lines[i].Left - margin) < lines[i].Size
+                && lines[i - 1].Baseline - lines[i].Baseline < lines[i].Size * 1.6 && !lines[i].Items.Any(static item => item.IsTall))
+                lines[i].Kind = LineKind.Text;
+        }
+
+        // A lone line of code inside a paragraph is a long name of the API that the paragraph wraps.
+        for (int i = 1; i < lines.Count - 1; i++)
+        {
+            if (lines[i].Kind == LineKind.Code && lines[i - 1].Kind == LineKind.Text && lines[i + 1].Kind == LineKind.Text && !lines[i].InTable
+                && lines[i - 1].Baseline - lines[i].Baseline < lines[i].Size * 1.6 && lines[i].Baseline - lines[i + 1].Baseline < lines[i].Size * 1.6)
+                lines[i].Kind = LineKind.Text;
+        }
+
+        Queue<PdfBookmark> pending = new(headings.OrderByDescending(static bookmark => bookmark.Top ?? double.MaxValue));
+        foreach (Line line in lines)
+        {
+            // A heading without a line of its own goes before the first line below its target.
+            while (pending.Count > 0 && (pending.Peek().Top ?? double.MaxValue) >= line.Top - 2)
+            {
+                PdfBookmark bookmark = pending.Dequeue();
+                blocks.Add(new PdfBlock { Kind = PdfBlockKind.Heading, Page = page, Lines = [], HeadingLevel = Math.Clamp(bookmark.Level + 1, 1, 6), HeadingTitle = bookmark.Title, SyntheticTop = bookmark.Top });
+            }
+
+            if (line.HeadingLevel < 0)
+            {
+                blocks[^1].Lines.Add(line);
+                continue;
+            }
+
+            PdfBlockKind kind = line switch
+            {
+                { HeadingLevel: > 0 } => PdfBlockKind.Heading,
+                { IsFootnote: true } => PdfBlockKind.Footnote,
+                { InTable: true } => PdfBlockKind.Table,
+                { Kind: LineKind.Code } => PdfBlockKind.Code,
+                { Kind: LineKind.Math } => PdfBlockKind.Math,
+                _ when ListMarkerRegex().IsMatch(line.PlainText) => PdfBlockKind.ListItem,
+                _ => PdfBlockKind.Paragraph,
+            };
+
+            PdfBlock? last = blocks.Count > 0 ? blocks[^1] : null;
+            if (last is not null && Continues(last, kind, line, margin, right))
+            {
+                last.Lines.Add(line);
+                continue;
+            }
+
+            blocks.Add(new PdfBlock { Kind = kind, Page = page, Lines = [line], HeadingLevel = Math.Max(0, line.HeadingLevel), HeadingTitle = line.HeadingTitle });
+        }
+
+        foreach (PdfBookmark bookmark in pending)
+            blocks.Add(new PdfBlock { Kind = PdfBlockKind.Heading, Page = page, Lines = [], HeadingLevel = Math.Clamp(bookmark.Level + 1, 1, 6), HeadingTitle = bookmark.Title, SyntheticTop = bookmark.Top });
+
+        return blocks;
+    }
+
+    private static bool Continues(PdfBlock block, PdfBlockKind kind, Line line, double margin, double right)
+    {
+        if (block.Lines.Count == 0)
+            return false;
+
+        Line previous = block.Lines[^1];
+        double gap = previous.Baseline - line.Baseline;
+        switch (block.Kind)
+        {
+            case PdfBlockKind.Heading:
+                return false;
+            case PdfBlockKind.Table:
+                return kind == PdfBlockKind.Table;
+            case PdfBlockKind.Code:
+                return kind == PdfBlockKind.Code && gap < line.Size * 2.2;
+            case PdfBlockKind.Math:
+                return kind == PdfBlockKind.Math && gap < line.Size * 3;
+            case PdfBlockKind.Footnote:
+                return kind == PdfBlockKind.Footnote && !FootnoteStartRegex().IsMatch(line.PlainText);
+        }
+
+        // A paragraph or a list item goes on while the lines keep the leading, the size and the left edge. An indented first line starts a paragraph.
+        if (kind is not (PdfBlockKind.Paragraph) || gap > line.Size * 1.6 || Math.Abs(previous.Size - line.Size) > 1)
+            return false;
+
+        double indent = line.Left - previous.Left;
+        if (block.Kind == PdfBlockKind.ListItem)
+            return indent > -line.Size * 0.5;
+
+        // TeX indents the first line of a paragraph from the margin. A continued line starts at the margin, or where the previous line started.
+        // Inside a framed box every line starts at the indent of the box, and a full previous line shows that the paragraph goes on.
+        bool indented = line.Left - margin > line.Size * 0.8;
+        bool previousFull = previous.Right - previous.Left >= (right - margin) * 0.8;
+        return !indented || (previousFull && Math.Abs(indent) < line.Size * 0.5) || (indent > -line.Size * 0.5 && previous.Left - margin > line.Size * 0.8 && block.Lines.Count > 1);
+    }
+
+    // A short line of bold text alone, without an end of a sentence, is a heading below the outline, such as "Errors" or "Texture-Combined Samplers".
+    private static void MarkBoldHeadings(List<PdfBlock> blocks)
+    {
+        // The labels of a diagram are bold lines too, but they come in groups. A heading stands alone between other blocks.
+        bool[] candidates = [.. blocks.Select(IsBoldLine)];
+        int level = 0;
+        for (int i = 0; i < blocks.Count; i++)
+        {
+            PdfBlock block = blocks[i];
+            if (block.Kind == PdfBlockKind.Heading)
+            {
+                level = block.HeadingLevel;
+                continue;
+            }
+
+            bool alone = (i == 0 || !candidates[i - 1]) && (i == blocks.Count - 1 || !candidates[i + 1]);
+            // The second half of a name of the API that a hyphen broke is no heading.
+            bool continues = i > 0 && blocks[i - 1].Lines.Count > 0 && blocks[i - 1].Lines[^1].PlainText.TrimEnd().EndsWith('-');
+            if (continues)
+                continue;
+
+            if (!candidates[i] || !alone || level is 0 or >= 6)
+                continue;
+
+            block.Kind = PdfBlockKind.Heading;
+            block.HeadingLevel = level + 1;
+            block.HeadingTitle = block.Lines[0].PlainText.Trim();
+        }
+    }
+
+    private static bool IsBoldLine(PdfBlock block)
+    {
+        if (block.Kind != PdfBlockKind.Paragraph || block.Lines.Count != 1)
+            return false;
+
+        Line line = block.Lines[0];
+        string text = line.PlainText.Trim();
+        return text.Length is >= 3 and <= 80 && text[^1] is not ('.' or ':' or ',' or ';' or '-') && char.IsLetter(text[0]) && !text.Contains("://", StringComparison.Ordinal)
+            && !text.Contains('=', StringComparison.Ordinal) && WordRegex().IsMatch(text) && !ChapterRegex().IsMatch(text)
+            && line.Items.All(static item => (item.Style & GlyphStyle.Bold) != 0 && !item.IsMath);
+    }
+
+    // A paragraph at the end of a page without an end of a sentence goes on at the start of the next page when that line is not indented.
+    private static void JoinPageBreaks(List<PdfBlock> blocks)
+    {
+        for (int i = blocks.Count - 1; i > 0; i--)
+        {
+            PdfBlock previous = blocks[i - 1];
+            PdfBlock block = blocks[i];
+            if (block.Page == previous.Page || block.Kind != PdfBlockKind.Paragraph || previous.Kind is not (PdfBlockKind.Paragraph or PdfBlockKind.ListItem))
+                continue;
+
+            string end = previous.Lines[^1].PlainText.TrimEnd();
+            string start = block.Lines[0].PlainText.TrimStart();
+            bool indented = block.Lines.Count > 1 && block.Lines[0].Left - block.Lines[1].Left > block.Lines[0].Size * 0.8;
+            if (end.Length == 0 || start.Length == 0 || indented || end[^1] is '.' or ':' or '!' or '?')
+                continue;
+
+            previous.Continuations.Add((previous.Lines.Count, block.Page));
+            previous.Continuations.AddRange(block.Continuations.Select(continuation => (continuation.Line + previous.Lines.Count, continuation.Page)));
+            previous.Lines.AddRange(block.Lines);
+            previous.Anchors.AddRange(block.Anchors);
+            blocks.RemoveAt(i);
+        }
+    }
+
+    // Each link points at the first block at or below its target. That block gets an anchor named after its page and its place.
+    private static Dictionary<(int Page, int Index), string> AnchorLinkTargets(IReadOnlyList<PdfPageModel> pages, List<PdfBlock> blocks)
+    {
+        Dictionary<int, List<PdfBlock>> byPage = blocks.GroupBy(static block => block.Page).ToDictionary(static group => group.Key, static group => group.ToList());
+        Dictionary<(int Page, int Index), string> targets = [];
+        foreach (PdfPageModel page in pages)
+        {
+            for (int i = 0; i < page.Links.Count; i++)
+            {
+                PageLink link = page.Links[i];
+                PdfBlock? target = FindTarget(byPage, link.TargetPage, link.TargetTop);
+                if (target is null)
+                    continue;
+
+                string anchor = target.Anchors.FirstOrDefault(static name => name.StartsWith('p')) ?? string.Create(CultureInfo.InvariantCulture, $"p{target.Page}-{byPage[target.Page].IndexOf(target)}");
+                if (!target.Anchors.Contains(anchor))
+                    target.Anchors.Add(anchor);
+
+                targets[(page.Number, i)] = anchor;
+            }
+        }
+
+        return targets;
+    }
+
+    private static PdfBlock? FindTarget(Dictionary<int, List<PdfBlock>> byPage, int page, double? top)
+    {
+        if (!byPage.TryGetValue(page, out List<PdfBlock>? blocks) || blocks.Count == 0)
+            return byPage.TryGetValue(page + 1, out List<PdfBlock>? next) && next.Count > 0 ? next[0] : null;
+
+        if (top is not { } y)
+            return blocks[0];
+
+        // A block belongs to the page where it starts. A joined paragraph may hold lines of the next page, so the search reads its first line.
+        return blocks.FirstOrDefault(block => block.Top <= y + 3) ?? blocks[^1];
+    }
+
+    [GeneratedRegex(@"\d+")]
+    private static partial Regex DigitsRegex();
+
+    [GeneratedRegex(@"^\s*(?:\d+|[A-Z])(?:\.\d+)*\.?\s+")]
+    private static partial Regex LeadingNumberRegex();
+
+    [GeneratedRegex(@"^\s*(?:Chapter|Appendix|Глава|Приложение)\s+[\dA-Z]+\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex ChapterRegex();
+
+    // A running header of a chapter: capitals with a page number, such as "8.14. TEXTURE MINIFICATION 259", or a lone page number.
+    [GeneratedRegex(@"^\s*(?:\d+|(?=(?:[^A-Z]*[A-Z]){3})(?:\d+\s+[^a-z]+|[^a-z]+\s+\d+))\s*$", RegexOptions.CultureInvariant)]
+    private static partial Regex PageHeaderRegex();
+
+    [GeneratedRegex(@"^\s*(?:\d+|[*†‡§])\s*\S")]
+    private static partial Regex FootnoteStartRegex();
+
+    [GeneratedRegex(@"^\s*(?:[•◦▪‣–—-]|\(?\d{1,2}[.)]|\(?[a-z][.)])\s")]
+    private static partial Regex ListMarkerRegex();
+
+    [GeneratedRegex(@"^(?<number>\d+(?:\.\d+)*)\.?\s+\S")]
+    private static partial Regex SectionNumberRegex();
+
+    [GeneratedRegex(@"\p{L}{3,}")]
+    private static partial Regex WordRegex();
+}
+
+/// <summary>
+/// The kind of a block of a PDF page.
+/// </summary>
+internal enum PdfBlockKind
+{
+    Heading,
+    Paragraph,
+    ListItem,
+    Code,
+    Math,
+    Table,
+    Footnote,
+}
+
+/// <summary>
+/// A block of a PDF page: the lines of one heading, paragraph, list item, code, formula, table or footnote.
+/// </summary>
+internal sealed class PdfBlock
+{
+    public required PdfBlockKind Kind { get; set; }
+
+    public required int Page { get; init; }
+
+    public required List<Line> Lines { get; init; }
+
+    public int HeadingLevel { get; set; }
+
+    public string? HeadingTitle { get; set; }
+
+    /// <summary>Gets the height of the target of a heading that has no line of its own, see <see cref="PdfMarkdownImporter"/>.</summary>
+    public double? SyntheticTop { get; init; }
+
+    /// <summary>Gets the top of the block: its first line, or the target of a heading without a line.</summary>
+    public double Top => Lines.Count > 0 ? Lines[0].Top : SyntheticTop ?? double.MaxValue;
+
+    /// <summary>Gets the anchors that the Markdown writes before the block.</summary>
+    public List<string> Anchors { get; } = [];
+
+    /// <summary>Gets the places where the block goes on at a new page: the index of the first line there and the page.</summary>
+    public List<(int Line, int Page)> Continuations { get; } = [];
+}

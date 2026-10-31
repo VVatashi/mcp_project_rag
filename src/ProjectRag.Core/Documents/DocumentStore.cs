@@ -119,7 +119,7 @@ public sealed class DocumentStore(Database database)
         await using NpgsqlConnection connection = await database.OpenAsync(cancellationToken);
         IEnumerable<ChunkView> rows = await connection.QueryAsync<ChunkView>(new CommandDefinition(
             """
-            SELECT c.chunk_id, c.ordinal, c.heading, c.body, c.char_start, c.char_end,
+            SELECT c.chunk_id, c.ordinal, c.heading, c.body, c.char_start, c.char_end, c.section_id, c.page_start, c.page_end, c.overlap_chars,
                    EXISTS (SELECT 1 FROM chunk_embedding e WHERE e.chunk_id = c.chunk_id AND e.model_id = @ModelId) AS has_embedding
             FROM chunk c
             WHERE c.document_id = @DocumentId
@@ -153,14 +153,14 @@ public sealed class DocumentStore(Database database)
     }
 
     /// <summary>
-    /// Writes a document and replaces its chunks in one transaction.
+    /// Writes a document and replaces its sections, anchors, chunks and links in one transaction.
     /// </summary>
     /// <remarks>
     /// A new chunk with the text of a stored chunk takes over its vectors, so an edit of a long document embeds only the changed chunks.
     /// The search covers all documents, so a chunk that another document repeats also needs no new vector.
     /// </remarks>
     /// <returns>The number of vectors that the new chunks took over.</returns>
-    internal async Task<int> SaveAsync(int sourceId, string path, DocumentText text, DocumentFile file, IReadOnlyList<(TextChunk Chunk, string Hash)> chunks, CancellationToken cancellationToken)
+    internal async Task<int> SaveAsync(int sourceId, string path, DocumentStructure structure, DocumentFile file, IReadOnlyList<(TextChunk Chunk, string Hash)> chunks, CancellationToken cancellationToken)
     {
         await using NpgsqlConnection connection = await database.OpenAsync(cancellationToken);
         await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -173,17 +173,63 @@ public sealed class DocumentStore(Database database)
                 size_bytes = EXCLUDED.size_bytes, modified_at = EXCLUDED.modified_at, indexed_at = now()
             RETURNING document_id
             """,
-            new { SourceId = sourceId, Path = path, text.Title, text.Content, file.ContentHash, file.ParserVersion, file.SizeBytes, file.ModifiedAt },
+            new { SourceId = sourceId, Path = path, structure.Title, structure.Content, file.ContentHash, file.ParserVersion, file.SizeBytes, file.ModifiedAt },
             transaction, cancellationToken: cancellationToken));
 
         long[] oldIds = [.. await connection.QueryAsync<long>(new CommandDefinition(
             "SELECT chunk_id FROM chunk WHERE document_id = @DocumentId", new { DocumentId = documentId }, transaction, cancellationToken: cancellationToken))];
+        await connection.ExecuteAsync(new CommandDefinition(
+            "DELETE FROM section WHERE document_id = @DocumentId; DELETE FROM anchor WHERE document_id = @DocumentId;",
+            new { DocumentId = documentId }, transaction, cancellationToken: cancellationToken));
 
-        long[] newIds = [.. await connection.QueryAsync<long>(new CommandDefinition(
+        IReadOnlyList<DocumentSection> sections = structure.Sections;
+        Dictionary<int, long> sectionIds = (await connection.QueryAsync<(int Ordinal, long SectionId)>(new CommandDefinition(
             """
-            INSERT INTO chunk (document_id, ordinal, heading, body, char_start, char_end, body_hash)
-            SELECT @DocumentId, * FROM unnest(@Ordinals, @Headings, @Bodies, @Starts, @Ends, @Hashes)
-            RETURNING chunk_id
+            INSERT INTO section (document_id, ordinal, level, number, title, anchor, path, char_start, char_end, page_start, page_end)
+            SELECT @DocumentId, * FROM unnest(@Ordinals, @Levels, @Numbers, @Titles, @Anchors, @Paths, @Starts, @Ends, @PageStarts, @PageEnds)
+            RETURNING ordinal, section_id
+            """,
+            new
+            {
+                DocumentId = documentId,
+                Ordinals = sections.Select(static section => section.Index).ToArray(),
+                Levels = sections.Select(static section => (short)section.Level).ToArray(),
+                Numbers = sections.Select(static section => section.Number).ToArray(),
+                Titles = sections.Select(static section => section.Title).ToArray(),
+                Anchors = sections.Select(static section => section.Anchor).ToArray(),
+                Paths = sections.Select(static section => section.Path).ToArray(),
+                Starts = sections.Select(static section => section.Start).ToArray(),
+                Ends = sections.Select(static section => section.End).ToArray(),
+                PageStarts = sections.Select(section => structure.PageAt(section.Start)).ToArray(),
+                PageEnds = sections.Select(section => structure.PageAt(Math.Max(section.Start, section.End - 1))).ToArray(),
+            },
+            transaction, cancellationToken: cancellationToken))).ToDictionary(static row => row.Ordinal, static row => row.SectionId);
+
+        await connection.ExecuteAsync(new CommandDefinition(
+            """
+            UPDATE section s SET parent_id = p.section_id
+            FROM unnest(@Ordinals, @Parents) AS x(ordinal, parent)
+            JOIN section p ON p.document_id = @DocumentId AND p.ordinal = x.parent
+            WHERE s.document_id = @DocumentId AND s.ordinal = x.ordinal
+            """,
+            new
+            {
+                DocumentId = documentId,
+                Ordinals = sections.Where(static section => section.Parent >= 0).Select(static section => section.Index).ToArray(),
+                Parents = sections.Where(static section => section.Parent >= 0).Select(static section => section.Parent).ToArray(),
+            },
+            transaction, cancellationToken: cancellationToken));
+
+        await connection.ExecuteAsync(new CommandDefinition(
+            "INSERT INTO anchor (document_id, name, char_offset) SELECT @DocumentId, * FROM unnest(@Names, @Offsets)",
+            new { DocumentId = documentId, Names = structure.Anchors.Keys.ToArray(), Offsets = structure.Anchors.Values.ToArray() },
+            transaction, cancellationToken: cancellationToken));
+
+        Dictionary<int, long> chunkIds = (await connection.QueryAsync<(int Ordinal, long ChunkId)>(new CommandDefinition(
+            """
+            INSERT INTO chunk (document_id, ordinal, heading, body, char_start, char_end, body_hash, section_id, page_start, page_end, overlap_chars)
+            SELECT @DocumentId, * FROM unnest(@Ordinals, @Headings, @Bodies, @Starts, @Ends, @Hashes, @Sections, @PageStarts, @PageEnds, @Overlaps)
+            RETURNING ordinal, chunk_id
             """,
             new
             {
@@ -194,9 +240,41 @@ public sealed class DocumentStore(Database database)
                 Starts = chunks.Select(static item => item.Chunk.Start).ToArray(),
                 Ends = chunks.Select(static item => item.Chunk.End).ToArray(),
                 Hashes = chunks.Select(static item => item.Hash).ToArray(),
+                Sections = chunks.Select(item => sectionIds.TryGetValue(item.Chunk.Section, out long id) ? id : (long?)null).ToArray(),
+                PageStarts = chunks.Select(static item => item.Chunk.PageStart).ToArray(),
+                PageEnds = chunks.Select(static item => item.Chunk.PageEnd).ToArray(),
+                Overlaps = chunks.Select(static item => item.Chunk.OverlapChars).ToArray(),
             },
-            transaction, cancellationToken: cancellationToken))];
+            transaction, cancellationToken: cancellationToken))).ToDictionary(static row => row.Ordinal, static row => row.ChunkId);
 
+        // A link belongs to each chunk whose range holds its start. An overlap gives a link to both chunks.
+        List<(long ChunkId, int Ordinal, DocumentLink Link)> links = [];
+        IReadOnlyList<DocumentLink> sorted = structure.Links;
+        foreach ((TextChunk chunk, _) in chunks)
+        {
+            int ordinal = 0;
+            for (int i = FirstLinkAt(sorted, chunk.Start); i < sorted.Count && sorted[i].Start < chunk.End; i++)
+                links.Add((chunkIds[chunk.Ordinal], ordinal++, sorted[i]));
+        }
+
+        await connection.ExecuteAsync(new CommandDefinition(
+            """
+            INSERT INTO chunk_link (chunk_id, ordinal, kind, label, target_path, target_anchor, char_start)
+            SELECT * FROM unnest(@ChunkIds, @Ordinals, @Kinds, @Labels, @Paths, @Anchors, @Starts)
+            """,
+            new
+            {
+                ChunkIds = links.Select(static item => item.ChunkId).ToArray(),
+                Ordinals = links.Select(static item => item.Ordinal).ToArray(),
+                Kinds = links.Select(static item => item.Link.Kind == LinkKind.Link ? "link" : "mention").ToArray(),
+                Labels = links.Select(static item => item.Link.Label).ToArray(),
+                Paths = links.Select(static item => item.Link.TargetPath).ToArray(),
+                Anchors = links.Select(static item => item.Link.TargetAnchor).ToArray(),
+                Starts = links.Select(static item => item.Link.Start).ToArray(),
+            },
+            transaction, cancellationToken: cancellationToken));
+
+        long[] newIds = [.. chunkIds.Values];
         int reused = newIds.Length == 0 ? 0 : await connection.ExecuteAsync(new CommandDefinition(
             """
             INSERT INTO chunk_embedding (chunk_id, model_id, embedding)
@@ -232,6 +310,22 @@ public sealed class DocumentStore(Database database)
             new { SourceId = sourceId, Paths = paths.ToArray() }, cancellationToken: cancellationToken));
     }
 
+    private static int FirstLinkAt(IReadOnlyList<DocumentLink> links, int start)
+    {
+        int low = 0;
+        int high = links.Count;
+        while (low < high)
+        {
+            int middle = (low + high) / 2;
+            if (links[middle].Start < start)
+                low = middle + 1;
+            else
+                high = middle;
+        }
+
+        return low;
+    }
+
     private static string EscapeLike(string text) => text.Replace(@"\", @"\\", StringComparison.Ordinal).Replace("%", @"\%", StringComparison.Ordinal).Replace("_", @"\_", StringComparison.Ordinal);
 }
 
@@ -239,7 +333,7 @@ public sealed class DocumentStore(Database database)
 /// The facts of a file that the indexer stores with its document.
 /// </summary>
 /// <param name="ContentHash">The SHA-256 of the bytes in hexadecimal.</param>
-/// <param name="ParserVersion">The version of the reader and the chunker.</param>
+/// <param name="ParserVersion">The version of the importers and the options of the chunker.</param>
 /// <param name="SizeBytes">The size in bytes.</param>
 /// <param name="ModifiedAt">The time of the last write in UTC, cut to microseconds like the timestamps of PostgreSQL.</param>
-internal sealed record DocumentFile(string ContentHash, int ParserVersion, long SizeBytes, DateTime ModifiedAt);
+internal sealed record DocumentFile(string ContentHash, string ParserVersion, long SizeBytes, DateTime ModifiedAt);

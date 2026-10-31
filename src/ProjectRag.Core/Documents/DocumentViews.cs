@@ -104,6 +104,26 @@ public sealed class ChunkView
     /// Gets a value that tells whether the chunk has a vector of the current embedding model.
     /// </summary>
     public bool HasEmbedding { get; init; }
+
+    /// <summary>
+    /// Gets the key of the section.
+    /// </summary>
+    public long? SectionId { get; init; }
+
+    /// <summary>
+    /// Gets the first page, or <see langword="null"/> for a document without pages.
+    /// </summary>
+    public int? PageStart { get; init; }
+
+    /// <summary>
+    /// Gets the last page.
+    /// </summary>
+    public int? PageEnd { get; init; }
+
+    /// <summary>
+    /// Gets the number of characters at the start that the previous chunk also holds.
+    /// </summary>
+    public int OverlapChars { get; init; }
 }
 
 /// <summary>
@@ -121,5 +141,5 @@ internal sealed class DocumentFileState
 
     public string ContentHash { get; init; } = string.Empty;
 
-    public int ParserVersion { get; init; }
+    public string ParserVersion { get; init; } = string.Empty;
 }

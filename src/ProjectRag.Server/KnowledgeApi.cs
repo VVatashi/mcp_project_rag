@@ -108,6 +108,27 @@ internal static class KnowledgeApi
         api.MapGet("/documents/{documentId:long}/chunks", static async (long documentId, DocumentStore documents, EmbeddingModelRegistry models, CancellationToken cancellationToken) =>
             await documents.GetChunksAsync(documentId, await CurrentModelIdAsync(models, cancellationToken), cancellationToken));
 
+        api.MapGet("/documents/{documentId:long}/sections", static (long documentId, StructureStore structure, CancellationToken cancellationToken) =>
+            structure.GetSectionsAsync(documentId, cancellationToken));
+
+        // The original file, so the dashboard can show a PDF page next to its Markdown.
+        api.MapGet("/documents/{documentId:long}/file", static async Task<Results<PhysicalFileHttpResult, NotFound>> (long documentId, StructureStore structure, CancellationToken cancellationToken) =>
+        {
+            if (await structure.GetFilePathAsync(documentId, cancellationToken) is not { } path || !File.Exists(path))
+                return TypedResults.NotFound();
+
+            string type = Path.GetExtension(path).ToUpperInvariant() switch
+            {
+                ".PDF" => "application/pdf",
+                ".MD" or ".MARKDOWN" => "text/markdown; charset=utf-8",
+                _ => "text/plain; charset=utf-8",
+            };
+            return TypedResults.PhysicalFile(path, type, enableRangeProcessing: true);
+        });
+
+        api.MapGet("/chunks/{chunkId:long}", static async Task<Results<Ok<ChunkDetail>, NotFound>> (long chunkId, StructureStore structure, EmbeddingModelRegistry models, CancellationToken cancellationToken) =>
+            await structure.GetChunkAsync(chunkId, await CurrentModelIdAsync(models, cancellationToken), cancellationToken) is { } chunk ? TypedResults.Ok(chunk) : TypedResults.NotFound());
+
         api.MapPost("/search", static async Task<Results<Ok<SearchResult>, ValidationProblem>> (SearchRequest request, SearchService search, CancellationToken cancellationToken) =>
         {
             try

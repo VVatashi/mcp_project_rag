@@ -84,6 +84,68 @@ export interface Chunk {
   charStart: number;
   charEnd: number;
   hasEmbedding: boolean;
+  sectionId: number | null;
+  pageStart: number | null;
+  pageEnd: number | null;
+  overlapChars: number;
+}
+
+export interface Section {
+  sectionId: number;
+  parentId: number | null;
+  ordinal: number;
+  level: number;
+  number: string | null;
+  title: string;
+  path: string;
+  charStart: number;
+  charEnd: number;
+  pageStart: number | null;
+  pageEnd: number | null;
+  chunkCount: number;
+}
+
+export interface ChunkLink {
+  kind: 'link' | 'mention';
+  label: string;
+  targetPath: string | null;
+  targetAnchor: string | null;
+  targetDocumentId: number | null;
+  targetChunkId: number | null;
+  targetHeading: string | null;
+  targetPage: number | null;
+}
+
+export interface ChunkBacklink {
+  chunkId: number;
+  documentId: number;
+  path: string;
+  heading: string;
+  label: string;
+  kind: 'link' | 'mention';
+}
+
+export interface ChunkDetail {
+  chunkId: number;
+  documentId: number;
+  source: string;
+  path: string;
+  title: string;
+  ordinal: number;
+  heading: string;
+  body: string;
+  charStart: number;
+  charEnd: number;
+  pageStart: number | null;
+  pageEnd: number | null;
+  overlapChars: number;
+  sectionId: number | null;
+  sectionNumber: string | null;
+  hasEmbedding: boolean;
+  previousChunkId: number | null;
+  nextChunkId: number | null;
+  links: ChunkLink[];
+  backlinks: ChunkBacklink[];
 }
 
 export interface SearchRequest {
@@ -103,6 +165,10 @@ export interface SearchHit {
   body: string;
   charStart: number;
   charEnd: number;
+  pageStart: number | null;
+  pageEnd: number | null;
+  sectionId: number | null;
+  linkCount: number;
   vectorRank: number | null;
   textRank: number | null;
   score: number;

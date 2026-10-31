@@ -96,11 +96,12 @@ public sealed class Indexer(
     }
 
     /// <summary>
-    /// Gets the version that the documents store: a change of the readers, the chunker or the size of a chunk reads every file again.
+    /// Gets the version that the documents store: a change of the importers, the chunker or the sizes of the chunks reads every file again.
     /// </summary>
-    /// <param name="maxChars">The most characters in a chunk.</param>
-    /// <returns>The version.</returns>
-    internal static int ParserVersion(int maxChars) => (DocumentReader.Version * 100_000) + maxChars;
+    /// <param name="options">The options of the chunker.</param>
+    /// <returns>The version, for example <c>2;1800;3000;300</c>.</returns>
+    internal static string ParserVersion(ChunkingOptions options) =>
+        string.Create(CultureInfo.InvariantCulture, $"{DocumentReader.Version};{options.MaxChars};{options.AtomicMaxChars};{options.OverlapChars}");
 
     /// <summary>
     /// Computes the SHA-256 of bytes in lowercase hexadecimal.
@@ -110,8 +111,8 @@ public sealed class Indexer(
     private async Task SyncFilesAsync(Source source, IndexRun run, List<string> warnings, Action<IndexRun>? progress, CancellationToken cancellationToken)
     {
         ChunkingOptions options = chunking.CurrentValue;
-        MarkdownChunker chunker = new(options.MaxChars);
-        int parserVersion = ParserVersion(options.MaxChars);
+        DocumentChunker chunker = new(options);
+        string parserVersion = ParserVersion(options);
         Dictionary<string, DocumentFileState> known = await documents.GetFileStatesAsync(source.SourceId, cancellationToken);
         IReadOnlyList<string> paths = SourceScanner.Scan(source);
         run.FilesSeen = paths.Count;
@@ -142,7 +143,7 @@ public sealed class Indexer(
             }
 
             byte[] bytes;
-            DocumentText text;
+            DocumentStructure structure;
             IReadOnlyList<TextChunk> chunks;
             try
             {
@@ -154,8 +155,9 @@ public sealed class Indexer(
                     continue;
                 }
 
-                text = DocumentReader.Read(path, bytes);
-                chunks = chunker.Split(text);
+                // Every format becomes Markdown first. The structure and the chunks come from the Markdown.
+                structure = MarkdownStructureReader.Read(DocumentReader.Read(path, bytes), path);
+                chunks = chunker.Split(structure);
             }
             // A locked, unreadable or broken file must not stop the run. PdfPig throws many kinds of exceptions on a damaged PDF.
 #pragma warning disable CA1031
@@ -170,7 +172,7 @@ public sealed class Indexer(
             DocumentFile file = new(Hash(bytes), parserVersion, bytes.LongLength, modifiedAt);
 
             List<(TextChunk Chunk, string Hash)> hashed = [.. chunks.Select(static chunk => (chunk, Hash(Encoding.UTF8.GetBytes(chunk.EmbeddingText))))];
-            run.ChunksReused += await documents.SaveAsync(source.SourceId, path, text, file, hashed, cancellationToken);
+            run.ChunksReused += await documents.SaveAsync(source.SourceId, path, structure, file, hashed, cancellationToken);
             if (state is null)
                 run.DocumentsAdded++;
             else

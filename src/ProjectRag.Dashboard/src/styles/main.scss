@@ -528,10 +528,8 @@ textarea {
     overflow-wrap: anywhere;
   }
 
-  &__body {
-    margin: 8px 0 0;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
+  .markdown {
+    margin-top: 8px;
   }
 }
 
@@ -614,14 +612,166 @@ textarea {
     overflow-wrap: anywhere;
   }
 
-  &__body {
-    margin: 6px 0 0;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
+  .markdown {
+    margin-top: 6px;
     font-size: 13px;
   }
 }
 
 .current-run p {
   margin: 0 0 4px;
+}
+
+// Markdown of documents and chunks
+
+.markdown {
+  overflow-wrap: anywhere;
+
+  > :first-child {
+    margin-top: 0;
+  }
+
+  > :last-child {
+    margin-bottom: 0;
+  }
+
+  p,
+  ul,
+  ol,
+  table,
+  pre {
+    margin: 0 0 10px;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    margin: 16px 0 8px;
+    font-size: 15px;
+  }
+
+  code {
+    padding: 1px 4px;
+    border-radius: 4px;
+    background: var(--surface-alt);
+    font: 12.5px var(--mono);
+  }
+
+  pre {
+    padding: 10px 12px;
+    overflow-x: auto;
+    border-radius: 6px;
+    background: var(--surface-alt);
+
+    code {
+      padding: 0;
+      background: none;
+    }
+  }
+
+  table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    border-collapse: collapse;
+  }
+
+  th,
+  td {
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    text-align: left;
+    vertical-align: top;
+  }
+
+  .katex-display {
+    margin: 8px 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .footnotes {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+}
+
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+
+  @media (max-width: 960px) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  > .panel:nth-child(2) {
+    position: sticky;
+    top: 68px;
+  }
+}
+
+.pdf-page {
+  max-height: 80vh;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--surface-alt);
+
+  canvas {
+    display: block;
+    background: #fff;
+  }
+}
+
+.links {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sections {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.formulas {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.formula {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+
+  &--error {
+    border-color: var(--error);
+  }
+
+  &__error {
+    color: var(--error);
+  }
+
+  &__source {
+    margin: 6px 0 0;
+    font: 11.5px var(--mono);
+    color: var(--text-muted);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
 }

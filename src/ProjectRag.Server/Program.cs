@@ -49,7 +49,15 @@ catch (Exception exception)
 app.UseExceptionHandler();
 app.UseTokenCheck();
 app.UseDefaultFiles();
-app.UseStaticFiles();
+// The bundles of the dashboard carry a hash in their names. The page that names them must not stay in the cache after an update.
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = static context =>
+    {
+        if (context.File.Name.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
+            context.Context.Response.Headers.CacheControl = "no-cache";
+    },
+});
 app.MapKnowledgeApi();
 app.MapMcp("/mcp");
 

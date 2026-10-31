@@ -1,5 +1,6 @@
 import type {
   Chunk,
+  ChunkDetail,
   DocumentContent,
   DocumentPage,
   DocumentSummary,
@@ -7,6 +8,7 @@ import type {
   KnowledgeStatus,
   SearchRequest,
   SearchResult,
+  Section,
   Source,
   SourceInput,
 } from './types';
@@ -103,6 +105,18 @@ export const api = {
   content: (documentId: number, offset: number, length: number) =>
     request<DocumentContent>(`/api/documents/${documentId}/content${query({ offset, length })}`),
   chunks: (documentId: number) => request<Chunk[]>(`/api/documents/${documentId}/chunks`),
+  sections: (documentId: number) => request<Section[]>(`/api/documents/${documentId}/sections`),
+  chunk: (chunkId: number) => request<ChunkDetail>(`/api/chunks/${chunkId}`),
+
+  /** Loads the bytes of the original file. A link to the API cannot carry the token, a fetch can. */
+  fileBytes: async (documentId: number) => {
+    const headers = new Headers();
+    const token = getToken();
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+    const response = await fetch(`/api/documents/${documentId}/file`, { headers });
+    if (!response.ok) throw new ApiError(response.status, `The file is not available (${response.status}).`);
+    return new Uint8Array(await response.arrayBuffer());
+  },
 
   search: (body: SearchRequest) => request<SearchResult>('/api/search', { method: 'POST', body: JSON.stringify(body) }),
 };
