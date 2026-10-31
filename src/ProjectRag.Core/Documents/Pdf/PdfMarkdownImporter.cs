@@ -511,6 +511,24 @@ public static partial class PdfMarkdownImporter
     // and the braces as math symbols. Such a line is not mostly monospace, so a run of code takes in the lines next to it that look like code.
     private static void ExtendCode(List<Line> lines)
     {
+        // A loop of pseudocode may hold no line that is mostly monospace, as "for (int i = 0; i < count; i++) {" with a variable in math italics.
+        // A run of lines that look like code, from a line that opens a brace to the line of the closing brace, is code.
+        for (int i = 0; i < lines.Count; i++)
+        {
+            if (lines[i].Kind == LineKind.Code || lines[i].InTable || !lines[i].PlainText.TrimEnd().EndsWith('{') || !LooksLikeCode(lines[i], lines[i]))
+                continue;
+
+            int end = i + 1;
+            while (end < lines.Count && !IsClosingBrace(lines[end]) && LooksLikeCode(lines[end], lines[end - 1]))
+                end++;
+
+            if (end < lines.Count && IsClosingBrace(lines[end]) && LooksLikeCode(lines[end], lines[end - 1]))
+            {
+                for (int j = i; j <= end; j++)
+                    lines[j].Kind = LineKind.Code;
+            }
+        }
+
         for (int i = 0; i < lines.Count; i++)
         {
             if (lines[i].Kind != LineKind.Code || lines[i].InTable)
@@ -542,6 +560,8 @@ public static partial class PdfMarkdownImporter
 
     private static bool IsNear(Line line, Line neighbor) => Math.Abs(neighbor.Baseline - line.Baseline) < line.Size * 2.2;
 
+    private static bool IsClosingBrace(Line line) => line.PlainText.Trim() is ['}', ..] text && text.All(static c => c is '}' or ';' or ' ');
+
     private static bool LooksLikeCode(Line line, Line neighbor)
     {
         if (line.Kind == LineKind.Code)
@@ -554,7 +574,8 @@ public static partial class PdfMarkdownImporter
         if (text.Length == 0 || text.All(static c => c is '{' or '}' or '(' or ')' or '[' or ']' or ';' or ' '))
             return true;
 
-        if (IsArgumentList(line))
+        // A comment of a listing may be set in the text font, such as "/* or */" or "// the default". A wrapped address such as "//www.khronos.org" is no comment.
+        if (IsArgumentList(line) || CodeCommentRegex().IsMatch(text))
             return true;
 
         if (text.EndsWith('.'))
@@ -780,6 +801,9 @@ public static partial class PdfMarkdownImporter
 
     [GeneratedRegex(@"^\s*[•◦▪‣]\s")]
     private static partial Regex BulletStartRegex();
+
+    [GeneratedRegex(@"^(?:/\*.*\*/$|// )")]
+    private static partial Regex CodeCommentRegex();
 
     // The hidden bookmarks of a word processor: "OLE_LINK6", "_Toc123", "_Ref456".
     [GeneratedRegex(@"^(?:OLE_LINK|_Toc|_Ref|_Hlk|DD)\w*$", RegexOptions.CultureInvariant)]

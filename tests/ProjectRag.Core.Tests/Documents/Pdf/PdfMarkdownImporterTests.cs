@@ -79,6 +79,44 @@ public sealed class PdfMarkdownImporterTests
     }
 
     [Fact]
+    public void Convert_ReadsALoopWithoutAMonospaceLineAsCode()
+    {
+        // No line of the loop is mostly monospace: the bound and the variables are math italics, and a comment is in the text font.
+        PageBuilder page = new(2);
+        page.Text("It is equivalent to the following loop over the names that the application passes:", 72, 720);
+        double x = page.Text("for (int i = 0; i <", 90, 700, 10, GlyphStyle.Mono, "Courier");
+        x = page.Text("count", x + 3, 700, 10, MathItalic, "CMMI10");
+        x = page.Text("; i++)", x, 700, 10, GlyphStyle.Mono, "Courier");
+        page.Text("{", x + 3, 700, 10, GlyphStyle.Math, "CMSY10");
+        x = page.Text("Enable", 100, 688);
+        x = page.Text("(", x, 688, 10, GlyphStyle.Mono, "Courier");
+        x = page.Text("s", x, 688, 10, MathItalic, "CMMI10");
+        x = page.Text("c", x, 686, 7, MathItalic, "CMMI7");
+        page.Text(", i);", x, 688, 10, GlyphStyle.Mono, "Courier");
+        page.Text("/* or */", 100, 676);
+        page.Text("}", 90, 664, 10, GlyphStyle.Math, "CMSY10");
+        page.Text("The loop stops at the end of the list of the names that the application passes.", 72, 640);
+
+        string markdown = Convert(page);
+
+        Assert.Contains("```\nfor (int i = 0; i < count; i++) {\n  Enable(s_c, i);\n  /* or */\n}\n```", markdown, StringComparison.Ordinal);
+        Assert.DoesNotContain("$$", markdown, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Convert_KeepsAWrappedAddressOutOfTheCode()
+    {
+        PageBuilder page = new(2);
+        page.Text("int value = 1;", 90, 700, 10, GlyphStyle.Mono, "Courier");
+        page.Text("//www.khronos.org/registry", 72, 688);
+
+        string markdown = Convert(page);
+
+        Assert.Contains("```\nint value = 1;\n```", markdown, StringComparison.Ordinal);
+        Assert.Contains("\n//www.khronos.org/registry", markdown, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Convert_GoesOnWithTheArgumentsOfAWrappedCall()
     {
         PageBuilder page = new(2);

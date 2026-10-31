@@ -320,14 +320,19 @@ internal sealed partial class PdfMarkdownWriter(HashSet<string> vocabulary, Dict
     {
         StringBuilder builder = new();
         Item? previous = null;
+        double previousRight = 0;
         foreach (Item item in run)
         {
             if (previous is not null)
             {
                 double width = PdfLayout.MonoWidth(previous);
-                int spaces = (int)Math.Round((item.Left - previous.Right) / width);
+                // The gap after a variable starts at the end of its scripts: "s_c, t_c". The mark of a footnote that the text leaves out
+                // fills its gap too, unless the script is a piece of another line that reaches past the next item.
+                double scripts = previous.Sub.Concat(previous.Sup).Select(static script => script.Right).DefaultIfEmpty(previousRight).Max();
+                double from = scripts <= item.Left + 0.5 ? Math.Max(previousRight, scripts) : previousRight;
+                int spaces = (int)Math.Round((item.Left - from) / width);
                 // An italic parameter after a monospace type keeps its space: "double l".
-                if (spaces == 0 && PdfLayout.NeedsSpace(previous, item))
+                if (spaces == 0 && item.Left - from > Math.Max(previous.Size, item.Size) * 0.1 && PdfLayout.NeedsSpace(previous, item))
                     spaces = 1;
 
                 // Beside a word of another font the gap is a space between words, not a column of the monospace grid.
@@ -339,6 +344,29 @@ internal sealed partial class PdfMarkdownWriter(HashSet<string> vocabulary, Dict
             }
 
             builder.Append(item.Text);
+            previousRight = item.Right;
+            // A variable may carry a short script, such as the c of s_c or the i of T_i. A long script is a piece of another line.
+            List<Item> sub = [.. item.Sub];
+            string subText = string.Concat(sub.Select(static script => script.Text));
+            if (subText.Length is > 0 and <= 3)
+            {
+                builder.Append('_').Append(subText);
+                previousRight = Math.Max(previousRight, sub.Max(static script => script.Right));
+            }
+
+            // A prime is an apostrophe as in the formulas. A mark of a footnote, such as "1" or "†", stays out of a name.
+            string supText = string.Concat(item.Sup.Select(static script => script.Text)).Replace("″", "''", StringComparison.Ordinal).Replace('′', '\'');
+            if (supText.Length > 0 && supText.All(static c => c == '\''))
+            {
+                builder.Append(supText);
+                previousRight = Math.Max(previousRight, item.Sup.Max(static script => script.Right));
+            }
+            else if (supText.Length is > 0 and <= 3 && supText.All(char.IsLetterOrDigit) && !supText.All(char.IsDigit))
+            {
+                builder.Append('^').Append(supText);
+                previousRight = Math.Max(previousRight, item.Sup.Max(static script => script.Right));
+            }
+
             previous = item;
         }
 
