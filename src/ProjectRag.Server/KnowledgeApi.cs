@@ -172,6 +172,9 @@ internal static class KnowledgeApi
         input.Description = input.Description?.Trim();
         input.CategoryRules = input.CategoryRules?.Where(static rule => rule is not null)
             .Select(static rule => new CategoryRule { Pattern = rule.Pattern?.Trim() ?? string.Empty, Category = rule.Category?.Trim() ?? string.Empty }).ToList();
+        // The expression and the replacement keep their spaces: a space may be a part of the fix.
+        input.Replacements = input.Replacements?.Where(static replacement => replacement is not null)
+            .Select(static replacement => new TextReplacement { Pattern = replacement.Pattern?.Trim() ?? string.Empty, Find = replacement.Find ?? string.Empty, Replace = replacement.Replace ?? string.Empty }).ToList();
     }
 }
 

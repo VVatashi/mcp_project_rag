@@ -37,14 +37,25 @@ public static class SourceScanner
     public static string Category(Source source, string path)
     {
         ArgumentNullException.ThrowIfNull(source);
-        foreach (CategoryRule rule in source.CategoryRules)
-        {
-            Matcher matcher = new(StringComparison.OrdinalIgnoreCase);
-            matcher.AddInclude(rule.Pattern);
-            if (matcher.Match(path).HasMatches)
-                return rule.Category;
-        }
+        return source.CategoryRules.FirstOrDefault(rule => Matches(rule.Pattern, path))?.Category ?? source.Name;
+    }
 
-        return source.Name;
+    /// <summary>
+    /// Finds the replacements of a source for a document.
+    /// </summary>
+    /// <param name="source">The source.</param>
+    /// <param name="path">The path of the document relative to the folder of the source.</param>
+    /// <returns>The replacements whose patterns match the path, in their order.</returns>
+    public static IReadOnlyList<TextReplacement> Replacements(Source source, string path)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        return [.. source.Replacements.Where(replacement => Matches(replacement.Pattern, path))];
+    }
+
+    private static bool Matches(string pattern, string path)
+    {
+        Matcher matcher = new(StringComparison.OrdinalIgnoreCase);
+        matcher.AddInclude(pattern);
+        return matcher.Match(path).HasMatches;
     }
 }

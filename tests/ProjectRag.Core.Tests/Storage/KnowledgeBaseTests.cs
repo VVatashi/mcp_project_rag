@@ -139,6 +139,41 @@ public sealed class KnowledgeBaseTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Replacements_FixTheTextOfTheMatchingFiles()
+    {
+        ServiceProvider services = RequireDatabase();
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        Write("metal.md", "# Metal\n\n## Sparse\n\nThe function returns sparse_color-Tv for a color.\n");
+        Write("other.md", "# Other\n\n## Sparse\n\nThe text keeps sparse_color-Tv as it is.\n");
+        SourceStore sources = services.GetRequiredService<SourceStore>();
+        SourceInput input = new() { Name = "gl", RootPath = _root };
+        int sourceId = await sources.AddAsync(input, cancellationToken);
+        Indexer indexer = services.GetRequiredService<Indexer>();
+        DocumentStore documents = services.GetRequiredService<DocumentStore>();
+        await indexer.RunAsync(sourceId, null, cancellationToken);
+
+        // A new replacement reads the matching file again and leaves the other file alone.
+        input.Replacements = [new TextReplacement { Pattern = "metal.md", Find = @"sparse_color-(Tv?)\b", Replace = "sparse_color<$1>" }];
+        await sources.UpdateAsync(sourceId, input, cancellationToken);
+        IndexRun run = (await indexer.RunAsync(sourceId, null, cancellationToken))!;
+
+        Assert.Equal(1, run.DocumentsUpdated);
+        Assert.Equal(1, run.DocumentsUnchanged);
+        DocumentSummary metal = (await documents.FindAsync("gl", "metal.md", cancellationToken))!;
+        Assert.Contains("sparse_color<Tv> for", (await documents.GetContentAsync(metal, 0, 1000, cancellationToken)).Text, StringComparison.Ordinal);
+        DocumentSummary other = (await documents.FindAsync("gl", "other.md", cancellationToken))!;
+        Assert.Contains("sparse_color-Tv as", (await documents.GetContentAsync(other, 0, 1000, cancellationToken)).Text, StringComparison.Ordinal);
+        Assert.Single((await sources.GetAsync(sourceId, null, cancellationToken))!.Replacements);
+    }
+
+    [Theory]
+    [InlineData(@"sparse_color-(Tv?)\b", true)]
+    [InlineData("sparse_color-(", false)]
+    [InlineData("", false)]
+    public void Replacement_ChecksItsExpression(string find, bool valid) =>
+        Assert.Equal(valid, new TextReplacement { Pattern = "*.pdf", Find = find, Replace = "x" }.IsValid());
+
+    [Fact]
     public async Task Categories_ComeFromTheRulesOfTheSource()
     {
         ServiceProvider services = RequireDatabase();

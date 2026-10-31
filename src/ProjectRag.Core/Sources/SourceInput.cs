@@ -48,6 +48,11 @@ public sealed partial class SourceInput
     public IReadOnlyList<CategoryRule>? CategoryRules { get; set; }
 
     /// <summary>
+    /// Gets or sets the replacements that fix the text of some files. <see langword="null"/> gives no replacements.
+    /// </summary>
+    public IReadOnlyList<TextReplacement>? Replacements { get; set; }
+
+    /// <summary>
     /// Checks the fields.
     /// </summary>
     /// <returns>The errors by the name of the field. An empty dictionary means a valid input.</returns>
@@ -67,6 +72,9 @@ public sealed partial class SourceInput
 
         if (Rules().Any(static rule => string.IsNullOrWhiteSpace(rule?.Pattern) || !NameRegex().IsMatch(rule.Category ?? string.Empty)))
             errors[nameof(CategoryRules)] = ["A rule needs a pattern and a category of lowercase Latin letters, digits, '.', '_' and '-'."];
+
+        if ((Replacements ?? []).Any(static replacement => string.IsNullOrWhiteSpace(replacement?.Pattern) || !replacement.IsValid()))
+            errors[nameof(Replacements)] = ["A replacement needs a pattern of the files and a valid regular expression of .NET."];
 
         return errors;
     }

@@ -90,6 +90,16 @@ Each document has a category, a topic such as `csharp` or `vulkan`. One folder m
 The rules of a source give the categories: a pattern of the paths and a category, the first matching rule wins. A document without a matching rule takes the name of its source.
 A change of the rules gives the stored documents their new categories at once, without a new read of the files.
 
+A published file may hold errors of its own. The Metal specification shows `sparse_color<Tv>` as `sparse_color-Tv` in the PDF itself.
+The replacements of a source fix such errors: a pattern of the files, a regular expression of .NET and its replacement.
+The indexer applies them to the Markdown of each matching file before the chunks. A change of the replacements reads only the matching files again.
+
+```json
+"replacements": [
+  { "pattern": "Metal-Shading-Language-Specification.pdf", "find": "sparse_color-(Tv?)\\b", "replace": "sparse_color<$1>" }
+]
+```
+
 ```json
 "categoryRules": [
   { "pattern": "ECMA-33*.pdf", "category": "csharp" },
@@ -145,7 +155,7 @@ On a shared machine, set a token in `appsettings.Local.json`.
 | --- | --- |
 | `GET /api/status` | The state of the database, the models, the counts and the indexer |
 | `GET /api/sources` | The sources |
-| `POST /api/sources` | Adds a source: `name`, `description`, `rootPath`, `includeGlobs`, `excludeGlobs`, `categoryRules` |
+| `POST /api/sources` | Adds a source: `name`, `description`, `rootPath`, `includeGlobs`, `excludeGlobs`, `categoryRules`, `replacements` |
 | `PUT /api/sources/{id}` | Changes a source |
 | `DELETE /api/sources/{id}` | Deletes a source with its documents. The files stay |
 | `POST /api/sources/{id}/index` | Puts a source into the queue of the indexer |
