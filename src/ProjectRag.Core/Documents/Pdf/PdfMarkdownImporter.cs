@@ -574,8 +574,8 @@ public static partial class PdfMarkdownImporter
         if (text.Length == 0 || text.All(static c => c is '{' or '}' or '(' or ')' or '[' or ']' or ';' or ' '))
             return true;
 
-        // A comment of a listing may be set in the text font, such as "/* or */".
-        if (IsArgumentList(line) || text.StartsWith("/*", StringComparison.Ordinal) || text.StartsWith("//", StringComparison.Ordinal))
+        // A comment of a listing may be set in the text font, such as "/* or */" or "// the default". A wrapped address such as "//www.khronos.org" is no comment.
+        if (IsArgumentList(line) || CodeCommentRegex().IsMatch(text))
             return true;
 
         if (text.EndsWith('.'))
@@ -801,6 +801,9 @@ public static partial class PdfMarkdownImporter
 
     [GeneratedRegex(@"^\s*[•◦▪‣]\s")]
     private static partial Regex BulletStartRegex();
+
+    [GeneratedRegex(@"^(?:/\*.*\*/$|// )")]
+    private static partial Regex CodeCommentRegex();
 
     // The hidden bookmarks of a word processor: "OLE_LINK6", "_Toc123", "_Ref456".
     [GeneratedRegex(@"^(?:OLE_LINK|_Toc|_Ref|_Hlk|DD)\w*$", RegexOptions.CultureInvariant)]

@@ -104,6 +104,19 @@ public sealed class PdfMarkdownImporterTests
     }
 
     [Fact]
+    public void Convert_KeepsAWrappedAddressOutOfTheCode()
+    {
+        PageBuilder page = new(2);
+        page.Text("int value = 1;", 90, 700, 10, GlyphStyle.Mono, "Courier");
+        page.Text("//www.khronos.org/registry", 72, 688);
+
+        string markdown = Convert(page);
+
+        Assert.Contains("```\nint value = 1;\n```", markdown, StringComparison.Ordinal);
+        Assert.Contains("\n//www.khronos.org/registry", markdown, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Convert_GoesOnWithTheArgumentsOfAWrappedCall()
     {
         PageBuilder page = new(2);
