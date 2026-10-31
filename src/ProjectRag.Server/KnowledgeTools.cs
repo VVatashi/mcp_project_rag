@@ -12,15 +12,16 @@ using ProjectRag.Core.Sources;
 namespace ProjectRag.Server;
 
 /// <summary>
-/// The tools of the MCP endpoint <c>/mcp</c>: the search, the list of the sources, the search of documents by name and the read of a document.
+/// The tools of the MCP endpoint <c>/mcp</c>: the search, the list of the sources, the search of documents by name, the read of a document and of a chunk with its links.
 /// </summary>
 /// <param name="search">The search.</param>
 /// <param name="sources">The store of the sources.</param>
 /// <param name="documents">The store of the documents.</param>
+/// <param name="structure">The store of the sections and the links.</param>
 /// <param name="models">The registry of the embedding model.</param>
 /// <param name="scheduler">The scheduler of the indexer.</param>
 [McpServerToolType]
-internal sealed class KnowledgeTools(SearchService search, SourceStore sources, DocumentStore documents, EmbeddingModelRegistry models, IndexScheduler scheduler)
+internal sealed class KnowledgeTools(SearchService search, SourceStore sources, DocumentStore documents, StructureStore structure, EmbeddingModelRegistry models, IndexScheduler scheduler)
 {
     /// <summary>
     /// The text that the server gives an agent at the start of the session.
@@ -29,8 +30,10 @@ internal sealed class KnowledgeTools(SearchService search, SourceStore sources, 
         This server is a local knowledge base of the technical and project documentation of the user.
         Call list_sources first to learn the projects. Call search with a question or keywords in English or Russian.
         A hit gives the source, the path of the document, the path of its section and the text.
-        To read around a hit, call read_document with the source, the path and an offset a little before charStart.
+        To follow a hit, call read_chunk with its chunkId: it gives the section, the pages, the previous and the next chunk, the links of the chunk with their target chunks, and the chunks that link to it.
+        To read more of a document, call read_document with the source, the path and an offset a little before charStart.
         Call find_documents when you know a part of a file name or a title.
+        The texts are Markdown. Formulas are LaTeX between $ or $$, and code is in backticks or fenced blocks.
         """;
 
     private const int DefaultReadLength = 20_000;
@@ -98,6 +101,14 @@ internal sealed class KnowledgeTools(SearchService search, SourceStore sources, 
         DocumentContent content = await documents.GetContentAsync(document, offset ?? 0, length ?? DefaultReadLength, cancellationToken);
         int end = content.Offset + content.Text.Length;
         return new DocumentPart(document.Source, document.Path, document.Title, content.Offset, content.TotalLength, end < content.TotalLength ? end : null, content.Text);
+    }
+
+    [McpServerTool(Name = "read_chunk", Title = "Read a chunk with its links", ReadOnly = true, Idempotent = true, OpenWorld = false)]
+    [Description("Reads a chunk by its chunkId from search: its text, its section and pages, the previous and the next chunk, its links with their target chunks, and the chunks that link to it.")]
+    public async Task<ChunkDetail> ReadChunkAsync([Description("The chunkId of a hit or of a link.")] long chunkId, CancellationToken cancellationToken = default)
+    {
+        short? modelId = (await models.GetStatusAsync(cancellationToken)).Model?.ModelId;
+        return await structure.GetChunkAsync(chunkId, modelId, cancellationToken) ?? throw new McpException($"The knowledge base has no chunk {chunkId}.");
     }
 
     [McpServerTool(Name = "index_source", Title = "Index a source", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]

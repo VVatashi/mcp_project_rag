@@ -121,5 +121,5 @@ internal sealed class DocumentFileState
 
     public string ContentHash { get; init; } = string.Empty;
 
-    public int ParserVersion { get; init; }
+    public string ParserVersion { get; init; } = string.Empty;
 }

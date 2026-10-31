@@ -85,6 +85,7 @@ public sealed class SearchStore(Database database)
                 FROM vec FULL JOIN fts USING (chunk_id)
             )
             SELECT c.chunk_id, c.document_id, s.name AS source, d.path, d.title, c.heading, c.body, c.char_start, c.char_end,
+                   c.page_start, c.page_end, c.section_id, (SELECT count(*) FROM chunk_link l WHERE l.chunk_id = c.chunk_id) AS link_count,
                    f.vector_rank, f.text_rank, f.score
             FROM fused f
             JOIN chunk c USING (chunk_id)

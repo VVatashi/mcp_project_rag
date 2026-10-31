@@ -67,6 +67,18 @@ public sealed class SearchHit
     /// <summary>Gets the index after the last character.</summary>
     public int CharEnd { get; init; }
 
+    /// <summary>Gets the first page of the chunk, or <see langword="null"/> for a document without pages.</summary>
+    public int? PageStart { get; init; }
+
+    /// <summary>Gets the last page of the chunk.</summary>
+    public int? PageEnd { get; init; }
+
+    /// <summary>Gets the key of the section of the chunk.</summary>
+    public long? SectionId { get; init; }
+
+    /// <summary>Gets the number of links of the chunk. The tool read_chunk resolves them.</summary>
+    public long LinkCount { get; init; }
+
     /// <summary>Gets the rank of the chunk in the vector search, from 1, or <see langword="null"/> when the vector search did not find it.</summary>
     public int? VectorRank { get; init; }
 

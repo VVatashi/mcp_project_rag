@@ -161,6 +161,36 @@ public sealed class KnowledgeBaseTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Structure_ResolvesLinksMentionsAndBacklinks()
+    {
+        ServiceProvider services = RequireDatabase();
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        Write("docs/a.md", "# A\n\nSee [usage](b.md#usage) and section 2 for more.\n\n## 2 Second\n\nText of the second section.\n");
+        Write("docs/b.md", "# B\n\nIntro of B.\n\n## Usage\n\nHow to use it.\n");
+        int sourceId = await services.GetRequiredService<SourceStore>().AddAsync(new SourceInput { Name = "gl", RootPath = _root }, cancellationToken);
+        await services.GetRequiredService<Indexer>().RunAsync(sourceId, null, cancellationToken);
+        DocumentStore documents = services.GetRequiredService<DocumentStore>();
+        StructureStore structure = services.GetRequiredService<StructureStore>();
+
+        DocumentSummary a = (await documents.FindAsync("gl", "docs/a.md", cancellationToken))!;
+        ChunkView first = (await documents.GetChunksAsync(a.DocumentId, null, cancellationToken))[0];
+        ChunkDetail chunk = (await structure.GetChunkAsync(first.ChunkId, null, cancellationToken))!;
+
+        ChunkLinkView link = Assert.Single(chunk.Links, static link => link.Kind == "link");
+        Assert.Equal("A > 2 Second", Assert.Single(chunk.Links, static link => link.Kind == "mention").TargetHeading);
+        Assert.Equal("B > Usage", link.TargetHeading);
+        Assert.NotNull(chunk.NextChunkId);
+        Assert.Null(chunk.PreviousChunkId);
+
+        ChunkDetail usage = (await structure.GetChunkAsync(link.TargetChunkId!.Value, null, cancellationToken))!;
+        Assert.Contains(usage.Backlinks, backlink => backlink.ChunkId == first.ChunkId && backlink.Label == "usage");
+        IReadOnlyList<SectionView> sections = await structure.GetSectionsAsync(a.DocumentId, cancellationToken);
+        Assert.Equal(["A", "A", "A > 2 Second"], sections.Select(static section => section.Path));
+        Assert.Equal("2", sections[2].Number);
+        Assert.Equal(sections[1].SectionId, sections[2].ParentId);
+    }
+
+    [Fact]
     public async Task Registry_RejectsAServerWithOtherVectors()
     {
         ServiceProvider services = RequireDatabase();

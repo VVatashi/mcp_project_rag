@@ -6,6 +6,7 @@
     <PackageReference Include="Dapper" />
     <PackageReference Include="FluentMigrator.Runner.Core" />
     <PackageReference Include="FluentMigrator.Runner.Postgres" />
+    <PackageReference Include="Markdig" />
     <PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.Http" />

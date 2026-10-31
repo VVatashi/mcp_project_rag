@@ -56,6 +56,7 @@ public static class KnowledgeBaseServiceCollectionExtensions
 
         services.AddSingleton<SourceStore>();
         services.AddSingleton<DocumentStore>();
+        services.AddSingleton<StructureStore>();
         services.AddSingleton<EmbeddingStore>();
         services.AddSingleton<IndexRunStore>();
         services.AddSingleton<SearchStore>();
