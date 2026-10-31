@@ -75,7 +75,10 @@ public sealed class Indexer(
         {
             run.Status = IndexRun.Canceled;
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or Npgsql.NpgsqlException or HttpRequestException)
+        // Any other error ends this run only. An exception out of the background worker would stop the whole host.
+#pragma warning disable CA1031
+        catch (Exception exception)
+#pragma warning restore CA1031
         {
             run.Status = IndexRun.Failed;
             run.Error = exception.Message;
@@ -121,13 +124,14 @@ public sealed class Indexer(
             if (!info.Exists)
                 continue;
 
-            seen.Add(path);
+            // A file over the limit is not seen, so its old document leaves the search.
             if (info.Length > options.MaxFileBytes)
             {
                 skipped.Add(path);
                 continue;
             }
 
+            seen.Add(path);
             // PostgreSQL keeps microseconds, so the time of the file loses its last digit before the comparison.
             DateTime modifiedAt = new(info.LastWriteTimeUtc.Ticks - (info.LastWriteTimeUtc.Ticks % 10), DateTimeKind.Utc);
             DocumentFileState? state = known.GetValueOrDefault(path);
@@ -137,31 +141,33 @@ public sealed class Indexer(
                 continue;
             }
 
-            byte[] bytes = await File.ReadAllBytesAsync(info.FullName, cancellationToken);
-            DocumentFile file = new(Hash(bytes), parserVersion, bytes.LongLength, modifiedAt);
-            if (state is not null && state.ContentHash == file.ContentHash && state.ParserVersion == parserVersion)
-            {
-                await documents.TouchAsync(state.DocumentId, file.SizeBytes, modifiedAt, cancellationToken);
-                run.DocumentsUnchanged++;
-                continue;
-            }
-
+            byte[] bytes;
             DocumentText text;
             IReadOnlyList<TextChunk> chunks;
             try
             {
+                bytes = await File.ReadAllBytesAsync(info.FullName, cancellationToken);
+                if (state is not null && state.ContentHash == Hash(bytes) && state.ParserVersion == parserVersion)
+                {
+                    await documents.TouchAsync(state.DocumentId, bytes.LongLength, modifiedAt, cancellationToken);
+                    run.DocumentsUnchanged++;
+                    continue;
+                }
+
                 text = DocumentReader.Read(path, bytes);
                 chunks = chunker.Split(text);
             }
-            // A broken file must not stop the run. PdfPig throws many kinds of exceptions on a damaged PDF.
+            // A locked, unreadable or broken file must not stop the run. PdfPig throws many kinds of exceptions on a damaged PDF.
 #pragma warning disable CA1031
-            catch (Exception exception) when (exception is not OperationCanceledException)
+            catch (Exception exception) when (exception is not (OperationCanceledException or Npgsql.NpgsqlException))
 #pragma warning restore CA1031
             {
                 logger.LogWarning(exception, "The indexer cannot read the file {Path} of the source {Source}.", path, source.Name);
                 run.DocumentsFailed++;
                 continue;
             }
+
+            DocumentFile file = new(Hash(bytes), parserVersion, bytes.LongLength, modifiedAt);
 
             List<(TextChunk Chunk, string Hash)> hashed = [.. chunks.Select(static chunk => (chunk, Hash(Encoding.UTF8.GetBytes(chunk.EmbeddingText))))];
             run.ChunksReused += await documents.SaveAsync(source.SourceId, path, text, file, hashed, cancellationToken);
@@ -174,11 +180,17 @@ public sealed class Indexer(
             progress?.Invoke(run);
         }
 
-        run.DocumentsRemoved = await documents.DeleteMissingAsync(source.SourceId, seen, cancellationToken);
+        // An empty folder is more often a moment of a branch switch or an unplugged drive than a real deletion.
+        // The vectors of a source take minutes to rebuild, so the indexer keeps the documents and warns.
+        if (paths.Count == 0 && known.Count > 0)
+            warnings.Add($"The folder {source.RootPath} holds no matching files. The indexer kept the {known.Count} stored documents. Delete the source to remove them.");
+        else
+            run.DocumentsRemoved = await documents.DeleteMissingAsync(source.SourceId, seen, cancellationToken);
+
         if (skipped.Count > 0)
         {
             warnings.Add(string.Create(CultureInfo.InvariantCulture,
-                $"{skipped.Count} files are larger than {options.MaxFileBytes} bytes and were skipped, for example {skipped[0]}."));
+                $"{skipped.Count} files are larger than {options.MaxFileBytes} bytes. The indexer skipped them and removed their old documents, for example {skipped[0]}."));
         }
     }
 
@@ -192,27 +204,66 @@ public sealed class Indexer(
         }
 
         int roundSize = Math.Max(1, indexing.CurrentValue.EmbeddingRoundSize);
+        HashSet<long> rejected = [];
         try
         {
             while (true)
             {
-                IReadOnlyList<PendingChunk> pending = await embeddings.GetPendingAsync(source.SourceId, model.ModelId, roundSize, cancellationToken);
+                // A run lasts minutes. The registry checks the server again each minute, and another model behind the server stops the run.
+                if ((await models.GetStatusAsync(cancellationToken)).Model?.ModelId != model.ModelId)
+                {
+                    await WarnPendingAsync(source, run, warnings, "The embedding model changed during the run.", cancellationToken);
+                    break;
+                }
+
+                IReadOnlyList<PendingChunk> pending = await embeddings.GetPendingAsync(source.SourceId, model.ModelId, roundSize, rejected, cancellationToken);
                 if (pending.Count == 0)
                     break;
 
-                string[] texts = [.. pending.Select(chunk => model.FormatDocument(TextChunk.Compose(chunk.Heading, chunk.Body)))];
-                IReadOnlyList<float[]> vectors = await client.EmbedAsync(texts, cancellationToken);
-                await embeddings.AddEmbeddingsAsync(model.ModelId, [.. pending.Select((chunk, index) => (chunk.ChunkId, vectors[index]))], cancellationToken);
-                run.ChunksEmbedded += pending.Count;
+                try
+                {
+                    await EmbedChunksAsync(model, pending, cancellationToken);
+                    run.ChunksEmbedded += pending.Count;
+                }
+                catch (HttpRequestException exception) when (exception.StatusCode is not null)
+                {
+                    // The server works but rejects a text, for example one longer than its slot. One chunk at a time finds the bad ones.
+                    logger.LogWarning("The embedding server rejected a round of {Count} chunks: {Reason}. The indexer tries them one at a time.", pending.Count, exception.Message);
+                    foreach (PendingChunk chunk in pending)
+                    {
+                        try
+                        {
+                            await EmbedChunksAsync(model, [chunk], cancellationToken);
+                            run.ChunksEmbedded++;
+                        }
+                        catch (HttpRequestException single) when (single.StatusCode is not null)
+                        {
+                            rejected.Add(chunk.ChunkId);
+                            logger.LogWarning("The embedding server rejected the chunk {ChunkId}: {Reason}", chunk.ChunkId, single.Message);
+                        }
+                    }
+                }
+
                 await runs.SaveAsync(run, cancellationToken);
                 progress?.Invoke(run);
             }
         }
-        catch (HttpRequestException exception)
+        catch (Exception exception) when (exception is HttpRequestException || (exception is TaskCanceledException && !cancellationToken.IsCancellationRequested))
         {
+            // The server is down or did not answer in time. The next run embeds the rest.
             models.Invalidate();
             await WarnPendingAsync(source, run, warnings, exception.Message, cancellationToken);
         }
+
+        if (rejected.Count > 0)
+            warnings.Add($"The embedding server rejected {rejected.Count} chunks, for example the chunk {rejected.First()}. The full text search still finds them.");
+    }
+
+    private async Task EmbedChunksAsync(EmbeddingModel model, IReadOnlyList<PendingChunk> chunks, CancellationToken cancellationToken)
+    {
+        string[] texts = [.. chunks.Select(chunk => model.FormatDocument(TextChunk.Compose(chunk.Heading, chunk.Body)))];
+        IReadOnlyList<float[]> vectors = await client.EmbedAsync(texts, cancellationToken);
+        await embeddings.AddEmbeddingsAsync(model.ModelId, [.. chunks.Select((chunk, index) => (chunk.ChunkId, vectors[index]))], cancellationToken);
     }
 
     private async Task WarnPendingAsync(Source source, IndexRun run, List<string> warnings, string? reason, CancellationToken cancellationToken)

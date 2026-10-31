@@ -90,8 +90,10 @@ The indexer runs over a new or changed source at once and over all sources every
 1. It skips each file with the stored size and time.
 2. It reads each changed file and splits it into chunks along its headings. The bookmarks of a PDF file become headings.
 3. It gives a new chunk the vector of a stored chunk with the same text.
-4. It deletes the documents of the files that are gone.
-5. It embeds the chunks without a vector in rounds of 128.
+4. It deletes the documents of the files that are gone. A folder without matching files keeps its documents, and the run gives a warning.
+5. It embeds the chunks without a vector in rounds of 128. A chunk that the server rejects stays without a vector, and the full text search still finds it.
+
+A file that the indexer cannot read counts as failed, and the run goes on. The state of each run is on the pages Status and Sources.
 
 A Pascal data center GPU embeds about 1200 tokens per second. The three OpenGL specifications in `data/` give about 3000 chunks and took about 18 minutes the first time.
 
@@ -118,6 +120,10 @@ Other clients take a JSON entry:
 | `index_source` | Puts a source into the queue of the indexer |
 
 When `Server:Token` holds a token, the client sends the header `Authorization: Bearer <token>`. For Claude Code, add `--header "Authorization: Bearer <token>"`.
+
+The token is empty by default. The server listens on 127.0.0.1 and rejects a foreign Host header, so web pages cannot reach it.
+Any local program can still call it, also a program of another user of this machine. Such a program can add any folder that the server can read as a source and read its files.
+On a shared machine, set a token in `appsettings.Local.json`.
 
 ## Web API
 
@@ -155,6 +161,7 @@ The server reads `src/ProjectRag.Server/appsettings.json`. Put the settings of o
 | `Search:DefaultLimit`, `Search:MaxLimit` | 8, 50 | The number of hits |
 | `Search:Pool` | 100 | The candidates of the vector and of the full text search before the fusion |
 | `Search:RrfK`, `Search:VectorWeight` | 60, 0.8 | The fusion of the ranks |
+| `Search:QueryTimeoutSeconds` | 20 | The time limit of the embedding of a query. After it the search uses the full text search only |
 | `Chunking:MaxChars` | 1800 | The size of a chunk. A change reads every file again |
 | `Chunking:MaxFileBytes` | 64 MB | The size of the largest file |
 | `Indexing:ScanIntervalMinutes` | 10 | The interval of the scans of all sources. 0 turns them off |

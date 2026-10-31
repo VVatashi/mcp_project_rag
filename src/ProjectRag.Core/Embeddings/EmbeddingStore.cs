@@ -15,26 +15,26 @@ namespace ProjectRag.Core.Embeddings;
 public sealed class EmbeddingStore(Database database)
 {
     /// <summary>
-    /// Finds a model by its identity.
+    /// Finds the models with a name and templates. The dimensions complete the identity, and the caller learns them from the probe.
     /// </summary>
     /// <param name="name">The name of the model.</param>
-    /// <param name="dims">The number of dimensions.</param>
     /// <param name="queryTemplate">The template of a query.</param>
     /// <param name="documentTemplate">The template of a chunk.</param>
     /// <param name="cancellationToken">The token that cancels the query.</param>
-    /// <returns>The key of the model and the stored vector of its probe, or <see langword="null"/> when the database does not know the model.</returns>
-    public async Task<(short ModelId, float[] ProbeEmbedding)?> FindModelAsync(string name, int dims, string queryTemplate, string documentTemplate, CancellationToken cancellationToken)
+    /// <returns>The models, the oldest first. Usually there is one or none.</returns>
+    internal async Task<IReadOnlyList<StoredModel>> FindModelsAsync(string name, string queryTemplate, string documentTemplate, CancellationToken cancellationToken)
     {
         await using NpgsqlConnection connection = await database.OpenAsync(cancellationToken);
-        ModelRow? row = await connection.QuerySingleOrDefaultAsync<ModelRow>(new CommandDefinition(
+        IEnumerable<StoredModel> rows = await connection.QueryAsync<StoredModel>(new CommandDefinition(
             """
-            SELECT model_id, probe_embedding::real[] AS probe_embedding
+            SELECT model_id, dims, probe_text, probe_embedding::real[] AS probe_embedding
             FROM embedding_model
-            WHERE name = @Name AND dims = @Dims AND query_template = @QueryTemplate AND document_template = @DocumentTemplate
+            WHERE name = @Name AND query_template = @QueryTemplate AND document_template = @DocumentTemplate
+            ORDER BY model_id
             """,
-            new { Name = name, Dims = dims, QueryTemplate = queryTemplate, DocumentTemplate = documentTemplate },
+            new { Name = name, QueryTemplate = queryTemplate, DocumentTemplate = documentTemplate },
             cancellationToken: cancellationToken));
-        return row is null ? null : (row.ModelId, row.ProbeEmbedding);
+        return [.. rows];
     }
 
     /// <summary>
@@ -81,10 +81,12 @@ public sealed class EmbeddingStore(Database database)
     /// <param name="sourceId">The source.</param>
     /// <param name="modelId">The model.</param>
     /// <param name="limit">The most chunks to read.</param>
+    /// <param name="excluded">The chunks to skip, for example the chunks that the server rejected in this run.</param>
     /// <param name="cancellationToken">The token that cancels the query.</param>
     /// <returns>The chunks in the order of their keys.</returns>
-    public async Task<IReadOnlyList<PendingChunk>> GetPendingAsync(int sourceId, short modelId, int limit, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<PendingChunk>> GetPendingAsync(int sourceId, short modelId, int limit, IReadOnlyCollection<long> excluded, CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(excluded);
         await using NpgsqlConnection connection = await database.OpenAsync(cancellationToken);
         IEnumerable<PendingChunk> rows = await connection.QueryAsync<PendingChunk>(new CommandDefinition(
             """
@@ -92,11 +94,12 @@ public sealed class EmbeddingStore(Database database)
             FROM chunk c
             JOIN document d USING (document_id)
             WHERE d.source_id = @SourceId
+              AND c.chunk_id <> ALL (@Excluded)
               AND NOT EXISTS (SELECT 1 FROM chunk_embedding e WHERE e.chunk_id = c.chunk_id AND e.model_id = @ModelId)
             ORDER BY c.chunk_id
             LIMIT @Limit
             """,
-            new { SourceId = sourceId, ModelId = modelId, Limit = limit },
+            new { SourceId = sourceId, ModelId = modelId, Limit = limit, Excluded = excluded.ToArray() },
             cancellationToken: cancellationToken));
         return [.. rows];
     }
@@ -146,12 +149,32 @@ public sealed class EmbeddingStore(Database database)
         await transaction.CommitAsync(cancellationToken);
     }
 
-    private sealed class ModelRow
-    {
-        public short ModelId { get; init; }
+}
 
-        public float[] ProbeEmbedding { get; init; } = [];
-    }
+/// <summary>
+/// An embedding model as the database stores it, with its probe.
+/// </summary>
+internal sealed class StoredModel
+{
+    /// <summary>
+    /// Gets the key of the model.
+    /// </summary>
+    public short ModelId { get; init; }
+
+    /// <summary>
+    /// Gets the number of dimensions.
+    /// </summary>
+    public int Dims { get; init; }
+
+    /// <summary>
+    /// Gets the text of the probe.
+    /// </summary>
+    public string ProbeText { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Gets the stored vector of the probe.
+    /// </summary>
+    public float[] ProbeEmbedding { get; init; } = [];
 }
 
 /// <summary>

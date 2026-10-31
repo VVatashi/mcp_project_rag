@@ -139,6 +139,28 @@ public sealed class KnowledgeBaseTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Indexer_SkipsRejectedChunksAndKeepsTheDocumentsOfAnEmptyFolder()
+    {
+        ServiceProvider services = RequireDatabase();
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        Write("guide.md", "# Guide\n\n## Good\n\nA normal section.\n\n## Bad\n\nRejectMe is too long for the server.\n");
+        int sourceId = await services.GetRequiredService<SourceStore>().AddAsync(new SourceInput { Name = "gl", RootPath = _root }, cancellationToken);
+        Indexer indexer = services.GetRequiredService<Indexer>();
+
+        IndexRun first = (await indexer.RunAsync(sourceId, null, cancellationToken))!;
+        Assert.Equal(IndexRun.Succeeded, first.Status);
+        Assert.Equal(1, first.ChunksEmbedded);
+        Assert.Contains("rejected 1 chunks", first.Warning, StringComparison.Ordinal);
+
+        File.Delete(Path.Combine(_root, "guide.md"));
+        IndexRun second = (await indexer.RunAsync(sourceId, null, cancellationToken))!;
+        Assert.Equal(IndexRun.Succeeded, second.Status);
+        Assert.Equal(0, second.DocumentsRemoved);
+        Assert.Contains("holds no matching files", second.Warning, StringComparison.Ordinal);
+        Assert.Equal(1, (await services.GetRequiredService<SourceStore>().GetAsync(sourceId, null, cancellationToken))!.DocumentCount);
+    }
+
+    [Fact]
     public async Task Registry_RejectsAServerWithOtherVectors()
     {
         ServiceProvider services = RequireDatabase();
@@ -171,12 +193,15 @@ public sealed class KnowledgeBaseTests : IAsyncLifetime
     }
 
     // A bag of words: each word adds 1 to a dimension from its hash. A salt gives another "model".
+    // A request with the word RejectMe fails like a text that is too long for the server.
     private sealed class FakeEmbeddingClient(int salt) : IEmbeddingClient
     {
         private const int Dims = 64;
 
         public Task<IReadOnlyList<float[]>> EmbedAsync(IReadOnlyList<string> texts, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<float[]>>([.. texts.Select(Embed)]);
+            texts.Any(static text => text.Contains("RejectMe", StringComparison.Ordinal))
+                ? throw new HttpRequestException("The input is too long.", null, System.Net.HttpStatusCode.InternalServerError)
+                : Task.FromResult<IReadOnlyList<float[]>>([.. texts.Select(Embed)]);
 
         public Task<bool> IsHealthyAsync(CancellationToken cancellationToken) => Task.FromResult(true);
 

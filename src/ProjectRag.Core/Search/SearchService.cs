@@ -43,9 +43,10 @@ public sealed class SearchService(
     public async Task<SearchResult> SearchAsync(SearchRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        string query = request.Query.Trim();
+        // A JSON null reaches the property despite its type.
+        string query = request.Query?.Trim() ?? string.Empty;
         if (query.Length == 0)
-            throw new ArgumentException("The query is empty.", nameof(request));
+            throw new ArgumentException("The query is empty.");
 
         SearchOptions options = searchOptions.CurrentValue;
         RerankOptions rerank = rerankOptions.CurrentValue;
@@ -58,15 +59,22 @@ public sealed class SearchService(
         EmbeddingModelStatus status = await models.GetStatusAsync(cancellationToken);
         if (status.Model is { } current)
         {
+            // A busy or hung server must not hold the search. The full text search answers without it.
+            using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, options.QueryTimeoutSeconds)));
             try
             {
-                vector = (await embedder.EmbedAsync([current.FormatQuery(query)], cancellationToken))[0];
+                vector = (await embedder.EmbedAsync([current.FormatQuery(query)], timeout.Token))[0];
                 model = current;
             }
             catch (HttpRequestException exception)
             {
                 models.Invalidate();
                 notes.Add($"The vector search did not work: {exception.Message}");
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                notes.Add($"The vector search did not work: the embedding server did not answer in {options.QueryTimeoutSeconds} seconds.");
             }
         }
         else
@@ -91,7 +99,7 @@ public sealed class SearchService(
                 hits = [.. hits.OrderByDescending(static hit => hit.RerankScore).ThenByDescending(static hit => hit.Score)];
                 reranked = true;
             }
-            catch (HttpRequestException exception)
+            catch (Exception exception) when (exception is HttpRequestException || (exception is TaskCanceledException && !cancellationToken.IsCancellationRequested))
             {
                 logger.LogWarning("The reranker did not work: {Reason}", exception.Message);
                 notes.Add($"The reranker did not work: {exception.Message}");
@@ -103,14 +111,14 @@ public sealed class SearchService(
 
     private async Task<int[]> ResolveSourcesAsync(IReadOnlyList<string>? names, CancellationToken cancellationToken)
     {
-        string[] wanted = [.. (names ?? []).Select(static name => name.Trim()).Where(static name => name.Length > 0).Distinct(StringComparer.Ordinal)];
+        string[] wanted = [.. (names ?? []).Select(static name => name?.Trim() ?? string.Empty).Where(static name => name.Length > 0).Distinct(StringComparer.Ordinal)];
         if (wanted.Length == 0)
             return [];
 
         IReadOnlyDictionary<string, int> found = await sources.FindIdsAsync(wanted, cancellationToken);
         string[] missing = [.. wanted.Where(name => !found.ContainsKey(name))];
         if (missing.Length > 0)
-            throw new ArgumentException($"The knowledge base has no source {string.Join(", ", missing)}.", nameof(names));
+            throw new ArgumentException($"The knowledge base has no source {string.Join(", ", missing)}.");
 
         return [.. found.Values];
     }

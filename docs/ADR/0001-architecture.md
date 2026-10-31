@@ -93,7 +93,8 @@ The package Pgvector is not needed. pgvector casts `real[]` to `vector`, so a ve
 2. **A source** is a folder on the host with patterns of files. Each document is a file. The indexer reads Markdown, plain text, reStructuredText, AsciiDoc and PDF.
 3. **A chunk** is a part of one section, at most 1800 characters. It keeps the path of its section, for example `Guide > Install > Linux`. The embedding model and the reranker see the path and the text.
 4. **The indexer** runs in the background, one source at a time. It skips a file with the stored size and time. It reuses the vector of a chunk with the same text, so an edit of a long file embeds only the changed chunks. It scans all sources every 10 minutes.
-5. **The model identity** follows the project rag. The table `embedding_model` stores the name, the dimensions, the templates and a probe vector. A server that gives another vector for the probe stops the vector search instead of mixing two models.
+5. **The model identity** follows the project rag. The table `embedding_model` stores the name, the dimensions, the templates, the probe text and its vector. A server that gives another vector for the stored probe text stops the vector search instead of mixing two models.
+   The application checks the probe once a minute, and the indexer checks the model before each round of 128 chunks.
 6. **The search** is hybrid. HNSW over `halfvec` finds 100 candidates by vector, and the full text search finds 100 candidates with OR between the words. Reciprocal rank fusion with k = 60 and a vector weight of 0.8 merges them. The reranker reorders the best 30. Each leg is optional: without the embedding server the search uses the full text search only.
 7. **The web API** under `/api` serves the dashboard and scripts. **The MCP endpoint** `/mcp` gives agents five tools: `list_sources`, `search`, `find_documents`, `read_document` and `index_source`.
 8. **The server** listens on 127.0.0.1 only and checks the Host header. An optional bearer token guards the API and MCP against other local programs.
@@ -109,6 +110,8 @@ The package Pgvector is not needed. pgvector casts `real[]` to `vector`, so a ve
 
 - A query waits behind the texts of the indexer in the queue of the embedding server. The indexer keeps at most 8 texts in flight, so a query waits about a second during a run.
 - The text of a PDF file loses its tables and formulas. The reader drops running headers and footers, but some page numbers stay.
+- With an empty token any local program can add a source and read the files of its folder. A token is necessary on a machine with several users.
+- `DocumentSummary.ContentLength` counts code points, and the offsets of the chunks count UTF-16 units. The numbers differ for a text with emoji. Only the dashboard shows `ContentLength`.
 - The project has no gold set of questions yet. The weights of the fusion come from the measurements of the project rag on lectures, not on technical documentation.
 
 ## Next steps

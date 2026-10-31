@@ -27,6 +27,7 @@ public sealed class EmbeddingModelRegistry(IEmbeddingClient client, EmbeddingSto
     public const double MinProbeCosine = 0.999;
 
     private static readonly TimeSpan CacheTime = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(15);
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private EmbeddingModelStatus? _status;
@@ -72,25 +73,31 @@ public sealed class EmbeddingModelRegistry(IEmbeddingClient client, EmbeddingSto
     private async Task<EmbeddingModelStatus> CheckAsync(CancellationToken cancellationToken)
     {
         EmbeddingOptions settings = options.CurrentValue;
+        // A known model keeps its own probe text, so a change of the option does not look like another model.
+        IReadOnlyList<StoredModel> candidates = await store.FindModelsAsync(settings.Model, settings.QueryTemplate, settings.DocumentTemplate, cancellationToken);
+        string probeText = candidates.Count > 0 ? candidates[0].ProbeText : settings.ProbeText;
         float[] probe;
+        // The gate holds the callers of the status, so a server that hangs must not hold it for the whole timeout of the client.
+        using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(ProbeTimeout);
         try
         {
-            string text = settings.DocumentTemplate.Replace(EmbeddingOptions.TextPlaceholder, settings.ProbeText, StringComparison.Ordinal);
-            probe = (await client.EmbedAsync([text], cancellationToken))[0];
+            string text = settings.DocumentTemplate.Replace(EmbeddingOptions.TextPlaceholder, probeText, StringComparison.Ordinal);
+            probe = (await client.EmbedAsync([text], timeout.Token))[0];
         }
         catch (HttpRequestException exception)
         {
             return new EmbeddingModelStatus(null, $"The embedding server {settings.BaseUrl} does not work: {exception.Message}");
         }
-        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return new EmbeddingModelStatus(null, $"The embedding server {settings.BaseUrl} did not answer in time.");
+            return new EmbeddingModelStatus(null, $"The embedding server {settings.BaseUrl} did not answer in {ProbeTimeout.TotalSeconds:F0} seconds.");
         }
 
         if (probe.Length > 4000)
             return new EmbeddingModelStatus(null, $"The model {settings.Model} gives {probe.Length} dimensions. An HNSW index over halfvec takes at most 4000.");
 
-        if (await store.FindModelAsync(settings.Model, probe.Length, settings.QueryTemplate, settings.DocumentTemplate, cancellationToken) is { } known)
+        if (candidates.FirstOrDefault(candidate => candidate.Dims == probe.Length && candidate.ProbeText == probeText) is { } known)
         {
             double cosine = Cosine(known.ProbeEmbedding, probe);
             if (cosine < MinProbeCosine)
@@ -103,7 +110,7 @@ public sealed class EmbeddingModelRegistry(IEmbeddingClient client, EmbeddingSto
             return new EmbeddingModelStatus(new EmbeddingModel(known.ModelId, settings.Model, probe.Length, settings.QueryTemplate, settings.DocumentTemplate), null);
         }
 
-        short modelId = await store.AddModelAsync(settings.Model, settings.QueryTemplate, settings.DocumentTemplate, settings.ProbeText, probe, cancellationToken);
+        short modelId = await store.AddModelAsync(settings.Model, settings.QueryTemplate, settings.DocumentTemplate, probeText, probe, cancellationToken);
         logger.LogInformation("The database knows a new embedding model {Model} with {Dims} dimensions as model {ModelId}.", settings.Model, probe.Length, modelId);
         return new EmbeddingModelStatus(new EmbeddingModel(modelId, settings.Model, probe.Length, settings.QueryTemplate, settings.DocumentTemplate), null);
     }

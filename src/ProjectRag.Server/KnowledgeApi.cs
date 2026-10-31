@@ -126,8 +126,9 @@ internal static class KnowledgeApi
 
     private static void Normalize(SourceInput input)
     {
-        input.Name = input.Name.Trim();
-        input.RootPath = input.RootPath.Trim();
+        // A JSON null reaches the properties despite their types.
+        input.Name = input.Name?.Trim() ?? string.Empty;
+        input.RootPath = input.RootPath?.Trim() ?? string.Empty;
         // "C:/docs/" and "C:\docs" name one folder, so the source stores one form.
         if (Path.IsPathFullyQualified(input.RootPath))
             input.RootPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(input.RootPath));

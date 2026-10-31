@@ -20,7 +20,11 @@ export function useLoad<T>(load: () => Promise<T>, keys: readonly unknown[], int
 
   useEffect(() => {
     let active = true;
+    let busy = false;
     const run = async () => {
+      // A slow server must not collect a pile of polls.
+      if (busy) return;
+      busy = true;
       try {
         const value = await loadLatest();
         if (active) {
@@ -29,6 +33,8 @@ export function useLoad<T>(load: () => Promise<T>, keys: readonly unknown[], int
         }
       } catch (exception) {
         if (active) setError(exception instanceof Error ? exception.message : String(exception));
+      } finally {
+        busy = false;
       }
     };
 

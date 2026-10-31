@@ -37,4 +37,9 @@ public sealed class SearchOptions
     /// Gets or sets the weight w of the vector in the fusion. The full text search gets <c>1 - w</c>.
     /// </summary>
     public double VectorWeight { get; set; } = 0.8;
+
+    /// <summary>
+    /// Gets or sets the time limit of the embedding of a query in seconds. After it the search uses the full text search only.
+    /// </summary>
+    public int QueryTimeoutSeconds { get; set; } = 20;
 }
