@@ -7,6 +7,8 @@ export default defineConfig({
   build: {
     outDir: '../ProjectRag.Server/wwwroot',
     emptyOutDir: true,
+    // KaTeX and the Markdown parser make one large bundle. The dashboard runs on this machine, so the size does not matter.
+    chunkSizeWarningLimit: 2000,
   },
   server: {
     port: 5173,

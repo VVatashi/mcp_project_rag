@@ -1,5 +1,6 @@
 import { getToken, setToken } from './api';
 import { useHashRoute } from './hooks';
+import { ChunkPage } from './pages/ChunkPage';
 import { DocumentPage } from './pages/DocumentPage';
 import { DocumentsPage } from './pages/DocumentsPage';
 import { SearchPage } from './pages/SearchPage';
@@ -36,14 +37,20 @@ export function App() {
     }
   };
 
+  const openChunk = (chunkId: number, follow?: string) => navigate(follow ? `chunks/${chunkId}?follow=${encodeURIComponent(follow)}` : `chunks/${chunkId}`);
+  const openDocument = (documentId: number, offset: number) => navigate(`documents/${documentId}?offset=${offset}`);
+
   let page;
   if (section === 'search') {
-    page = <SearchPage onOpenHit={(documentId, offset) => navigate(`documents/${documentId}?offset=${offset}`)} />;
+    page = <SearchPage onOpenHit={openDocument} onOpenChunk={openChunk} />;
+  } else if (section === 'chunks' && numberOrNull(path[1]) !== null) {
+    const chunkId = numberOrNull(path[1]) ?? 0;
+    page = <ChunkPage key={route} chunkId={chunkId} follow={parameters.get('follow')} onOpenChunk={openChunk} onOpenDocument={openDocument} />;
   } else if (section === 'sources') {
     page = <SourcesPage onOpenDocuments={(sourceId) => navigate(`documents?source=${sourceId}`)} />;
   } else if (section === 'documents' && numberOrNull(path[1]) !== null) {
     const documentId = numberOrNull(path[1]) ?? 0;
-    page = <DocumentPage key={route} documentId={documentId} offset={numberOrNull(parameters.get('offset'))} onBack={() => navigate('documents')} />;
+    page = <DocumentPage key={route} documentId={documentId} offset={numberOrNull(parameters.get('offset'))} onBack={() => navigate('documents')} onOpenChunk={openChunk} />;
   } else if (section === 'documents') {
     page = (
       <DocumentsPage

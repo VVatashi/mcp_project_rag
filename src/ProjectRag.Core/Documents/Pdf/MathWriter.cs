@@ -78,7 +78,8 @@ internal static class MathWriter
 
             if (item.IsLatex)
             {
-                Append(builder, item.Text);
+                // A part with scripts of its own, such as a sum with its limits, takes more scripts only inside braces.
+                Append(builder, item.Sub.Count > 0 || item.Sup.Count > 0 ? $"{{{item.Text}}}" : item.Text);
                 AppendScripts(builder, item);
                 i++;
                 continue;

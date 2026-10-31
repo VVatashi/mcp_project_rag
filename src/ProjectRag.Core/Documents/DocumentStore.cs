@@ -119,7 +119,7 @@ public sealed class DocumentStore(Database database)
         await using NpgsqlConnection connection = await database.OpenAsync(cancellationToken);
         IEnumerable<ChunkView> rows = await connection.QueryAsync<ChunkView>(new CommandDefinition(
             """
-            SELECT c.chunk_id, c.ordinal, c.heading, c.body, c.char_start, c.char_end,
+            SELECT c.chunk_id, c.ordinal, c.heading, c.body, c.char_start, c.char_end, c.section_id, c.page_start, c.page_end, c.overlap_chars,
                    EXISTS (SELECT 1 FROM chunk_embedding e WHERE e.chunk_id = c.chunk_id AND e.model_id = @ModelId) AS has_embedding
             FROM chunk c
             WHERE c.document_id = @DocumentId

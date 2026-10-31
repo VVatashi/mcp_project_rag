@@ -2,10 +2,11 @@ import { useState, type FormEvent } from 'react';
 
 import { api } from '../api';
 import { Badge, Empty, ErrorBanner, Panel } from '../components/Common';
+import { Markdown } from '../components/Markdown';
 import { useLoad } from '../hooks';
 import type { SearchResult } from '../types';
 
-export function SearchPage({ onOpenHit }: { onOpenHit: (documentId: number, offset: number) => void }) {
+export function SearchPage({ onOpenHit, onOpenChunk }: { onOpenHit: (documentId: number, offset: number) => void; onOpenChunk: (chunkId: number, follow?: string) => void }) {
   const sources = useLoad(api.sources, []);
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
@@ -92,7 +93,7 @@ export function SearchPage({ onOpenHit }: { onOpenHit: (documentId: number, offs
             {result.hits.map((hit) => (
               <li key={hit.chunkId} className="hit">
                 <div className="hit__head">
-                  <button type="button" className="link hit__heading" onClick={() => onOpenHit(hit.documentId, hit.charStart)}>
+                  <button type="button" className="link hit__heading" onClick={() => onOpenChunk(hit.chunkId)}>
                     {hit.heading}
                   </button>
                   <span className="hit__scores">
@@ -103,9 +104,14 @@ export function SearchPage({ onOpenHit }: { onOpenHit: (documentId: number, offs
                   </span>
                 </div>
                 <div className="hit__path mono small">
-                  {hit.source} · {hit.path} · characters {hit.charStart}–{hit.charEnd}
+                  {hit.source} ·{' '}
+                  <button type="button" className="link" onClick={() => onOpenHit(hit.documentId, hit.charStart)}>
+                    {hit.path}
+                  </button>
+                  {hit.pageStart !== null && ` · page ${hit.pageStart}${hit.pageEnd !== hit.pageStart ? `–${hit.pageEnd}` : ''}`}
+                  {hit.linkCount > 0 && ` · ${hit.linkCount} links`}
                 </div>
-                <p className="hit__body">{hit.body}</p>
+                <Markdown text={hit.body} onAnchor={(anchor) => onOpenChunk(hit.chunkId, anchor)} />
               </li>
             ))}
           </ol>

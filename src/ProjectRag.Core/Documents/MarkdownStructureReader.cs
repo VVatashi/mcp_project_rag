@@ -299,7 +299,8 @@ public static partial class MarkdownStructureReader
                 foreach (Match match in MentionRegex().Matches(text))
                 {
                     int start = literal.Span.Start + match.Index;
-                    if (linked.Any(range => start >= range.Start && start < range.End))
+                    // A caption such as "Table 8.20: …" names its own table. A mention at the start of a block is no link.
+                    if (linked.Any(range => start >= range.Start && start < range.End) || _blocks.Any(block => block.Start == start))
                         continue;
 
                     string number = match.Groups["number"].Value;

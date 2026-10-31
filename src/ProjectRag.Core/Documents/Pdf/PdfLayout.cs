@@ -144,6 +144,7 @@ internal static class PdfLayout
     {
         List<Item> items = [.. page.Glyphs.Select(glyph => mathFonts(glyph) ? Item.From(glyph) : FromText(glyph))];
         JoinDelimiters(items);
+        JoinLimits(items);
         JoinFractions(items, page.Rules);
         List<Line> lines = [.. BuildRows(items).Select(row => new Line { Page = page.Number, Items = row.Items, Baseline = row.Baseline, Size = row.Size })];
         foreach (Line line in lines)
@@ -170,10 +171,16 @@ internal static class PdfLayout
         }
 
         rows = [.. rows.Select(static row => (row.Items, row.Baseline, Size: Median(row.Items.Select(static item => item.Size))))];
-        AttachScriptRows(rows);
+
+        // A fraction, a large delimiter or a sum goes into the nearest line of its size before the scripts move:
+        // the scripts of a sum sit right of the sum, and the line must reach them.
         foreach (Item item in items.Where(static item => item.IsFloating))
         {
-            int index = rows.Count == 0 ? -1 : rows.Select((row, i) => (Distance: Math.Abs(row.Baseline - item.Baseline), Index: i)).MinBy(static pair => pair.Distance).Index;
+            List<int> candidates = [.. Enumerable.Range(0, rows.Count).Where(i => rows[i].Size >= item.Size * 0.85)];
+            if (candidates.Count == 0)
+                candidates = [.. Enumerable.Range(0, rows.Count)];
+
+            int index = candidates.Count == 0 ? -1 : candidates.MinBy(i => Math.Abs(rows[i].Baseline - item.Baseline));
             // The outline of a large delimiter is rough, so it may sit farther from its line than a fraction.
             double reach = (item.Style & GlyphStyle.MathExtension) != 0 ? item.Size * 2 : item.Size;
             if (index < 0 || Math.Abs(rows[index].Baseline - item.Baseline) > reach)
@@ -182,6 +189,7 @@ internal static class PdfLayout
                 rows[index].Items.Add(item);
         }
 
+        AttachScriptRows(rows);
         List<(List<Item> Items, double Baseline, double Size)> result = [];
         foreach ((List<Item> row, double baseline, double size) in rows.OrderByDescending(static row => row.Baseline))
             result.Add((AttachInlineScripts(row, baseline, size), baseline, size));
@@ -278,6 +286,10 @@ internal static class PdfLayout
 
             List<Item> stack = [piece];
             // A stack repeats one piece, such as the bar of a large |. A brace next to a bar is no part of it.
+            // Two sums of two lines are two operators, not the pieces of one.
+            if (LargeOperators.Contains(piece.Text))
+                continue;
+
             foreach (Item other in pieces.Where(other => other != piece && !used.Contains(other) && other.Text == piece.Text && Math.Abs(other.Left - piece.Left) < piece.Size * 0.3).OrderByDescending(static other => other.Baseline))
             {
                 if (stack[^1].Baseline - other.Baseline <= piece.Size * 1.1)
@@ -307,6 +319,50 @@ internal static class PdfLayout
                 IsFloating = true,
             });
         }
+    }
+
+    private static readonly HashSet<string> LargeOperators = new(StringComparer.Ordinal) { "∑", "∏", "∐", "∫", "∮", "⋃", "⋂", "⨁", "⨂", "⨀", "⋁", "⋀" };
+
+    // TeX sets the limits of a large operator in a display formula above and below it: N above the sum and i = 1 below.
+    private static void JoinLimits(List<Item> items)
+    {
+        foreach (Item op in items.Where(static item => LargeOperators.Contains(item.Text) && (item.Style & GlyphStyle.MathExtension) != 0).ToList())
+        {
+            List<Item> above = [.. items.Where(item => item != op && IsLimit(op, item) && item.Bottom >= op.Top - 2 && item.Bottom <= op.Top + (item.Size * 1.2))];
+            List<Item> below = [.. items.Where(item => item != op && IsLimit(op, item) && item.Top <= op.Bottom + 2 && item.Top >= op.Bottom - (item.Size * 1.2))];
+            if (above.Count == 0 && below.Count == 0)
+                continue;
+
+            string latex = MathWriter.Write([op]);
+            if (below.Count > 0)
+                latex += $"_{{{MathWriter.WriteRows(BuildRows(below))}}}";
+
+            if (above.Count > 0)
+                latex += $"^{{{MathWriter.WriteRows(BuildRows(above))}}}";
+
+            items.RemoveAll(item => item == op || above.Contains(item) || below.Contains(item));
+            items.Add(new Item
+            {
+                Text = latex,
+                IsLatex = true,
+                Left = Math.Min(op.Left, above.Concat(below).Select(static item => item.Left).DefaultIfEmpty(op.Left).Min()),
+                Right = Math.Max(op.Right, above.Concat(below).Select(static item => item.Right).DefaultIfEmpty(op.Right).Max()),
+                Top = above.Select(static item => item.Top).DefaultIfEmpty(op.Top).Max(),
+                Bottom = below.Select(static item => item.Bottom).DefaultIfEmpty(op.Bottom).Min(),
+                Baseline = ((op.Top + op.Bottom) / 2) - (op.Size * 0.25),
+                Size = op.Size,
+                Style = GlyphStyle.Math,
+                IsFloating = true,
+            });
+        }
+    }
+
+    // A limit is a formula item centered over the operator.
+    private static bool IsLimit(Item op, Item item)
+    {
+        double center = (item.Left + item.Right) / 2;
+        // The limits of a text formula sit right of the operator as scripts. Only centered limits are display limits.
+        return item.IsMath && !item.IsTall && center >= op.Left && center <= op.Right;
     }
 
     // A short rule with formula items right above and right below it is the bar of a fraction.

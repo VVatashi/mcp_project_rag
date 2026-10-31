@@ -2,10 +2,11 @@
 
 ProjectRag is a local knowledge base of technical and project documentation. Agents search it through MCP or through a web API. A dashboard shows the sources, the runs of the indexer and the search.
 
-The knowledge base reads Markdown, plain text and PDF files from folders on this machine. It splits each document along its sections and stores the chunks in PostgreSQL.
+The knowledge base reads Markdown, plain text and PDF files from folders on this machine. Every file becomes Markdown first.
+A PDF file keeps its headings, code, tables, footnotes and links, and its formulas become LaTeX. The knowledge base splits each document along its sections and stores the chunks with their pages and links in PostgreSQL.
 The search combines vectors of a local embedding model with the full text search of PostgreSQL. A local reranker orders the hits.
 
-The decisions and their reasons are in [docs/ADR/0001-architecture.md](docs/ADR/0001-architecture.md).
+The decisions and their reasons are in [docs/ADR/0001-architecture.md](docs/ADR/0001-architecture.md) and [docs/ADR/0002-import-pipeline.md](docs/ADR/0002-import-pipeline.md).
 
 ## How it works
 
@@ -88,7 +89,7 @@ The default patterns read `**/*.md`, `**/*.markdown`, `**/*.txt`, `**/*.rst`, `*
 The indexer runs over a new or changed source at once and over all sources every 10 minutes. A run does these steps:
 
 1. It skips each file with the stored size and time.
-2. It reads each changed file and splits it into chunks along its headings. The bookmarks of a PDF file become headings.
+2. It turns each changed file into Markdown and splits it into chunks along its sections. A chunk keeps code, a formula or a table whole, and it splits a long paragraph between sentences.
 3. It gives a new chunk the vector of a stored chunk with the same text.
 4. It deletes the documents of the files that are gone. A folder without matching files keeps its documents, and the run gives a warning.
 5. It embeds the chunks without a vector in rounds of 128. A chunk that the server rejects stays without a vector, and the full text search still finds it.
@@ -117,6 +118,7 @@ Other clients take a JSON entry:
 | `search` | Searches the chunks. It takes a query, the names of sources and a number of hits |
 | `find_documents` | Finds documents by a part of the path or the title, with tolerance for typos |
 | `read_document` | Reads the text of a document from an offset. A hit gives the offset in `charStart` |
+| `read_chunk` | Reads a chunk by its `chunkId`: its section, its pages, the previous and the next chunk, its links with their targets and the chunks that link to it |
 | `index_source` | Puts a source into the queue of the indexer |
 
 When `Server:Token` holds a token, the client sends the header `Authorization: Bearer <token>`. For Claude Code, add `--header "Authorization: Bearer <token>"`.
@@ -140,6 +142,9 @@ On a shared machine, set a token in `appsettings.Local.json`.
 | `GET /api/documents/{id}` | A document |
 | `GET /api/documents/{id}/content?offset=&length=` | A part of the text of a document, up to 100000 characters |
 | `GET /api/documents/{id}/chunks` | The chunks of a document |
+| `GET /api/documents/{id}/sections` | The sections of a document with their numbers and pages |
+| `GET /api/documents/{id}/file` | The original file |
+| `GET /api/chunks/{id}` | A chunk with its section, pages, neighbors, links and backlinks |
 | `POST /api/search` | The search: `query`, `sources`, `limit`, `rerank` |
 
 ## Configuration
@@ -163,6 +168,8 @@ The server reads `src/ProjectRag.Server/appsettings.json`. Put the settings of o
 | `Search:RrfK`, `Search:VectorWeight` | 60, 0.8 | The fusion of the ranks |
 | `Search:QueryTimeoutSeconds` | 20 | The time limit of the embedding of a query. After it the search uses the full text search only |
 | `Chunking:MaxChars` | 1800 | The size of a chunk. A change reads every file again |
+| `Chunking:AtomicMaxChars` | 3000 | The size of a chunk with code, a formula or a table, which splits only beyond it |
+| `Chunking:OverlapChars` | 300 | The most characters that a chunk repeats from the previous one when a block splits |
 | `Chunking:MaxFileBytes` | 64 MB | The size of the largest file |
 | `Indexing:ScanIntervalMinutes` | 10 | The interval of the scans of all sources. 0 turns them off |
 
@@ -193,4 +200,20 @@ npm --prefix src/ProjectRag.Dashboard run dev
 
 ```bash
 npm --prefix src/ProjectRag.Dashboard run lint
+```
+
+## The import of documents
+
+Every file becomes Markdown, the intermediate form of the pipeline. The details are in [docs/ADR/0002-import-pipeline.md](docs/ADR/0002-import-pipeline.md).
+
+- A PDF file goes through a layout analysis of its glyphs. The bookmarks give the headings, monospace lines give code, rules give tables, and the link annotations give links.
+- The formulas of TeX become LaTeX: scripts, fractions, large operators with their limits, cases and the symbols of CMSY.
+- The Markdown holds the service marks `<!-- rag:page N -->` and `<!-- rag:anchor name -->`. The chunks leave them out and keep the pages and the anchors as metadata.
+- A link `[text](#anchor)`, a link to another file of the source and a mention such as "section 8.14" become links between chunks.
+
+The dashboard shows a chunk next to its page of the original PDF file, and it lists the formulas of a document with the errors of KaTeX.
+The script `check-math` renders every formula of the knowledge base with KaTeX and fails on an error:
+
+```bash
+npm --prefix src/ProjectRag.Dashboard run check-math -- --api http://127.0.0.1:5180
 ```
