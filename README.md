@@ -143,6 +143,7 @@ On a shared machine, set a token in `appsettings.Local.json`.
 | `GET /api/documents/{id}/content?offset=&length=` | A part of the text of a document, up to 100000 characters |
 | `GET /api/documents/{id}/chunks` | The chunks of a document |
 | `GET /api/documents/{id}/sections` | The sections of a document with their numbers and pages |
+| `GET /api/documents/{id}/anchors/{name}` | An anchor of a document: its offset and the chunk at it |
 | `GET /api/documents/{id}/file` | The original file |
 | `GET /api/chunks/{id}` | A chunk with its section, pages, neighbors, links and backlinks |
 | `POST /api/search` | The search: `query`, `sources`, `limit`, `rerank` |
@@ -212,6 +213,7 @@ Every file becomes Markdown, the intermediate form of the pipeline. The details 
 - A link `[text](#anchor)`, a link to another file of the source and a mention such as "section 8.14" become links between chunks.
 
 The dashboard shows a chunk next to its page of the original PDF file, and it lists the formulas of a document with the errors of KaTeX.
+Each view of the dashboard has its own address, such as `/chunks/12`. A link to an anchor opens its place in the text, such as `/documents/4/text#p101-0`.
 The script `check-math` renders every formula of the knowledge base with KaTeX and fails on an error:
 
 ```bash

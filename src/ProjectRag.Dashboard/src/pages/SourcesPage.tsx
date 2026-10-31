@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { Link } from 'react-router';
 
 import { api } from '../api';
 import { Empty, ErrorBanner, Panel, Progress } from '../components/Common';
@@ -25,7 +26,7 @@ function lines(text: string): string[] {
     .filter((line) => line.length > 0);
 }
 
-export function SourcesPage({ onOpenDocuments }: { onOpenDocuments: (sourceId: number) => void }) {
+export function SourcesPage() {
   const sources = useLoad(api.sources, [], 4000);
   const runs = useLoad(() => api.runs(null, 15), [], 4000);
   const [form, setForm] = useState<FormState | null>(null);
@@ -173,9 +174,9 @@ export function SourcesPage({ onOpenDocuments }: { onOpenDocuments: (sourceId: n
                     </td>
                     <td className="mono small">{source.rootPath}</td>
                     <td className="num">
-                      <button type="button" className="link" onClick={() => onOpenDocuments(source.sourceId)}>
+                      <Link className="link" to={`/documents?source=${source.sourceId}`}>
                         {formatNumber(source.documentCount)}
-                      </button>
+                      </Link>
                     </td>
                     <td className="num">{formatNumber(source.chunkCount)}</td>
                     <td className="vectors">

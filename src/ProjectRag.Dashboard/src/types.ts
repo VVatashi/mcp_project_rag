@@ -105,6 +105,12 @@ export interface Section {
   chunkCount: number;
 }
 
+export interface Anchor {
+  name: string;
+  charOffset: number;
+  chunkId: number | null;
+}
+
 export interface ChunkLink {
   kind: 'link' | 'mention';
   label: string;

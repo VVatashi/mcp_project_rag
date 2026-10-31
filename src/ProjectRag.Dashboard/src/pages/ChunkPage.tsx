@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { Link, useNavigate } from 'react-router';
 
 import { api } from '../api';
 import { Badge, Empty, ErrorBanner, Panel } from '../components/Common';
@@ -16,17 +17,17 @@ function pages(chunk: ChunkDetail): string {
  * A chunk with its place: the section, the pages, the neighbors, the links with their targets and the links to it.
  * A PDF document shows its page next to the Markdown, so a reader can compare the import with the original.
  */
-export function ChunkPage({ chunkId, follow, onOpenChunk, onOpenDocument }: { chunkId: number; follow: string | null; onOpenChunk: (chunkId: number, follow?: string) => void; onOpenDocument: (documentId: number, offset: number) => void }) {
+export function ChunkPage({ chunkId }: { chunkId: number }) {
   const chunk = useLoad(() => api.chunk(chunkId), [chunkId]);
   const [page, setPage] = useState<number | null>(null);
+  const navigate = useNavigate();
   const data = chunk.data;
 
-  // A link of a hit names only an anchor. The chunk knows the target of each of its anchors.
-  useEffect(() => {
-    if (!data || !follow) return;
-    const target = data.links.find((link) => link.targetAnchor === follow && link.targetChunkId !== null);
-    if (target?.targetChunkId) onOpenChunk(target.targetChunkId);
-  }, [data, follow, onOpenChunk]);
+  // The chunk knows the targets of its own links. A link in the repeated start of the chunk belongs to the previous chunk, so the page of the anchor resolves it.
+  const anchorHref = (anchor: string) => {
+    const target = data?.links.find((link) => link.targetPath === null && link.targetAnchor === anchor && link.targetChunkId !== null);
+    return target ? `/chunks/${target.targetChunkId}` : `/documents/${data?.documentId}/anchors/${encodeURIComponent(anchor)}`;
+  };
 
   const isPdf = data?.path.toLowerCase().endsWith('.pdf') ?? false;
   const shownPage = page ?? data?.pageStart ?? null;
@@ -40,10 +41,10 @@ export function ChunkPage({ chunkId, follow, onOpenChunk, onOpenDocument }: { ch
             title={data.heading}
             actions={
               <>
-                <button type="button" className="button button--small" disabled={data.previousChunkId === null} onClick={() => data.previousChunkId && onOpenChunk(data.previousChunkId)}>
+                <button type="button" className="button button--small" disabled={data.previousChunkId === null} onClick={() => void navigate(`/chunks/${data.previousChunkId}`)}>
                   ← Previous
                 </button>
-                <button type="button" className="button button--small" disabled={data.nextChunkId === null} onClick={() => data.nextChunkId && onOpenChunk(data.nextChunkId)}>
+                <button type="button" className="button button--small" disabled={data.nextChunkId === null} onClick={() => void navigate(`/chunks/${data.nextChunkId}`)}>
                   Next →
                 </button>
               </>
@@ -51,9 +52,9 @@ export function ChunkPage({ chunkId, follow, onOpenChunk, onOpenDocument }: { ch
           >
             <p className="muted small">
               {data.source} ·{' '}
-              <button type="button" className="link" onClick={() => onOpenDocument(data.documentId, data.charStart)}>
+              <Link className="link" to={`/documents/${data.documentId}/text?offset=${data.charStart}`}>
                 {data.path}
-              </button>{' '}
+              </Link>{' '}
               · chunk #{data.ordinal} {pages(data) && `· ${pages(data)}`} {data.overlapChars > 0 && `· repeats ${data.overlapChars} characters of the previous chunk`}{' '}
               {data.hasEmbedding ? <Badge tone="ok">vector</Badge> : <Badge tone="warn">no vector</Badge>}
             </p>
@@ -61,7 +62,7 @@ export function ChunkPage({ chunkId, follow, onOpenChunk, onOpenDocument }: { ch
 
           <div className={isPdf && shownPage !== null ? 'split' : undefined}>
             <Panel title="Text">
-              <Markdown text={data.body} onAnchor={(anchor) => onOpenChunk(data.chunkId, anchor)} />
+              <Markdown text={data.body} anchorHref={anchorHref} />
             </Panel>
             {isPdf && shownPage !== null && (
               <Panel
@@ -91,10 +92,10 @@ export function ChunkPage({ chunkId, follow, onOpenChunk, onOpenDocument }: { ch
                   <li key={index}>
                     <Badge tone={link.kind === 'link' ? 'info' : 'muted'}>{link.kind}</Badge> <strong>{link.label}</strong> →{' '}
                     {link.targetChunkId !== null ? (
-                      <button type="button" className="link" onClick={() => link.targetChunkId && onOpenChunk(link.targetChunkId)}>
+                      <Link className="link" to={`/chunks/${link.targetChunkId}`}>
                         {link.targetHeading}
                         {link.targetPage !== null && `, page ${link.targetPage}`}
-                      </button>
+                      </Link>
                     ) : (
                       <span className="muted">
                         {link.targetPath ?? 'this document'}#{link.targetAnchor} (not found)
@@ -110,9 +111,9 @@ export function ChunkPage({ chunkId, follow, onOpenChunk, onOpenDocument }: { ch
                 {data.backlinks.map((link) => (
                   <li key={link.chunkId}>
                     <Badge tone={link.kind === 'link' ? 'info' : 'muted'}>{link.kind}</Badge>{' '}
-                    <button type="button" className="link" onClick={() => onOpenChunk(link.chunkId)}>
+                    <Link className="link" to={`/chunks/${link.chunkId}`}>
                       {link.heading}
-                    </button>{' '}
+                    </Link>{' '}
                     <span className="muted small">“{link.label}”</span>
                   </li>
                 ))}

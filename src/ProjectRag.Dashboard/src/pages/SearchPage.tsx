@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { Link } from 'react-router';
 
 import { api } from '../api';
 import { Badge, Empty, ErrorBanner, Panel } from '../components/Common';
@@ -6,7 +7,7 @@ import { Markdown } from '../components/Markdown';
 import { useLoad } from '../hooks';
 import type { SearchResult } from '../types';
 
-export function SearchPage({ onOpenHit, onOpenChunk }: { onOpenHit: (documentId: number, offset: number) => void; onOpenChunk: (chunkId: number, follow?: string) => void }) {
+export function SearchPage() {
   const sources = useLoad(api.sources, []);
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
@@ -93,9 +94,9 @@ export function SearchPage({ onOpenHit, onOpenChunk }: { onOpenHit: (documentId:
             {result.hits.map((hit) => (
               <li key={hit.chunkId} className="hit">
                 <div className="hit__head">
-                  <button type="button" className="link hit__heading" onClick={() => onOpenChunk(hit.chunkId)}>
+                  <Link className="link hit__heading" to={`/chunks/${hit.chunkId}`}>
                     {hit.heading}
-                  </button>
+                  </Link>
                   <span className="hit__scores">
                     {hit.rerankScore !== null && <Badge tone="ok" title="The score of the reranker">rerank {hit.rerankScore.toFixed(3)}</Badge>}
                     <Badge tone="muted" title="The rank in the vector search">vec {hit.vectorRank ?? '—'}</Badge>
@@ -105,13 +106,13 @@ export function SearchPage({ onOpenHit, onOpenChunk }: { onOpenHit: (documentId:
                 </div>
                 <div className="hit__path mono small">
                   {hit.source} ·{' '}
-                  <button type="button" className="link" onClick={() => onOpenHit(hit.documentId, hit.charStart)}>
+                  <Link className="link" to={`/documents/${hit.documentId}/text?offset=${hit.charStart}`}>
                     {hit.path}
-                  </button>
+                  </Link>
                   {hit.pageStart !== null && ` · page ${hit.pageStart}${hit.pageEnd !== hit.pageStart ? `–${hit.pageEnd}` : ''}`}
                   {hit.linkCount > 0 && ` · ${hit.linkCount} links`}
                 </div>
-                <Markdown text={hit.body} onAnchor={(anchor) => onOpenChunk(hit.chunkId, anchor)} />
+                <Markdown text={hit.body} anchorHref={(anchor) => `/documents/${hit.documentId}/anchors/${encodeURIComponent(anchor)}`} />
               </li>
             ))}
           </ol>

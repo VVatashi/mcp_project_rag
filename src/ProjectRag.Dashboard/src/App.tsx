@@ -1,5 +1,7 @@
+import { BrowserRouter, Link, Navigate, NavLink, Route, Routes, useParams, useSearchParams } from 'react-router';
+
 import { getToken, setToken } from './api';
-import { useHashRoute } from './hooks';
+import { AnchorPage } from './pages/AnchorPage';
 import { ChunkPage } from './pages/ChunkPage';
 import { DocumentPage } from './pages/DocumentPage';
 import { DocumentsPage } from './pages/DocumentsPage';
@@ -8,27 +10,42 @@ import { SourcesPage } from './pages/SourcesPage';
 import { StatusPage } from './pages/StatusPage';
 
 const sections = [
-  { route: 'status', label: 'Status' },
-  { route: 'search', label: 'Search' },
-  { route: 'sources', label: 'Sources' },
-  { route: 'documents', label: 'Documents' },
+  { route: '/status', label: 'Status' },
+  { route: '/search', label: 'Search' },
+  { route: '/sources', label: 'Sources' },
+  { route: '/documents', label: 'Documents' },
 ] as const;
-
-function parseRoute(route: string): { path: string[]; parameters: URLSearchParams } {
-  const [path = '', search = ''] = route.split('?');
-  return { path: path.split('/').filter(Boolean), parameters: new URLSearchParams(search) };
-}
 
 function numberOrNull(value: string | null | undefined): number | null {
   const parsed = value ? Number(value) : NaN;
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-export function App() {
-  const [route, navigate] = useHashRoute();
-  const { path, parameters } = parseRoute(route);
-  const section = path[0] ?? 'status';
+// The pages take numbers. A route with a wrong number goes to the list of documents.
 
+function ChunkRoute() {
+  const chunkId = numberOrNull(useParams().chunkId);
+  return chunkId === null ? <Navigate to="/documents" replace /> : <ChunkPage key={chunkId} chunkId={chunkId} />;
+}
+
+function DocumentRoute() {
+  const { documentId, tab } = useParams();
+  const id = numberOrNull(documentId);
+  return id === null ? <Navigate to="/documents" replace /> : <DocumentPage key={id} documentId={id} tab={tab} />;
+}
+
+function AnchorRoute() {
+  const { documentId, name } = useParams();
+  const id = numberOrNull(documentId);
+  return id === null || !name ? <Navigate to="/documents" replace /> : <AnchorPage documentId={id} name={name} />;
+}
+
+function DocumentsRoute() {
+  const [parameters] = useSearchParams();
+  return <DocumentsPage sourceId={numberOrNull(parameters.get('source'))} />;
+}
+
+export function App() {
   const askToken = () => {
     const token = window.prompt('The token of the server (Server:Token). Leave it empty to remove it.', getToken());
     if (token !== null) {
@@ -37,50 +54,38 @@ export function App() {
     }
   };
 
-  const openChunk = (chunkId: number, follow?: string) => navigate(follow ? `chunks/${chunkId}?follow=${encodeURIComponent(follow)}` : `chunks/${chunkId}`);
-  const openDocument = (documentId: number, offset: number) => navigate(`documents/${documentId}?offset=${offset}`);
-
-  let page;
-  if (section === 'search') {
-    page = <SearchPage onOpenHit={openDocument} onOpenChunk={openChunk} />;
-  } else if (section === 'chunks' && numberOrNull(path[1]) !== null) {
-    const chunkId = numberOrNull(path[1]) ?? 0;
-    page = <ChunkPage key={route} chunkId={chunkId} follow={parameters.get('follow')} onOpenChunk={openChunk} onOpenDocument={openDocument} />;
-  } else if (section === 'sources') {
-    page = <SourcesPage onOpenDocuments={(sourceId) => navigate(`documents?source=${sourceId}`)} />;
-  } else if (section === 'documents' && numberOrNull(path[1]) !== null) {
-    const documentId = numberOrNull(path[1]) ?? 0;
-    page = <DocumentPage key={route} documentId={documentId} offset={numberOrNull(parameters.get('offset'))} onBack={() => navigate('documents')} onOpenChunk={openChunk} />;
-  } else if (section === 'documents') {
-    page = (
-      <DocumentsPage
-        sourceId={numberOrNull(parameters.get('source'))}
-        onSourceChange={(sourceId) => navigate(sourceId === null ? 'documents' : `documents?source=${sourceId}`)}
-        onOpen={(documentId) => navigate(`documents/${documentId}`)}
-      />
-    );
-  } else {
-    page = <StatusPage />;
-  }
-
   return (
-    <div className="app">
-      <header className="topbar">
-        <a className="topbar__brand" href="#/status">
-          ProjectRag
-        </a>
-        <nav className="topbar__nav">
-          {sections.map((item) => (
-            <a key={item.route} href={`#/${item.route}`} className={section === item.route ? 'topbar__link topbar__link--on' : 'topbar__link'}>
-              {item.label}
-            </a>
-          ))}
-        </nav>
-        <button type="button" className="button button--small topbar__token" onClick={askToken}>
-          Token{getToken() ? ' ✓' : ''}
-        </button>
-      </header>
-      <main className="main">{page}</main>
-    </div>
+    <BrowserRouter>
+      <div className="app">
+        <header className="topbar">
+          <Link className="topbar__brand" to="/status">
+            ProjectRag
+          </Link>
+          <nav className="topbar__nav">
+            {sections.map((item) => (
+              <NavLink key={item.route} to={item.route} className={({ isActive }) => (isActive ? 'topbar__link topbar__link--on' : 'topbar__link')}>
+                {item.label}
+              </NavLink>
+            ))}
+          </nav>
+          <button type="button" className="button button--small topbar__token" onClick={askToken}>
+            Token{getToken() ? ' ✓' : ''}
+          </button>
+        </header>
+        <main className="main">
+          <Routes>
+            <Route path="/" element={<Navigate to="/status" replace />} />
+            <Route path="/status" element={<StatusPage />} />
+            <Route path="/search" element={<SearchPage />} />
+            <Route path="/sources" element={<SourcesPage />} />
+            <Route path="/documents" element={<DocumentsRoute />} />
+            <Route path="/documents/:documentId/anchors/:name" element={<AnchorRoute />} />
+            <Route path="/documents/:documentId/:tab?" element={<DocumentRoute />} />
+            <Route path="/chunks/:chunkId" element={<ChunkRoute />} />
+            <Route path="*" element={<Navigate to="/status" replace />} />
+          </Routes>
+        </main>
+      </div>
+    </BrowserRouter>
   );
 }

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link, useNavigate } from 'react-router';
 
 import { api } from '../api';
 import { Empty, ErrorBanner, Panel } from '../components/Common';
@@ -7,7 +8,8 @@ import { useLoad } from '../hooks';
 
 const pageSize = 50;
 
-export function DocumentsPage({ sourceId, onSourceChange, onOpen }: { sourceId: number | null; onSourceChange: (sourceId: number | null) => void; onOpen: (documentId: number) => void }) {
+export function DocumentsPage({ sourceId }: { sourceId: number | null }) {
+  const navigate = useNavigate();
   const sources = useLoad(api.sources, []);
   const [text, setText] = useState('');
   const [offset, setOffset] = useState(0);
@@ -25,7 +27,7 @@ export function DocumentsPage({ sourceId, onSourceChange, onOpen }: { sourceId: 
               value={sourceId ?? ''}
               onChange={(event) => {
                 setOffset(0);
-                onSourceChange(event.target.value ? Number(event.target.value) : null);
+                void navigate(event.target.value ? `/documents?source=${event.target.value}` : '/documents');
               }}
             >
               <option value="">All sources</option>
@@ -66,9 +68,9 @@ export function DocumentsPage({ sourceId, onSourceChange, onOpen }: { sourceId: 
                   {documents.data.items.map((document) => (
                     <tr key={document.documentId}>
                       <td>
-                        <button type="button" className="link" onClick={() => onOpen(document.documentId)}>
+                        <Link className="link" to={`/documents/${document.documentId}`}>
                           {document.title}
-                        </button>
+                        </Link>
                       </td>
                       <td>{document.source}</td>
                       <td className="mono small">{document.path}</td>

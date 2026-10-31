@@ -50,21 +50,3 @@ export function useLoad<T>(load: () => Promise<T>, keys: readonly unknown[], int
 
   return { data, error, reload };
 }
-
-/** Reads and writes the part of the location hash after "#/", for example "documents/12". */
-export function useHashRoute(): [string, (route: string) => void] {
-  const read = () => window.location.hash.replace(/^#\/?/, '');
-  const [route, setRoute] = useState(read);
-
-  useEffect(() => {
-    const onChange = () => setRoute(read());
-    window.addEventListener('hashchange', onChange);
-    return () => window.removeEventListener('hashchange', onChange);
-  }, []);
-
-  const navigate = useCallback((next: string) => {
-    window.location.hash = `/${next}`;
-  }, []);
-
-  return [route, navigate];
-}

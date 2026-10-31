@@ -111,6 +111,9 @@ internal static class KnowledgeApi
         api.MapGet("/documents/{documentId:long}/sections", static (long documentId, StructureStore structure, CancellationToken cancellationToken) =>
             structure.GetSectionsAsync(documentId, cancellationToken));
 
+        api.MapGet("/documents/{documentId:long}/anchors/{name}", static async Task<Results<Ok<AnchorView>, NotFound>> (long documentId, string name, StructureStore structure, CancellationToken cancellationToken) =>
+            await structure.GetAnchorAsync(documentId, name, cancellationToken) is { } anchor ? TypedResults.Ok(anchor) : TypedResults.NotFound());
+
         // The original file, so the dashboard can show a PDF page next to its Markdown.
         api.MapGet("/documents/{documentId:long}/file", static async Task<Results<PhysicalFileHttpResult, NotFound>> (long documentId, StructureStore structure, CancellationToken cancellationToken) =>
         {

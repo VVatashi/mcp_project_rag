@@ -1,4 +1,5 @@
 import type {
+  Anchor,
   Chunk,
   ChunkDetail,
   DocumentContent,
@@ -106,6 +107,7 @@ export const api = {
     request<DocumentContent>(`/api/documents/${documentId}/content${query({ offset, length })}`),
   chunks: (documentId: number) => request<Chunk[]>(`/api/documents/${documentId}/chunks`),
   sections: (documentId: number) => request<Section[]>(`/api/documents/${documentId}/sections`),
+  anchor: (documentId: number, name: string) => request<Anchor>(`/api/documents/${documentId}/anchors/${encodeURIComponent(name)}`),
   chunk: (chunkId: number) => request<ChunkDetail>(`/api/chunks/${chunkId}`),
 
   /** Loads the bytes of the original file. A link to the API cannot carry the token, a fetch can. */

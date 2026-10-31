@@ -61,8 +61,12 @@ app.UseStaticFiles(new StaticFileOptions
 app.MapKnowledgeApi();
 app.MapMcp("/mcp");
 
+// The dashboard routes its pages in the browser, so the server answers each of its addresses with the page.
+// An unknown address of the web API stays an error.
+app.Map("/api/{**path}", static () => Results.NotFound());
+
 if (File.Exists(Path.Combine(app.Environment.WebRootPath ?? string.Empty, "index.html")))
-    app.MapFallbackToFile("index.html");
+    app.MapFallbackToFile("index.html", new StaticFileOptions { OnPrepareResponse = static context => context.Context.Response.Headers.CacheControl = "no-cache" });
 else
     app.MapGet("/", static () => "The dashboard is not built. Run \"npm run build\" in src/ProjectRag.Dashboard.");
 
