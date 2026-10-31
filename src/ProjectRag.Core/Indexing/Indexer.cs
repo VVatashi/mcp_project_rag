@@ -182,6 +182,9 @@ public sealed class Indexer(
             progress?.Invoke(run);
         }
 
+        // The rules of the categories may change without a change of the files, so each run gives every document its category again.
+        await documents.ApplyCategoriesAsync(source, cancellationToken);
+
         // An empty folder is more often a moment of a branch switch or an unplugged drive than a real deletion.
         // The vectors of a source take minutes to rebuild, so the indexer keeps the documents and warns.
         if (paths.Count == 0 && known.Count > 0)

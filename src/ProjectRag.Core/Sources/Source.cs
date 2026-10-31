@@ -36,6 +36,11 @@ public sealed class Source
     public IReadOnlyList<string> ExcludeGlobs { get; init; } = [];
 
     /// <summary>
+    /// Gets the rules that give the documents their categories, in their order. A document without a matching rule takes the name of the source.
+    /// </summary>
+    public IReadOnlyList<CategoryRule> CategoryRules { get; init; } = [];
+
+    /// <summary>
     /// Gets the time when the source was added.
     /// </summary>
     public DateTime CreatedAt { get; init; }

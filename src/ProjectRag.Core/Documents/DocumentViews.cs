@@ -6,6 +6,11 @@ namespace ProjectRag.Core.Documents;
 public sealed class DocumentSummary
 {
     /// <summary>
+    /// Gets the category, such as <c>csharp</c>: from a rule of the source, or the name of the source.
+    /// </summary>
+    public string Category { get; init; } = string.Empty;
+
+    /// <summary>
     /// Gets the key of the document.
     /// </summary>
     public long DocumentId { get; init; }
@@ -124,12 +129,6 @@ public sealed class ChunkView
     /// Gets the number of characters at the start that the previous chunk also holds.
     /// </summary>
     public int OverlapChars { get; init; }
-
-    /// <summary>
-    /// Gets a value that tells whether the chunk starts at the start of a block of the Markdown.
-    /// A chunk that splits a paragraph, code or a table starts inside its block, so a view of the text must not start there.
-    /// </summary>
-    public bool StartsBlock { get; set; }
 }
 
 /// <summary>
@@ -149,3 +148,37 @@ internal sealed class DocumentFileState
 
     public string ParserVersion { get; init; } = string.Empty;
 }
+
+/// <summary>
+/// A category of the documents with its counts.
+/// </summary>
+public sealed class CategoryInfo
+{
+    /// <summary>Gets the name of the category, such as <c>vulkan</c>.</summary>
+    public string Name { get; init; } = string.Empty;
+
+    /// <summary>Gets the number of documents.</summary>
+    public long DocumentCount { get; init; }
+
+    /// <summary>Gets the number of chunks.</summary>
+    public long ChunkCount { get; init; }
+
+    /// <summary>Gets the number of chunks with a vector of the current embedding model.</summary>
+    public long EmbeddedCount { get; init; }
+}
+
+/// <summary>
+/// A page of the chunks of a document.
+/// </summary>
+/// <param name="Items">The chunks of the page in their order.</param>
+/// <param name="Total">The number of the chunks that match.</param>
+/// <param name="EmbeddedCount">The number of the chunks of the document with a vector of the current model.</param>
+public sealed record ChunkPage(IReadOnlyList<ChunkView> Items, long Total, long EmbeddedCount);
+
+/// <summary>
+/// A display formula of a document.
+/// </summary>
+/// <param name="Latex">The LaTeX of the formula.</param>
+/// <param name="Offset">The index of the formula in the content.</param>
+/// <param name="Page">The page of the formula, or <see langword="null"/> for a document without pages.</param>
+public sealed record FormulaView(string Latex, int Offset, int? Page);

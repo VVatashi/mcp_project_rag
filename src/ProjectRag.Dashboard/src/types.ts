@@ -15,6 +15,7 @@ export interface Source {
   rootPath: string;
   includeGlobs: string[];
   excludeGlobs: string[];
+  categoryRules: CategoryRule[];
   createdAt: string;
   indexedAt: string | null;
   documentCount: number;
@@ -28,6 +29,19 @@ export interface SourceInput {
   rootPath: string;
   includeGlobs: string[] | null;
   excludeGlobs: string[] | null;
+  categoryRules: CategoryRule[] | null;
+}
+
+export interface CategoryRule {
+  pattern: string;
+  category: string;
+}
+
+export interface Category {
+  name: string;
+  documentCount: number;
+  chunkCount: number;
+  embeddedCount: number;
 }
 
 export type RunStatus = 'running' | 'succeeded' | 'failed' | 'canceled';
@@ -55,6 +69,7 @@ export interface DocumentSummary {
   documentId: number;
   sourceId: number;
   source: string;
+  category: string;
   path: string;
   title: string;
   sizeBytes: number;
@@ -88,7 +103,18 @@ export interface Chunk {
   pageStart: number | null;
   pageEnd: number | null;
   overlapChars: number;
-  startsBlock: boolean;
+}
+
+export interface ChunkPage {
+  items: Chunk[];
+  total: number;
+  embeddedCount: number;
+}
+
+export interface Formula {
+  latex: string;
+  offset: number;
+  page: number | null;
 }
 
 export interface Section {
@@ -157,6 +183,7 @@ export interface ChunkDetail {
 
 export interface SearchRequest {
   query: string;
+  categories: string[] | null;
   sources: string[] | null;
   limit: number | null;
   rerank: boolean | null;
@@ -166,6 +193,7 @@ export interface SearchHit {
   chunkId: number;
   documentId: number;
   source: string;
+  category: string;
   path: string;
   title: string;
   heading: string;

@@ -16,6 +16,11 @@ public sealed class SearchRequest
     public IReadOnlyList<string>? Sources { get; set; }
 
     /// <summary>
+    /// Gets or sets the categories of the documents to search, such as <c>csharp</c> or <c>vulkan</c>. <see langword="null"/> or an empty list searches all categories.
+    /// </summary>
+    public IReadOnlyList<string>? Categories { get; set; }
+
+    /// <summary>
     /// Gets or sets the number of results, or <see langword="null"/> for the default of the options.
     /// </summary>
     public int? Limit { get; set; }
@@ -48,6 +53,11 @@ public sealed class SearchHit
 
     /// <summary>Gets the name of the source.</summary>
     public string Source { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Gets the category of the document.
+    /// </summary>
+    public string Category { get; init; } = string.Empty;
 
     /// <summary>Gets the path of the file relative to the folder of the source.</summary>
     public string Path { get; init; } = string.Empty;

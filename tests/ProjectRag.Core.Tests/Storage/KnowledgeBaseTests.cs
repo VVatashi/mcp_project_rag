@@ -133,9 +133,40 @@ public sealed class KnowledgeBaseTests : IAsyncLifetime
         Assert.NotNull(best.VectorRank);
         await Assert.ThrowsAsync<ArgumentException>(() => search.SearchAsync(new SearchRequest { Query = "texture", Sources = ["missing"] }, cancellationToken));
 
-        (IReadOnlyList<DocumentSummary> found, long total) = await services.GetRequiredService<DocumentStore>().ListAsync([], "textur", 0, 10, cancellationToken);
+        (IReadOnlyList<DocumentSummary> found, long total) = await services.GetRequiredService<DocumentStore>().ListAsync([], string.Empty, "textur", 0, 10, cancellationToken);
         Assert.Equal(1, total);
         Assert.Equal("textures.md", Assert.Single(found).Path);
+    }
+
+    [Fact]
+    public async Task Categories_ComeFromTheRulesOfTheSource()
+    {
+        ServiceProvider services = RequireDatabase();
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        Write("specs/vkspec.md", "# Vulkan\n\n## Pipelines\n\nA pipeline of the Vulkan API holds the state of the shaders.\n");
+        Write("glspec.md", "# OpenGL\n\n## Pipelines\n\nThe pipeline of the OpenGL API runs the shaders of a program.\n");
+        SourceStore sources = services.GetRequiredService<SourceStore>();
+        SourceInput input = new() { Name = "gl", RootPath = _root, CategoryRules = [new CategoryRule { Pattern = "specs/vk*.md", Category = "vulkan" }] };
+        int sourceId = await sources.AddAsync(input, cancellationToken);
+        Indexer indexer = services.GetRequiredService<Indexer>();
+        await indexer.RunAsync(sourceId, null, cancellationToken);
+        DocumentStore documents = services.GetRequiredService<DocumentStore>();
+        SearchService search = services.GetRequiredService<SearchService>();
+
+        Assert.Equal("vulkan", Assert.Single((await sources.GetAsync(sourceId, null, cancellationToken))!.CategoryRules).Category);
+        Assert.Equal(["gl", "vulkan"], (await documents.GetCategoriesAsync(null, cancellationToken)).Select(static category => category.Name));
+        Assert.Equal("specs/vkspec.md", Assert.Single((await documents.ListAsync([], "vulkan", string.Empty, 0, 10, cancellationToken)).Items).Path);
+        SearchResult result = await search.SearchAsync(new SearchRequest { Query = "pipeline shaders", Categories = ["vulkan"], Rerank = false }, cancellationToken);
+        Assert.All(result.Hits, static hit => Assert.Equal("vulkan", hit.Category));
+        Assert.NotEmpty(result.Hits);
+        await Assert.ThrowsAsync<ArgumentException>(() => search.SearchAsync(new SearchRequest { Query = "pipeline", Categories = ["missing"] }, cancellationToken));
+
+        // A new rule changes the categories of the stored documents without a new read of the files.
+        input.CategoryRules = [new CategoryRule { Pattern = "*.md", Category = "opengl" }];
+        await sources.UpdateAsync(sourceId, input, cancellationToken);
+        Assert.Equal(2, await documents.ApplyCategoriesAsync((await sources.GetAsync(sourceId, null, cancellationToken))!, cancellationToken));
+        Assert.Equal("opengl", Assert.Single((await documents.ListAsync([], string.Empty, "glspec", 0, 10, cancellationToken)).Items).Category);
+        Assert.Equal("gl", Assert.Single((await documents.ListAsync([], string.Empty, "vkspec", 0, 10, cancellationToken)).Items).Category);
     }
 
     [Fact]
@@ -173,7 +204,10 @@ public sealed class KnowledgeBaseTests : IAsyncLifetime
         StructureStore structure = services.GetRequiredService<StructureStore>();
 
         DocumentSummary a = (await documents.FindAsync("gl", "docs/a.md", cancellationToken))!;
-        ChunkView first = (await documents.GetChunksAsync(a.DocumentId, null, cancellationToken))[0];
+        ChunkPage page = await documents.GetChunksAsync(a.DocumentId, null, 0, 1, null, cancellationToken);
+        ChunkView first = Assert.Single(page.Items);
+        Assert.True(page.Total >= 1);
+        Assert.Contains(first.CharStart, await documents.GetBoundariesAsync(a.DocumentId, cancellationToken));
         ChunkDetail chunk = (await structure.GetChunkAsync(first.ChunkId, null, cancellationToken))!;
 
         ChunkLinkView link = Assert.Single(chunk.Links, static link => link.Kind == "link");

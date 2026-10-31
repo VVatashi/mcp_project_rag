@@ -1,10 +1,12 @@
 import type {
   Anchor,
-  Chunk,
+  Category,
   ChunkDetail,
+  ChunkPage,
   DocumentContent,
   DocumentPage,
   DocumentSummary,
+  Formula,
   IndexRun,
   KnowledgeStatus,
   SearchRequest,
@@ -100,12 +102,16 @@ export const api = {
 
   runs: (sourceId: number | null, limit: number) => request<IndexRun[]>(`/api/runs${query({ sourceId, limit })}`),
 
-  documents: (sourceId: number | null, text: string, offset: number, limit: number) =>
-    request<DocumentPage>(`/api/documents${query({ sourceId, q: text, offset, limit })}`),
+  categories: () => request<Category[]>('/api/categories'),
+  documents: (sourceId: number | null, category: string | null, text: string, offset: number, limit: number) =>
+    request<DocumentPage>(`/api/documents${query({ sourceId, category, q: text, offset, limit })}`),
   document: (documentId: number) => request<DocumentSummary>(`/api/documents/${documentId}`),
   content: (documentId: number, offset: number, length: number) =>
     request<DocumentContent>(`/api/documents/${documentId}/content${query({ offset, length })}`),
-  chunks: (documentId: number) => request<Chunk[]>(`/api/documents/${documentId}/chunks`),
+  chunks: (documentId: number, sectionId: number | null, offset: number, limit: number) =>
+    request<ChunkPage>(`/api/documents/${documentId}/chunks${query({ sectionId, offset, limit })}`),
+  boundaries: (documentId: number) => request<number[]>(`/api/documents/${documentId}/boundaries`),
+  formulas: (documentId: number) => request<Formula[]>(`/api/documents/${documentId}/formulas`),
   sections: (documentId: number) => request<Section[]>(`/api/documents/${documentId}/sections`),
   anchor: (documentId: number, name: string) => request<Anchor>(`/api/documents/${documentId}/anchors/${encodeURIComponent(name)}`),
   chunk: (chunkId: number) => request<ChunkDetail>(`/api/chunks/${chunkId}`),

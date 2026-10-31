@@ -1,6 +1,25 @@
 import type { ReactNode } from 'react';
 
+import { formatNumber } from '../format';
 import type { RunStatus } from '../types';
+
+/** The buttons of a long list that shows one page at a time. A list of one page shows no buttons. */
+export function Pager({ offset, pageSize, total, onChange }: { offset: number; pageSize: number; total: number; onChange: (offset: number) => void }) {
+  if (total <= pageSize) return null;
+  return (
+    <div className="pager">
+      <button type="button" className="button button--small" disabled={offset === 0} onClick={() => onChange(Math.max(0, offset - pageSize))}>
+        Previous
+      </button>
+      <span className="muted small">
+        {formatNumber(offset + 1)}–{formatNumber(Math.min(total, offset + pageSize))} of {formatNumber(total)}
+      </span>
+      <button type="button" className="button button--small" disabled={offset + pageSize >= total} onClick={() => onChange(offset + pageSize)}>
+        Next
+      </button>
+    </div>
+  );
+}
 
 export function Panel({ title, actions, children }: { title: string; actions?: ReactNode; children: ReactNode }) {
   return (

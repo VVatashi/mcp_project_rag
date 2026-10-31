@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 using Dapper;
 
 using Npgsql;
@@ -14,7 +16,7 @@ public sealed class SourceStore(Database database)
 {
     // The counts come from subqueries. A join of documents and chunks would multiply the rows.
     private const string SelectSql = """
-        SELECT s.source_id, s.name, s.description, s.root_path, s.include_globs, s.exclude_globs, s.created_at, s.indexed_at,
+        SELECT s.source_id, s.name, s.description, s.root_path, s.include_globs, s.exclude_globs, s.category_rules::text AS category_rules, s.created_at, s.indexed_at,
                (SELECT count(*) FROM document d WHERE d.source_id = s.source_id) AS document_count,
                (SELECT count(*) FROM chunk c JOIN document d USING (document_id) WHERE d.source_id = s.source_id) AS chunk_count,
                (SELECT count(*) FROM chunk_embedding e JOIN chunk c USING (chunk_id) JOIN document d USING (document_id)
@@ -89,8 +91,8 @@ public sealed class SourceStore(Database database)
         await using NpgsqlConnection connection = await database.OpenAsync(cancellationToken);
         return await connection.ExecuteScalarAsync<int>(new CommandDefinition(
             """
-            INSERT INTO source (name, description, root_path, include_globs, exclude_globs)
-            VALUES (@Name, @Description, @RootPath, @IncludeGlobs, @ExcludeGlobs)
+            INSERT INTO source (name, description, root_path, include_globs, exclude_globs, category_rules)
+            VALUES (@Name, @Description, @RootPath, @IncludeGlobs, @ExcludeGlobs, CAST(@CategoryRules AS jsonb))
             RETURNING source_id
             """,
             Parameters(input, 0), cancellationToken: cancellationToken));
@@ -111,7 +113,8 @@ public sealed class SourceStore(Database database)
         int count = await connection.ExecuteAsync(new CommandDefinition(
             """
             UPDATE source
-            SET name = @Name, description = @Description, root_path = @RootPath, include_globs = @IncludeGlobs, exclude_globs = @ExcludeGlobs
+            SET name = @Name, description = @Description, root_path = @RootPath, include_globs = @IncludeGlobs, exclude_globs = @ExcludeGlobs,
+                category_rules = CAST(@CategoryRules AS jsonb)
             WHERE source_id = @SourceId
             """,
             Parameters(input, sourceId), cancellationToken: cancellationToken));
@@ -150,7 +153,10 @@ public sealed class SourceStore(Database database)
         input.RootPath,
         IncludeGlobs = input.Includes().ToArray(),
         ExcludeGlobs = input.Excludes().ToArray(),
+        CategoryRules = JsonSerializer.Serialize(input.Rules().Select(static rule => new CategoryRule { Pattern = rule.Pattern.Trim(), Category = rule.Category.Trim() }), JsonOptions),
     };
+
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     // Npgsql reads text[] as string[]. The public type exposes read-only lists.
     private sealed class SourceRow
@@ -166,6 +172,8 @@ public sealed class SourceStore(Database database)
         public string[] IncludeGlobs { get; init; } = [];
 
         public string[] ExcludeGlobs { get; init; } = [];
+
+        public string CategoryRules { get; init; } = "[]";
 
         public DateTime CreatedAt { get; init; }
 
@@ -185,6 +193,7 @@ public sealed class SourceStore(Database database)
             RootPath = RootPath,
             IncludeGlobs = IncludeGlobs,
             ExcludeGlobs = ExcludeGlobs,
+            CategoryRules = JsonSerializer.Deserialize<List<CategoryRule>>(CategoryRules, JsonOptions) ?? [],
             CreatedAt = CreatedAt,
             IndexedAt = IndexedAt,
             DocumentCount = DocumentCount,
