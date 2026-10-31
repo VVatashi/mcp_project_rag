@@ -14,7 +14,7 @@ public static class DocumentReader
     /// <summary>
     /// The version of the importers, the structure reader and the chunker. A new version makes the indexer read every file again.
     /// </summary>
-    public const int Version = 8;
+    public const int Version = 9;
 
     /// <summary>
     /// Reads a file.

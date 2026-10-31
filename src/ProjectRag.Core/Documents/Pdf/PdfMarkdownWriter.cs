@@ -325,9 +325,11 @@ internal sealed partial class PdfMarkdownWriter(HashSet<string> vocabulary, Dict
             if (previous is not null)
             {
                 double width = PdfLayout.MonoWidth(previous);
-                int spaces = (int)Math.Round((item.Left - previous.Right) / width);
+                // The gap after a variable with a script starts at the end of the script: "s_c, t_c".
+                double right = previous.Sub.Concat(previous.Sup).Select(static script => script.Right).DefaultIfEmpty(previous.Right).Max();
+                int spaces = (int)Math.Round((item.Left - Math.Max(right, previous.Right)) / width);
                 // An italic parameter after a monospace type keeps its space: "double l".
-                if (spaces == 0 && PdfLayout.NeedsSpace(previous, item))
+                if (spaces == 0 && right <= previous.Right && PdfLayout.NeedsSpace(previous, item))
                     spaces = 1;
 
                 // Beside a word of another font the gap is a space between words, not a column of the monospace grid.
@@ -339,6 +341,16 @@ internal sealed partial class PdfMarkdownWriter(HashSet<string> vocabulary, Dict
             }
 
             builder.Append(item.Text);
+            // A variable may carry a short script, such as the c of s_c or the i of T_i. A raised number is the mark of a footnote,
+            // and a long script is a piece of another line.
+            string sub = string.Concat(item.Sub.Select(static script => script.Text));
+            string sup = string.Concat(item.Sup.Select(static script => script.Text));
+            if (sub.Length is > 0 and <= 3)
+                builder.Append('_').Append(sub);
+
+            if (sup.Length is > 0 and <= 3 && !sup.All(char.IsDigit))
+                builder.Append('^').Append(sup);
+
             previous = item;
         }
 
