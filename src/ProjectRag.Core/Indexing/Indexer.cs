@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -104,13 +106,19 @@ public sealed class Indexer(
         string.Create(CultureInfo.InvariantCulture, $"{DocumentReader.Version};{options.MaxChars};{options.AtomicMaxChars};{options.OverlapChars};{options.MinChars}");
 
     /// <summary>
-    /// Computes the SHA-256 of bytes in lowercase hexadecimal.
+    /// Gives the version of a file: the version of the parser with a hash of the replacements of the file.
+    /// A change of the replacements of a file reads that file again.
     /// </summary>
-    // A change of the replacements of a file reads that file again, so the version of the file holds a hash of its replacements.
+    /// <param name="parserVersion">The version of the parser.</param>
+    /// <param name="replacements">The replacements of the file.</param>
+    /// <returns>The version, for example <c>8;1800;3000;300;400;3f2a9c01b7de</c>.</returns>
     internal static string FileVersion(string parserVersion, IReadOnlyList<TextReplacement> replacements) =>
         replacements.Count == 0 ? parserVersion
-            : $"{parserVersion};{Hash(Encoding.UTF8.GetBytes(string.Join('\n', replacements.Select(static replacement => $"{replacement.Find}\t{replacement.Replace}"))))[..12]}";
+            : $"{parserVersion};{Hash(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(replacements.Select(static replacement => new[] { replacement.Find, replacement.Replace }))))[..12]}";
 
+    /// <summary>
+    /// Computes the SHA-256 of bytes in lowercase hexadecimal.
+    /// </summary>
     internal static string Hash(ReadOnlySpan<byte> bytes) => Convert.ToHexStringLower(SHA256.HashData(bytes));
 
     private async Task SyncFilesAsync(Source source, IndexRun run, List<string> warnings, Action<IndexRun>? progress, CancellationToken cancellationToken)
@@ -166,6 +174,14 @@ public sealed class Indexer(
                 DocumentText text = DocumentReader.Read(path, bytes);
                 structure = MarkdownStructureReader.Read(text with { Content = TextReplacement.ApplyAll(text.Content, replacements) }, path);
                 chunks = chunker.Split(structure);
+            }
+            // A replacement that runs too long or breaks a mark fails its file with a warning that names the replacement.
+            catch (Exception exception) when (exception is RegexMatchTimeoutException or InvalidOperationException && replacements.Count > 0)
+            {
+                logger.LogWarning(exception, "A replacement of the source {Source} failed on the file {Path}.", source.Name, path);
+                warnings.Add($"A replacement failed on {path}: {exception.Message} Fix the replacements of the source.");
+                run.DocumentsFailed++;
+                continue;
             }
             // A locked, unreadable or broken file must not stop the run. PdfPig throws many kinds of exceptions on a damaged PDF.
 #pragma warning disable CA1031

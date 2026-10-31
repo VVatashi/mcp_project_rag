@@ -9,7 +9,7 @@ namespace ProjectRag.Core.Sources;
 /// A published PDF file may hold errors of its own. The Metal specification shows <c>sparse_color&lt;Tv&gt;</c> as <c>sparse_color-Tv</c>,
 /// so no analysis of its glyphs can restore the brackets. A replacement fixes the text after the import, before the chunks.
 /// </remarks>
-public sealed class TextReplacement
+public sealed partial class TextReplacement
 {
     /// <summary>The longest time of one replacement in one file.</summary>
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(2);
@@ -30,17 +30,35 @@ public sealed class TextReplacement
     public string Replace { get; set; } = string.Empty;
 
     /// <summary>
-    /// Applies the replacements to a text in their order.
+    /// Applies the replacements to a text in their order. The service marks of the importers, such as <c>&lt;!-- rag:page 5 --&gt;</c>, stay as they are:
+    /// a replacement changes only the text between them, and a mark must keep its own line when it had one.
     /// </summary>
     /// <param name="text">The text.</param>
     /// <param name="replacements">The replacements.</param>
     /// <returns>The changed text.</returns>
     /// <exception cref="RegexMatchTimeoutException">A replacement took longer than <see cref="Timeout"/>.</exception>
-    public static string ApplyAll(string text, IEnumerable<TextReplacement> replacements)
+    /// <exception cref="InvalidOperationException">A replacement moved a mark off its own line.</exception>
+    public static string ApplyAll(string text, IReadOnlyList<TextReplacement> replacements)
     {
+        ArgumentNullException.ThrowIfNull(text);
         ArgumentNullException.ThrowIfNull(replacements);
+        if (replacements.Count == 0)
+            return text;
+
+        int lineMarks = LineMarkRegex().Count(text);
         foreach (TextReplacement replacement in replacements)
-            text = Regex.Replace(text, replacement.Find, replacement.Replace, RegexOptions.Multiline | RegexOptions.CultureInvariant, Timeout);
+        {
+            Regex regex = new(replacement.Find, RegexOptions.Multiline | RegexOptions.CultureInvariant, Timeout);
+            // The marks split the text. Each part between them changes on its own, so no match takes in a mark.
+            string[] parts = MarkRegex().Split(text);
+            for (int i = 0; i < parts.Length; i += 2)
+                parts[i] = regex.Replace(parts[i], replacement.Replace);
+
+            text = string.Concat(parts);
+        }
+
+        if (LineMarkRegex().Count(text) != lineMarks)
+            throw new InvalidOperationException("A replacement moved a mark of a page or an anchor off its own line.");
 
         return text;
     }
@@ -51,6 +69,9 @@ public sealed class TextReplacement
     /// <returns><see langword="true"/> for a valid expression.</returns>
     public bool IsValid()
     {
+        if (Replace is null)
+            return false;
+
         if (string.IsNullOrEmpty(Find))
             return false;
 
@@ -64,4 +85,11 @@ public sealed class TextReplacement
             return false;
         }
     }
+
+    // A capture group keeps each mark in the result of Split.
+    [GeneratedRegex(@"(<!-- rag:[^>]*-->)")]
+    private static partial Regex MarkRegex();
+
+    [GeneratedRegex(@"^<!-- rag:[^>]*-->$", RegexOptions.Multiline)]
+    private static partial Regex LineMarkRegex();
 }

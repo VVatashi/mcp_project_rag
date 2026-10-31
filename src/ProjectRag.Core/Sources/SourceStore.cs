@@ -154,7 +154,9 @@ public sealed class SourceStore(Database database)
         IncludeGlobs = input.Includes().ToArray(),
         ExcludeGlobs = input.Excludes().ToArray(),
         CategoryRules = JsonSerializer.Serialize(input.Rules().Select(static rule => new CategoryRule { Pattern = rule.Pattern.Trim(), Category = rule.Category.Trim() }), JsonOptions),
-        Replacements = JsonSerializer.Serialize(input.Replacements ?? [], JsonOptions),
+        Replacements = JsonSerializer.Serialize(
+            (input.Replacements ?? []).Select(static replacement => new TextReplacement { Pattern = replacement.Pattern.Trim(), Find = replacement.Find, Replace = replacement.Replace ?? string.Empty }),
+            JsonOptions),
     };
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);

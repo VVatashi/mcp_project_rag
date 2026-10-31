@@ -32,9 +32,17 @@ function readRules(text: string): CategoryRule[] {
 // The replacements are JSON: a regular expression may hold any character, so no separator of a line would do.
 function readReplacements(text: string): TextReplacement[] {
   if (!text.trim()) return [];
-  const value: unknown = JSON.parse(text);
-  if (!Array.isArray(value)) throw new Error('The replacements must be a JSON array of {"pattern", "find", "replace"}.');
-  return value as TextReplacement[];
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch (exception) {
+    throw new Error(`The replacements are not valid JSON: ${exception instanceof Error ? exception.message : String(exception)}`, { cause: exception });
+  }
+
+  const isReplacement = (item: unknown): item is TextReplacement =>
+    typeof item === 'object' && item !== null && ['pattern', 'find', 'replace'].every((key) => typeof (item as Record<string, unknown>)[key] === 'string');
+  if (!Array.isArray(value) || !value.every(isReplacement)) throw new Error('The replacements must be an array of objects with the texts "pattern", "find" and "replace".');
+  return value;
 }
 
 function writeRules(rules: CategoryRule[]): string {
@@ -90,7 +98,7 @@ export function SourcesPage() {
     try {
       replacements = readReplacements(form.replacements);
     } catch (exception) {
-      setError(`The replacements are not valid JSON: ${exception instanceof Error ? exception.message : String(exception)}`);
+      setError(exception instanceof Error ? exception.message : String(exception));
       return;
     }
 
