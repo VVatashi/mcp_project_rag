@@ -1,0 +1,50 @@
+// The colors of the light theme. The dark theme replaces them under prefers-color-scheme.
+:root {
+  color-scheme: light dark;
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-alt: #f0f2f5;
+  --border: #dde1e7;
+  --text: #1c2330;
+  --text-muted: #5f6b7c;
+  --accent: #3b6fd4;
+  --accent-text: #ffffff;
+  --accent-soft: #e6eefc;
+  --ok: #1f7a4d;
+  --ok-soft: #e3f4ea;
+  --warn: #8a5a00;
+  --warn-soft: #fdf1d8;
+  --error: #b42318;
+  --error-soft: #fde7e5;
+  --info: #2f5fb3;
+  --info-soft: #e6eefc;
+  --mark: #fff1a8;
+  --shadow: 0 1px 2px rgb(16 24 40 / 6%);
+  --radius: 8px;
+  --font: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --mono: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12151b;
+    --surface: #1a1f27;
+    --surface-alt: #222833;
+    --border: #2f3744;
+    --text: #e4e8ee;
+    --text-muted: #96a1b1;
+    --accent: #6b9bf2;
+    --accent-text: #0d1320;
+    --accent-soft: #1f2d48;
+    --ok: #5fcf95;
+    --ok-soft: #173326;
+    --warn: #f0b64c;
+    --warn-soft: #3a2d12;
+    --error: #f2877d;
+    --error-soft: #3d1c1a;
+    --info: #8db3f5;
+    --info-soft: #1f2d48;
+    --mark: #5c4d0f;
+    --shadow: none;
+  }
+}
