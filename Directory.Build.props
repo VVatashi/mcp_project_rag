@@ -1,0 +1,41 @@
+<Project>
+
+  <!-- Build output goes to the top-level artifacts folder. -->
+  <PropertyGroup>
+    <ArtifactsPath>$(MSBuildThisFileDirectory)artifacts</ArtifactsPath>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <!--
+    The compiler checks the XML docs only when it writes a documentation file: a cref to a member that is gone, a missing param tag.
+    The IDE0005 check of unnecessary usings needs the file too. A member with no docs is no error (CS1591).
+  -->
+  <PropertyGroup>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <Product>ProjectRag</Product>
+    <Authors>The ProjectRag contributors</Authors>
+    <Copyright>Copyright (c) 2026 The ProjectRag contributors</Copyright>
+  </PropertyGroup>
+
+  <!-- BannedApiAnalyzers reads this list. Console output goes through ILogger. -->
+  <ItemGroup>
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,51 @@
+<Project>
+
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <MicrosoftExtensionsVersion>10.0.12</MicrosoftExtensionsVersion>
+  </PropertyGroup>
+
+  <!-- Analyzers for every project. -->
+  <ItemGroup>
+    <GlobalPackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="5.6.0" />
+  </ItemGroup>
+
+  <!-- Microsoft.Extensions -->
+  <ItemGroup>
+    <PackageVersion Include="Microsoft.Extensions.Configuration" Version="$(MicrosoftExtensionsVersion)" />
+    <PackageVersion Include="Microsoft.Extensions.FileSystemGlobbing" Version="$(MicrosoftExtensionsVersion)" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="$(MicrosoftExtensionsVersion)" />
+    <PackageVersion Include="Microsoft.Extensions.Http" Version="$(MicrosoftExtensionsVersion)" />
+    <PackageVersion Include="Microsoft.Extensions.Logging" Version="$(MicrosoftExtensionsVersion)" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="$(MicrosoftExtensionsVersion)" />
+    <PackageVersion Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="$(MicrosoftExtensionsVersion)" />
+  </ItemGroup>
+
+  <!-- Database: Npgsql with Dapper and FluentMigrator. -->
+  <ItemGroup>
+    <PackageVersion Include="Dapper" Version="2.1.89" />
+    <PackageVersion Include="FluentMigrator.Runner.Core" Version="8.0.1" />
+    <PackageVersion Include="FluentMigrator.Runner.Postgres" Version="8.0.1" />
+    <PackageVersion Include="Npgsql" Version="10.0.3" />
+  </ItemGroup>
+
+  <!-- Documents -->
+  <ItemGroup>
+    <PackageVersion Include="PdfPig" Version="0.1.16" />
+  </ItemGroup>
+
+  <!-- Server -->
+  <ItemGroup>
+    <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="2.3.0" />
+  </ItemGroup>
+
+  <!-- Tests -->
+  <ItemGroup>
+    <PackageVersion Include="xunit.v3" Version="4.0.2" />
+  </ItemGroup>
+
+</Project>
