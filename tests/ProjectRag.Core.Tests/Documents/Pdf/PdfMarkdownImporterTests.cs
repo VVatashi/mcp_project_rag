@@ -153,6 +153,22 @@ public sealed class PdfMarkdownImporterTests
     }
 
     [Fact]
+    public void Convert_TakesANumberedBoldLineBelowTheOutlineForAHeading()
+    {
+        // The outline stops at the chapters, and the sections carry their numbers in bold.
+        PageBuilder page = new(2);
+        page.Text("4.1.10. Implicit Conversions", 72, 700, 13, GlyphStyle.Bold, "NotoSerif-Bold");
+        page.Text("In some situations an expression and its type are converted to a different type.", 72, 680);
+        page.Text("Errors", 72, 650, 10, GlyphStyle.Bold, "NotoSerif-Bold");
+        page.Text("The command generates an error when the type of the expression is not valid.", 72, 630);
+
+        string markdown = Convert(page);
+
+        Assert.Contains("## 4.1.10. Implicit Conversions", markdown, StringComparison.Ordinal);
+        Assert.Contains("## Errors", markdown, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Convert_EscapesTheDotOfANumberedItem()
     {
         PageBuilder page = new(2);

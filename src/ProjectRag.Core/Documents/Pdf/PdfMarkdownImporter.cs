@@ -663,7 +663,9 @@ public static partial class PdfMarkdownImporter
     private static void MarkBoldHeadings(List<PdfBlock> blocks, HashSet<int> listPages)
     {
         // The labels of a diagram are bold lines too, but they come in groups. A heading stands alone between other blocks.
+        // A numbered heading stands alone by its number, so it never counts as a label of a group.
         bool[] candidates = [.. blocks.Select(IsBoldLine)];
+        bool[] labels = [.. blocks.Select((block, index) => candidates[index] && !SectionNumberRegex().IsMatch(block.Lines[0].PlainText.Trim()))];
         int level = 0;
         for (int i = 0; i < blocks.Count; i++)
         {
@@ -674,7 +676,7 @@ public static partial class PdfMarkdownImporter
                 continue;
             }
 
-            bool alone = (i == 0 || !candidates[i - 1]) && (i == blocks.Count - 1 || !candidates[i + 1]);
+            bool alone = (i == 0 || !labels[i - 1]) && (i == blocks.Count - 1 || !labels[i + 1]);
             // The second half of a name of the API that a hyphen broke is no heading.
             bool continues = i > 0 && blocks[i - 1].Lines.Count > 0 && blocks[i - 1].Lines[^1].PlainText.TrimEnd().EndsWith('-');
             if (continues)
@@ -694,9 +696,11 @@ public static partial class PdfMarkdownImporter
         if (block.Kind != PdfBlockKind.Paragraph || block.Lines.Count != 1)
             return false;
 
+        // A heading below the outline may carry a number, such as "4.1.10. Implicit Conversions" of a specification whose outline stops at the second level.
         Line line = block.Lines[0];
         string text = line.PlainText.Trim();
-        return text.Length is >= 3 and <= 80 && text[^1] is not ('.' or ':' or ',' or ';' or '-') && char.IsLetter(text[0]) && !text.Contains("://", StringComparison.Ordinal)
+        return text.Length is >= 3 and <= 80 && text[^1] is not ('.' or ':' or ',' or ';' or '-') && (char.IsLetter(text[0]) || SectionNumberRegex().IsMatch(text))
+            && !text.Contains("://", StringComparison.Ordinal)
             && !text.Contains('=', StringComparison.Ordinal) && WordRegex().IsMatch(text) && !ChapterRegex().IsMatch(text)
             && line.Items.All(static item => (item.Style & GlyphStyle.Bold) != 0 && !item.IsMath);
     }

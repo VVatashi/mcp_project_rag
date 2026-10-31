@@ -62,8 +62,10 @@ public sealed partial class DocumentChunker
         int currentSection = -1;
         foreach (IGrouping<int, DocumentBlock> section in structure.Blocks.GroupBy(static block => block.Section))
         {
-            // A short chunk goes on into a nearby section. Any other chunk ends with its section.
-            if (current.Count == 0 || current[^1].End - current[0].Start >= _minChars || !IsNear(structure.Sections, currentSection, section.Key))
+            // A short chunk goes on into a nearby small section. Any other chunk ends with its section.
+            // A large section starts a chunk of its own, so its heading names the chunk and the hits of the search.
+            bool small = section.Last().End - section.First().Start < _minChars;
+            if (current.Count == 0 || current[^1].End - current[0].Start >= _minChars || !small || !IsNear(structure.Sections, currentSection, section.Key))
             {
                 writer.Add(current, currentSection);
                 current = [];
