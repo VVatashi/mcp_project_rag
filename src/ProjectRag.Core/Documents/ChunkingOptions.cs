@@ -33,7 +33,7 @@ public sealed class ChunkingOptions
     public int OverlapChars { get; set; } = 300;
 
     /// <summary>
-    /// Gets or sets the size below which a chunk at the end of a section takes in the next section of the same parent, with its heading in the text.
+    /// Gets or sets the size below which a chunk at the end of a section takes in the next small section of the same parent, with its heading in the text. A larger section starts a chunk of its own.
     /// </summary>
     /// <remarks>
     /// A specification has many short sections, such as "Revision" or "Contact" of an extension. A chunk of one line has no context for the search.

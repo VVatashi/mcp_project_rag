@@ -157,15 +157,29 @@ public sealed class PdfMarkdownImporterTests
     {
         // The outline stops at the chapters, and the sections carry their numbers in bold.
         PageBuilder page = new(2);
-        page.Text("4.1.10. Implicit Conversions", 72, 700, 13, GlyphStyle.Bold, "NotoSerif-Bold");
+        // A numbered line goes on from the heading "1 Introduction". A numbered label of a figure goes on from no heading.
+        page.Text("1.10. Implicit Conversions", 72, 700, 13, GlyphStyle.Bold, "NotoSerif-Bold");
         page.Text("In some situations an expression and its type are converted to a different type.", 72, 680);
         page.Text("Errors", 72, 650, 10, GlyphStyle.Bold, "NotoSerif-Bold");
         page.Text("The command generates an error when the type of the expression is not valid.", 72, 630);
+        page.Text("1.11. Explicit Conversions", 72, 600, 13, GlyphStyle.Bold, "NotoSerif-Bold");
+        page.Text("A constructor converts the value of an expression to another type on request.", 72, 580);
+        page.Text("7 Rasterization", 72, 550, 10, GlyphStyle.Bold, "NotoSerif-Bold");
+        page.Text("The figure shows the stages of the pipeline from the vertices to the fragments.", 72, 530);
+        PageBuilder first = new(1);
+        first.Text("1 Introduction", 72, 700, 14, GlyphStyle.Bold, "Times-Bold");
+        first.Text("The specification describes the commands of the library and their effects.", 72, 670);
+        PageBuilder last = new(3);
+        last.Text("2 Usage", 72, 700, 14, GlyphStyle.Bold, "Times-Bold");
+        last.Text("The usage of the library follows the introduction to its commands.", 72, 670);
+        List<PdfBookmark> bookmarks = [new("1 Introduction", 0, 1, 718), new("2 Usage", 0, 3, 718)];
 
-        string markdown = Convert(page);
+        string markdown = PdfMarkdownImporter.Convert("Spec", [first.Build(), page.Build(), last.Build()], bookmarks).Content;
 
-        Assert.Contains("## 4.1.10. Implicit Conversions", markdown, StringComparison.Ordinal);
-        Assert.Contains("## Errors", markdown, StringComparison.Ordinal);
+        Assert.Contains("\n## 1.10. Implicit Conversions", markdown, StringComparison.Ordinal);
+        Assert.Contains("\n### Errors", markdown, StringComparison.Ordinal);
+        Assert.Contains("\n## 1.11. Explicit Conversions", markdown, StringComparison.Ordinal);
+        Assert.DoesNotContain("# 7 Rasterization", markdown, StringComparison.Ordinal);
     }
 
     [Fact]

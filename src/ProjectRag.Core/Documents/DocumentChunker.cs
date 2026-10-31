@@ -9,7 +9,7 @@ namespace ProjectRag.Core.Documents;
 /// <remarks>
 /// <para>
 /// A chunk stays inside one section. It collects whole blocks up to <see cref="ChunkingOptions.MaxChars"/>.
-/// A chunk shorter than <see cref="ChunkingOptions.MinChars"/> at the end of a section takes in the next section when that section lies inside the section of the chunk
+/// A chunk shorter than <see cref="ChunkingOptions.MinChars"/> at the end of a section takes in the next small section when that section lies inside the section of the chunk
 /// or shares its parent. The heading of that section then stays in the text of the chunk.
 /// A chunk with code, a formula or a table may grow to <see cref="ChunkingOptions.AtomicMaxChars"/>, so such a block stays whole.
 /// A caption stays with its table or figure, and a short lead-in that ends with a colon stays with the block after it.
