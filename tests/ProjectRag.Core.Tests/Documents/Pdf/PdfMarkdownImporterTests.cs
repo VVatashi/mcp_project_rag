@@ -123,6 +123,39 @@ public sealed class PdfMarkdownImporterTests
         Assert.Contains("\n1\\. The first step reads the file.", Convert(page), StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Convert_ReadsTheHeadingsFromTheFontsWhenTheOutlineNamesNoPage()
+    {
+        // A word processor leaves internal bookmarks such as "OLE_LINK6" without a page.
+        PageBuilder page = new(1);
+        page.Text("I.4 Conventions", 72, 700, 12, GlyphStyle.Bold, "Times-Bold");
+        page.Text("The text of the conventions follows the heading of the section.", 72, 680);
+        page.Text("I.4.1 Organization", 72, 650, 12, GlyphStyle.Bold, "Times-Bold");
+        page.Text("The organization of the partitions follows the heading as well.", 72, 630);
+        page.Text("The following text is informative", 72, 600, 12);
+
+        string markdown = PdfMarkdownImporter.Convert("Spec", [page.Build()], [new("OLE_LINK6", 1, 0, 756)]).Content;
+
+        Assert.Contains("# I.4 Conventions", markdown, StringComparison.Ordinal);
+        Assert.Contains("# I.4.1 Organization", markdown, StringComparison.Ordinal);
+        Assert.Matches(@"\n(#+) I\.4 Conventions[\s\S]*\n\1# I\.4\.1 Organization", markdown);
+        Assert.DoesNotContain("# The following", markdown, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Convert_DropsTheLabelOfANote()
+    {
+        PageBuilder page = new(2);
+        page.Text("For developers, ratification does not mean that an extension is better or more widely", 120, 700);
+        page.Text("NOTE", 72, 694, 10, GlyphStyle.Bold, "Times-Bold");
+        page.Text("supported than other ways of achieving that functionality in the application.", 120, 688);
+
+        string markdown = Convert(page);
+
+        Assert.DoesNotContain("NOTE", markdown, StringComparison.Ordinal);
+        Assert.Contains("more widely supported than", markdown, StringComparison.Ordinal);
+    }
+
     // A document of two pages: the first holds the heading of the outline, the second the page of a test.
     private static string Convert(PageBuilder page, bool turned = false)
     {

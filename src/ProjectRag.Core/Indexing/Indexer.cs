@@ -101,7 +101,7 @@ public sealed class Indexer(
     /// <param name="options">The options of the chunker.</param>
     /// <returns>The version, for example <c>2;1800;3000;300</c>.</returns>
     internal static string ParserVersion(ChunkingOptions options) =>
-        string.Create(CultureInfo.InvariantCulture, $"{DocumentReader.Version};{options.MaxChars};{options.AtomicMaxChars};{options.OverlapChars}");
+        string.Create(CultureInfo.InvariantCulture, $"{DocumentReader.Version};{options.MaxChars};{options.AtomicMaxChars};{options.OverlapChars};{options.MinChars}");
 
     /// <summary>
     /// Computes the SHA-256 of bytes in lowercase hexadecimal.

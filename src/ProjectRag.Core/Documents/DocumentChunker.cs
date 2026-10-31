@@ -8,7 +8,9 @@ namespace ProjectRag.Core.Documents;
 /// </summary>
 /// <remarks>
 /// <para>
-/// A chunk never crosses a section. It collects whole blocks up to <see cref="ChunkingOptions.MaxChars"/>.
+/// A chunk stays inside one section. It collects whole blocks up to <see cref="ChunkingOptions.MaxChars"/>.
+/// A chunk shorter than <see cref="ChunkingOptions.MinChars"/> at the end of a section takes in the next section when that section lies inside the section of the chunk
+/// or shares its parent. The heading of that section then stays in the text of the chunk.
 /// A chunk with code, a formula or a table may grow to <see cref="ChunkingOptions.AtomicMaxChars"/>, so such a block stays whole.
 /// A caption stays with its table or figure, and a short lead-in that ends with a colon stays with the block after it.
 /// </para>
@@ -30,6 +32,7 @@ public sealed partial class DocumentChunker
     private readonly int _maxChars;
     private readonly int _atomicMaxChars;
     private readonly int _overlapChars;
+    private readonly int _minChars;
 
     /// <summary>
     /// Makes a chunker.
@@ -42,6 +45,7 @@ public sealed partial class DocumentChunker
         _maxChars = options.MaxChars;
         _atomicMaxChars = Math.Max(options.MaxChars, options.AtomicMaxChars);
         _overlapChars = Math.Clamp(options.OverlapChars, 0, options.MaxChars / 2);
+        _minChars = Math.Clamp(options.MinChars, 0, options.MaxChars / 2);
     }
 
     /// <summary>
@@ -53,10 +57,20 @@ public sealed partial class DocumentChunker
     {
         ArgumentNullException.ThrowIfNull(structure);
         Writer writer = new(structure);
+        List<Piece> current = [];
+        bool currentAtomic = false;
+        int currentSection = -1;
         foreach (IGrouping<int, DocumentBlock> section in structure.Blocks.GroupBy(static block => block.Section))
         {
-            List<Piece> current = [];
-            bool currentAtomic = false;
+            // A short chunk goes on into a nearby section. Any other chunk ends with its section.
+            if (current.Count == 0 || current[^1].End - current[0].Start >= _minChars || !IsNear(structure.Sections, currentSection, section.Key))
+            {
+                writer.Add(current, currentSection);
+                current = [];
+                currentAtomic = false;
+                currentSection = section.Key;
+            }
+
             foreach (List<DocumentBlock> unit in Units(structure.Content, [.. section]))
             {
                 bool unitAtomic = unit.Any(static block => block.IsAtomic);
@@ -70,9 +84,10 @@ public sealed partial class DocumentChunker
                     continue;
                 }
 
-                writer.Add(current, section.Key);
+                writer.Add(current, currentSection);
                 current = [];
                 currentAtomic = false;
+                currentSection = section.Key;
                 if (unitLength <= (unitAtomic ? _atomicMaxChars : _maxChars))
                 {
                     current.Add(new Piece(unit[0].Start, unit[^1].End));
@@ -88,11 +103,29 @@ public sealed partial class DocumentChunker
                 current.Add(pieces[^1]);
                 currentAtomic = unitAtomic;
             }
-
-            writer.Add(current, section.Key);
         }
 
+        writer.Add(current, currentSection);
         return writer.Chunks;
+    }
+
+    // A section lies near the section of a chunk when it lies inside it, or when both are small sections of one parent.
+    // Chapters and their sections of the first level stay apart.
+    private static bool IsNear(IReadOnlyList<DocumentSection> sections, int chunkSection, int next)
+    {
+        if (chunkSection < 0 || next < 0 || next >= sections.Count || chunkSection >= sections.Count || sections[next].Level < 3)
+            return false;
+
+        if (sections[next].Parent == sections[chunkSection].Parent)
+            return true;
+
+        for (int parent = sections[next].Parent; parent >= 0; parent = sections[parent].Parent)
+        {
+            if (parent == chunkSection)
+                return true;
+        }
+
+        return false;
     }
 
     // A unit is a group of blocks that must stay together: a caption with its table, a lead-in with its formula.

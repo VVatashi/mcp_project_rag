@@ -159,12 +159,52 @@ public sealed partial class DocumentChunkerTests
     }
 
     [Fact]
+    public void Split_JoinsSmallSectionsOfOneParent()
+    {
+        const string content = """
+            # Spec
+
+            ## 2 Extensions
+
+            The extensions of the API.
+
+            ### VK_KHR_a
+
+            The extension adds a command.
+
+            #### Revision
+
+            1
+
+            #### Contact
+
+            A person
+
+            ### VK_KHR_b
+
+            The second extension.
+
+            ## 3 Formats
+
+            The formats.
+
+            """;
+        IReadOnlyList<TextChunk> chunks = Split(content, minChars: 400);
+
+        // A small section takes in its subsections and its small siblings. A section of the first level starts a chunk of its own.
+        Assert.Equal(["Spec > 2 Extensions", "Spec > 3 Formats"], chunks.Select(static chunk => chunk.Heading));
+        Assert.Contains("#### Revision\n\n1\n\n#### Contact", chunks[0].Body, StringComparison.Ordinal);
+        Assert.Contains("The second extension.", chunks[0].Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Split_GivesNoChunksForAnEmptyDocument() => Assert.Empty(Split("\n\n## Heading only\n\n"));
 
-    private static IReadOnlyList<TextChunk> Split(string content, int maxChars = 1800, int atomicMaxChars = 3000, int overlapChars = 300)
+    // The tests of the blocks keep each section apart. The test of small sections sets the limit of its own.
+    private static IReadOnlyList<TextChunk> Split(string content, int maxChars = 1800, int atomicMaxChars = 3000, int overlapChars = 300, int minChars = 0)
     {
         DocumentStructure structure = MarkdownStructureReader.Read(new DocumentText(MarkdownStructureReader.FindTitle(content) ?? "Doc", content), "doc.md");
-        return new DocumentChunker(new ChunkingOptions { MaxChars = maxChars, AtomicMaxChars = atomicMaxChars, OverlapChars = overlapChars }).Split(structure);
+        return new DocumentChunker(new ChunkingOptions { MaxChars = maxChars, AtomicMaxChars = atomicMaxChars, OverlapChars = overlapChars, MinChars = minChars }).Split(structure);
     }
 
     private static int CountOf(string text, string value) => (text.Length - text.Replace(value, string.Empty, StringComparison.Ordinal).Length) / value.Length;

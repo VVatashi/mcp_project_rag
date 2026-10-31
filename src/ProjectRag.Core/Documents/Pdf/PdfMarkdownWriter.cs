@@ -517,7 +517,12 @@ internal sealed partial class PdfMarkdownWriter(HashSet<string> vocabulary, Dict
         return builder.ToString();
     }
 
-    private static string EscapeHeading(string text) => EscapeText(text).TrimEnd('#').Trim();
+    // A "#" at the end of a heading would close it, so "C#" keeps its sign escaped.
+    private static string EscapeHeading(string text)
+    {
+        string escaped = EscapeText(text).Trim();
+        return escaped.EndsWith('#') ? $"{escaped[..^1]}\\#" : escaped;
+    }
 
     // A paragraph that starts like a heading, a quote, a list or a rule would change its kind.
     // Markdown escapes only punctuation, so a number of a list keeps its digits and escapes its dot: "1\. Text".

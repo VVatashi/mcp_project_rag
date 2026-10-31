@@ -155,8 +155,8 @@ public static partial class MarkdownStructureReader
         return null;
     }
 
-    // The leading number of a heading: "8.14.2 Coordinate Wrapping", "4.3.5. Uniform Variables", "A.1 Extensions".
-    [GeneratedRegex(@"^(?<number>(?:\d+|[A-Z](?=\.\d))(?:\.\d+)*)\.?\s+\S")]
+    // The leading number of a heading: "8.14.2 Coordinate Wrapping", "4.3.5. Uniform Variables", "A.1 Extensions", "II.22.2 Assembly".
+    [GeneratedRegex(@"^(?<number>(?:\d+|(?:[IVX]{1,4}|[A-Z])(?=\.\d))(?:\.\d+)*)\.?\s+\S")]
     private static partial Regex NumberRegex();
 
     [GeneratedRegex(@"^<!-- rag:(?<kind>page|anchor) (?<value>[^ >]+) -->$")]
