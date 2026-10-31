@@ -126,7 +126,30 @@ public sealed class DocumentStore(Database database)
             ORDER BY c.ordinal
             """,
             new { DocumentId = documentId, ModelId = modelId ?? 0 }, cancellationToken: cancellationToken));
-        return [.. rows];
+        List<ChunkView> chunks = [.. rows];
+        // The offsets count UTF-16 units, so the check reads the content here and not in SQL.
+        string content = await connection.ExecuteScalarAsync<string>(new CommandDefinition(
+            "SELECT content FROM document WHERE document_id = @DocumentId", new { DocumentId = documentId }, cancellationToken: cancellationToken)) ?? string.Empty;
+        foreach (ChunkView chunk in chunks)
+            chunk.StartsBlock = StartsBlock(content, chunk.CharStart);
+
+        return chunks;
+    }
+
+    // A block of Markdown starts after an empty line, or after the line of a service mark such as an anchor before a table.
+    internal static bool StartsBlock(string content, int offset)
+    {
+        if (offset <= 0)
+            return true;
+
+        if (offset > content.Length || content[offset - 1] != '\n')
+            return false;
+
+        if (offset == 1 || content[offset - 2] == '\n')
+            return true;
+
+        int lineStart = content.LastIndexOf('\n', offset - 2) + 1;
+        return content.AsSpan(lineStart, offset - 1 - lineStart).TrimStart().StartsWith("<!-- rag:", StringComparison.Ordinal);
     }
 
     /// <summary>

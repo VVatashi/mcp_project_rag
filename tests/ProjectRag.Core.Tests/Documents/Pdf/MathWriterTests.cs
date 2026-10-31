@@ -28,7 +28,7 @@ public sealed class MathWriterTests
     [Fact]
     public void Write_JoinsTheSlashOfNegation()
     {
-        List<Item> items = [Glyph("M", 0, GlyphStyle.Math | GlyphStyle.Italic), Glyph("̸", 6, GlyphStyle.Math), Glyph("=", 6, GlyphStyle.Math), Glyph("0", 12, GlyphStyle.Math)];
+        List<Item> items = [Glyph("M", 0, GlyphStyle.Math | GlyphStyle.Italic), Glyph("\u0338", 6, GlyphStyle.Math), Glyph("=", 6, GlyphStyle.Math), Glyph("0", 12, GlyphStyle.Math)];
 
         Assert.Equal("M\\ne 0", MathWriter.Write(items));
     }
@@ -49,6 +49,12 @@ public sealed class MathWriterTests
     [InlineData("\\begin{cases} a \\end{cases}", true)]
     [InlineData("\\begin{cases} a", false)]
     public void IsBalanced_ChecksBracesAndEnvironments(string latex, bool expected) => Assert.Equal(expected, MathWriter.IsBalanced(latex));
+
+    [Theory]
+    [InlineData("w \u0338= 0", "w }\\ne\\text{ 0")]
+    [InlineData("x \u0338∈ S", "x }\\notin\\text{ S")]
+    [InlineData("50% & more", "50\\% \\& more")]
+    public void EscapeText_SetsANegationAsMath(string text, string expected) => Assert.Equal(expected, MathWriter.EscapeText(text));
 
     private static Item Glyph(string text, double left, GlyphStyle style, double size = 10) => new()
     {

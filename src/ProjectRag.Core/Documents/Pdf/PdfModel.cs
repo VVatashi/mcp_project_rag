@@ -39,14 +39,20 @@ internal enum GlyphStyle
 /// <param name="BoxBottom">The bottom of the outline of the glyph, or <see langword="null"/> to take it from the size.</param>
 internal sealed record Glyph(string Text, double Left, double Right, double Baseline, double Size, GlyphStyle Style, string Font = "", double? BoxTop = null, double? BoxBottom = null)
 {
-    /// <summary>Gets the top of the glyph. A large delimiter of TeX uses its outline. Other glyphs use the baseline and three quarters of the size, so the letters of a line agree.</summary>
-    public double Top => (Style & GlyphStyle.MathExtension) != 0 && BoxTop is { } top ? Math.Max(top, Baseline + (Size * 0.75)) : Baseline + (Size * 0.75);
+    /// <summary>
+    /// Gets the top of the glyph. A large delimiter of TeX and the sign of a root use their outlines: their baseline lies at the top, not at the bottom.
+    /// Other glyphs use the baseline and three quarters of the size, so the letters of a line agree.
+    /// </summary>
+    public double Top => HasOutline && BoxTop is { } top ? top : Baseline + (Size * 0.75);
 
     /// <summary>Gets the bottom of the glyph, like <see cref="Top"/>.</summary>
-    public double Bottom => (Style & GlyphStyle.MathExtension) != 0 && BoxBottom is { } bottom ? Math.Min(bottom, Baseline - (Size * 0.25)) : Baseline - (Size * 0.25);
+    public double Bottom => HasOutline && BoxBottom is { } bottom ? bottom : Baseline - (Size * 0.25);
 
     /// <summary>Gets a value that tells whether the glyph belongs to a formula.</summary>
     public bool IsMath => (Style & (GlyphStyle.Math | GlyphStyle.MathExtension)) != 0;
+
+    // An outline without height, as from a font without metrics, falls back to the size.
+    private bool HasOutline => ((Style & GlyphStyle.MathExtension) != 0 || Text == "√") && BoxTop - BoxBottom >= Size * 0.1;
 }
 
 /// <summary>
@@ -81,7 +87,8 @@ internal sealed record PageLink(double Left, double Bottom, double Right, double
 /// <param name="Glyphs">The glyphs that are not white space.</param>
 /// <param name="Rules">The thin horizontal lines.</param>
 /// <param name="Links">The links to places of the document.</param>
-internal sealed record PdfPageModel(int Number, double Width, double Height, IReadOnlyList<Glyph> Glyphs, IReadOnlyList<Rule> Rules, IReadOnlyList<PageLink> Links);
+/// <param name="Turned">A value that tells whether the text of the page runs in another direction than the page, as in a turned figure.</param>
+internal sealed record PdfPageModel(int Number, double Width, double Height, IReadOnlyList<Glyph> Glyphs, IReadOnlyList<Rule> Rules, IReadOnlyList<PageLink> Links, bool Turned = false);
 
 /// <summary>
 /// A bookmark of the outline of a PDF file.

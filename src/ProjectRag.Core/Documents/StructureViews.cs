@@ -43,6 +43,21 @@ public sealed class SectionView
 }
 
 /// <summary>
+/// An anchor of a stored document: a place that a link can name.
+/// </summary>
+public sealed class AnchorView
+{
+    /// <summary>Gets the name of the anchor.</summary>
+    public string Name { get; init; } = string.Empty;
+
+    /// <summary>Gets the index of the character at the anchor in the content.</summary>
+    public int CharOffset { get; init; }
+
+    /// <summary>Gets the key of the first chunk that ends after the anchor, or <see langword="null"/> when no chunk does.</summary>
+    public long? ChunkId { get; init; }
+}
+
+/// <summary>
 /// A link of a chunk with its resolved target.
 /// </summary>
 public sealed class ChunkLinkView

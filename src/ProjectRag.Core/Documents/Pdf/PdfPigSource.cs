@@ -66,6 +66,31 @@ internal static class PdfPigSource
         ['9'] = "∃",
     };
 
+    // The pieces of the large delimiters of CMEX at the codes of the font Symbol in the private area of Unicode.
+    // An extender of a brace stays apart, see PdfLayout.Extender: it joins the brace above it.
+    private static readonly Dictionary<char, string> CmexPieces = new()
+    {
+        ['\uF8EB'] = "(",
+        ['\uF8EC'] = "(",
+        ['\uF8ED'] = "(",
+        ['\uF8EE'] = "[",
+        ['\uF8EF'] = "[",
+        ['\uF8F0'] = "[",
+        ['\uF8F1'] = "{",
+        ['\uF8F2'] = "{",
+        ['\uF8F3'] = "{",
+        ['\uF8F4'] = PdfLayout.Extender,
+        ['\uF8F6'] = ")",
+        ['\uF8F7'] = ")",
+        ['\uF8F8'] = ")",
+        ['\uF8F9'] = "]",
+        ['\uF8FA'] = "]",
+        ['\uF8FB'] = "]",
+        ['\uF8FC'] = "}",
+        ['\uF8FD'] = "}",
+        ['\uF8FE'] = "}",
+    };
+
     /// <summary>
     /// Reads the pages of a document.
     /// </summary>
@@ -113,16 +138,24 @@ internal static class PdfPigSource
 
     private static PdfPageModel ReadPage(Page page)
     {
+        // A page may hold its text turned by a quarter, such as a wide table, and turned lines in the margin, such as a running header.
+        // The text of the main direction turns into lines from left to right, and the other text goes away.
+        List<Letter> letters = [.. page.Letters.Where(static letter => !string.IsNullOrWhiteSpace(letter.Value) && letter.PointSize > 0)];
+        // A letter without an advance, such as the slash of a negation, has no direction of its own and stays with the page.
+        int direction = letters.Select(Direction).OfType<int>().GroupBy(static value => value).OrderByDescending(static group => group.Count()).Select(static group => group.Key).FirstOrDefault();
+        PageFrame frame = new(direction, page.Width, page.Height);
         List<Glyph> glyphs = [];
-        foreach (Letter letter in page.Letters)
+        foreach (Letter letter in letters)
         {
-            if (string.IsNullOrWhiteSpace(letter.Value) || letter.PointSize <= 0)
+            if (Direction(letter) is { } own && own != direction)
                 continue;
 
             GlyphStyle style = Classify(letter.FontName ?? string.Empty);
             string text = letter.Value;
             if ((style & GlyphStyle.Math) != 0 && IsCmsy(letter.FontName) && text.Length == 1 && CmsyLetters.TryGetValue(text[0], out string? symbol))
                 text = symbol;
+            else if ((style & GlyphStyle.MathExtension) != 0 && text.Length == 1 && CmexPieces.TryGetValue(text[0], out string? piece))
+                text = piece;
             else if ((style & GlyphStyle.Math) != 0 && IsCmsy(letter.FontName) && text.Length == 1 && text[0] is >= 'A' and <= 'Z')
                 text = $"\\mathcal{{{text}}}";
             else
@@ -131,16 +164,16 @@ internal static class PdfPigSource
             if (text.Length == 0)
                 continue;
 
-            PdfRectangle box = letter.BoundingBox;
-            double left = letter.StartBaseLine.X;
-            double right = Math.Max(left + 0.1, Math.Max(letter.EndBaseLine.X, box.Right));
-            glyphs.Add(new Glyph(text, left, right, letter.StartBaseLine.Y, letter.PointSize, style, FontName(letter.FontName ?? string.Empty), box.Top, box.Bottom));
+            PdfRectangle box = frame.Turn(letter.BoundingBox);
+            PdfPoint start = frame.Turn(letter.StartBaseLine);
+            double right = Math.Max(start.X + 0.1, Math.Max(frame.Turn(letter.EndBaseLine).X, box.Right));
+            glyphs.Add(new Glyph(text, start.X, right, start.Y, letter.PointSize, style, FontName(letter.FontName ?? string.Empty), box.Top, box.Bottom));
         }
 
         List<Rule> rules = [];
         foreach (PdfPath path in page.Paths)
         {
-            if (path.GetBoundingRectangle() is { } box && box.Height <= 1.5 && box.Width >= 2 && (path.IsStroked || path.IsFilled))
+            if (path.GetBoundingRectangle() is { } bounds && frame.Turn(bounds) is var box && box.Height <= 1.5 && box.Width >= 2 && (path.IsStroked || path.IsFilled))
                 rules.Add(new Rule(box.Left, box.Right, (box.Top + box.Bottom) / 2));
         }
 
@@ -149,12 +182,25 @@ internal static class PdfPigSource
         {
             if (annotation.Action is GoToAction { Destination: { } destination } && destination.PageNumber > 0)
             {
-                PdfRectangle area = annotation.Rectangle;
+                PdfRectangle area = frame.Turn(annotation.Rectangle);
                 links.Add(new PageLink(area.Left, area.Bottom, area.Right, area.Top, destination.PageNumber, destination.Coordinates.Top));
             }
         }
 
-        return new PdfPageModel(page.Number, page.Width, page.Height, glyphs, rules, links);
+        return new PdfPageModel(page.Number, frame.Width, frame.Height, glyphs, rules, links, direction != 0);
+    }
+
+    // The direction of the baseline of a letter in degrees, to a quarter turn: 0 for a line from left to right, 90 for a line from the bottom up.
+    // A letter without an advance has no direction.
+    private static int? Direction(Letter letter)
+    {
+        double dx = letter.EndBaseLine.X - letter.StartBaseLine.X;
+        double dy = letter.EndBaseLine.Y - letter.StartBaseLine.Y;
+        if (Math.Abs(dx) + Math.Abs(dy) < 0.01)
+            return null;
+
+        double degrees = Math.Atan2(dy, dx) * 180 / Math.PI;
+        return ((int)Math.Round(degrees / 90) * 90 + 360) % 360;
     }
 
     /// <summary>
@@ -197,5 +243,47 @@ internal static class PdfPigSource
             style |= GlyphStyle.Italic;
 
         return style;
+    }
+}
+
+/// <summary>
+/// Turns the points of a page so the lines of one direction run from left to right, with the y axis up as in PDF.
+/// </summary>
+/// <param name="Direction">The direction of the lines in degrees: 0, 90, 180 or 270.</param>
+/// <param name="PageWidth">The width of the page.</param>
+/// <param name="PageHeight">The height of the page.</param>
+internal readonly record struct PageFrame(int Direction, double PageWidth, double PageHeight)
+{
+    /// <summary>Gets the width of the turned page.</summary>
+    public double Width => Direction is 90 or 270 ? PageHeight : PageWidth;
+
+    /// <summary>Gets the height of the turned page.</summary>
+    public double Height => Direction is 90 or 270 ? PageWidth : PageHeight;
+
+    /// <summary>
+    /// Turns a point of the page into the turned page.
+    /// </summary>
+    /// <param name="point">The point.</param>
+    /// <returns>The turned point.</returns>
+    public PdfPoint Turn(PdfPoint point) => Direction switch
+    {
+        90 => new PdfPoint(point.Y, PageWidth - point.X),
+        180 => new PdfPoint(PageWidth - point.X, PageHeight - point.Y),
+        270 => new PdfPoint(PageHeight - point.Y, point.X),
+        _ => point,
+    };
+
+    /// <summary>
+    /// Turns a rectangle of the page into the turned page.
+    /// </summary>
+    /// <param name="rectangle">The rectangle.</param>
+    /// <returns>The smallest upright rectangle around the turned corners.</returns>
+    public PdfRectangle Turn(PdfRectangle rectangle)
+    {
+        if (Direction == 0)
+            return rectangle;
+
+        PdfPoint[] corners = [Turn(rectangle.BottomLeft), Turn(rectangle.BottomRight), Turn(rectangle.TopLeft), Turn(rectangle.TopRight)];
+        return new PdfRectangle(corners.Min(static point => point.X), corners.Min(static point => point.Y), corners.Max(static point => point.X), corners.Max(static point => point.Y));
     }
 }

@@ -51,6 +51,88 @@ public sealed class PdfMarkdownImporterTests
         Assert.Equal(structure.Sections.Single(static section => section.Number == "2.1").Start, structure.Anchors[link.TargetAnchor!]);
     }
 
+    [Fact]
+    public void Convert_JoinsPseudocodeIntoOneBlockOfCode()
+    {
+        // The specification sets keywords in monospace, the command in the text font, the variables in math italics and the braces as math symbols.
+        PageBuilder page = new(2);
+        page.Text("It is equivalent to the following code, which binds each buffer of the array:", 72, 720);
+        page.Text("for (i = 0; i < count; i++) {", 90, 700, 10, GlyphStyle.Mono, "Courier");
+        double x = page.Text("if (", 100, 688, 10, GlyphStyle.Mono, "Courier");
+        x = page.Text("buffers", x, 688, 10, MathItalic, "CMMI10");
+        x = page.Text("== NULL)", x + 3, 688, 10, GlyphStyle.Mono, "Courier");
+        page.Text("{", x + 3, 688, 10, GlyphStyle.Math, "CMSY10");
+        x = page.Text("BindBufferBase", 110, 676);
+        x = page.Text("(", x, 676, 10, GlyphStyle.Mono, "Courier");
+        x = page.Text("target", x, 676, 10, MathItalic, "CMMI10");
+        page.Text(", first + i, 0);", x, 676, 10, GlyphStyle.Mono, "Courier");
+        x = page.Text("}", 100, 664, 10, GlyphStyle.Math, "CMSY10");
+        x = page.Text("else", x + 3, 664, 10, GlyphStyle.Mono, "Courier");
+        page.Text("{", x + 3, 664, 10, GlyphStyle.Math, "CMSY10");
+        page.Text("}", 90, 652, 10, GlyphStyle.Math, "CMSY10");
+        page.Text("except that the binding of the target stays the same as before the call.", 72, 630);
+
+        string markdown = Convert(page);
+
+        Assert.Contains("```\nfor (i = 0; i < count; i++) {\n  if (buffers == NULL) {\n    BindBufferBase(target, first + i, 0);\n  } else {\n}\n```", markdown, StringComparison.Ordinal);
+        Assert.DoesNotContain("$", markdown, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Convert_GoesOnWithTheArgumentsOfAWrappedCall()
+    {
+        PageBuilder page = new(2);
+        page.Text("The command reads the name of a resource of the program, and it is equivalent to", 72, 720);
+        double x = page.Text("GetProgramResourceName", 72, 708);
+        x = page.Text("(", x, 708, 10, GlyphStyle.Mono, "Courier");
+        x = page.Text("program", x, 708, 10, MathItalic, "CMMI10");
+        page.Text(", UNIFORM,", x, 708, 10, GlyphStyle.Mono, "Courier");
+        x = page.Text("index", 100, 696, 10, MathItalic, "CMMI10");
+        x = page.Text(",", x, 696, 10, MathItalic, "CMMI10");
+        x = page.Text("length", x + 3, 696, 10, MathItalic, "CMMI10");
+        page.Text(");", x, 696, 10, GlyphStyle.Math, "CMR10");
+        page.Text("The name ends with a null character in every case that the command handles.", 72, 676);
+
+        string markdown = Convert(page);
+
+        Assert.DoesNotContain("$$", markdown, StringComparison.Ordinal);
+        Assert.Matches(@"GetProgramResourceName[^\n]*\\mathit\{length\}", markdown);
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public void Convert_TakesABoldLineOfATurnedPageForALabel(bool turned, bool heading)
+    {
+        PageBuilder page = new(2);
+        page.Text("The diagram below shows the stages of the pipeline and the buffers between them.", 72, 720);
+        page.Text("Buffer Binding", 72, 690, 10, GlyphStyle.Bold, "Times-Bold");
+        page.Text("A buffer object holds the data of a stage, and a binding point names the buffer.", 72, 660);
+
+        string markdown = Convert(page, turned);
+
+        Assert.Equal(heading, markdown.Contains("## Buffer Binding", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Convert_EscapesTheDotOfANumberedItem()
+    {
+        PageBuilder page = new(2);
+        page.Text("1. The first step reads the file.", 72, 700);
+
+        Assert.Contains("\n1\\. The first step reads the file.", Convert(page), StringComparison.Ordinal);
+    }
+
+    // A document of two pages: the first holds the heading of the outline, the second the page of a test.
+    private static string Convert(PageBuilder page, bool turned = false)
+    {
+        PageBuilder first = new(1);
+        first.Text("1 Introduction", 72, 700, 14, GlyphStyle.Bold, "Times-Bold");
+        first.Text("The specification describes the commands of the library and their effects.", 72, 670);
+        List<PdfBookmark> bookmarks = [new("1 Introduction", 0, 1, 718)];
+        return PdfMarkdownImporter.Convert("Spec", [first.Build(), page.Build(turned)], bookmarks).Content;
+    }
+
     private static string Convert()
     {
         List<PdfPageModel> pages = [];

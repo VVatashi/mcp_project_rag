@@ -330,6 +330,10 @@ internal sealed partial class PdfMarkdownWriter(HashSet<string> vocabulary, Dict
                 if (spaces == 0 && PdfLayout.NeedsSpace(previous, item))
                     spaces = 1;
 
+                // Beside a word of another font the gap is a space between words, not a column of the monospace grid.
+                if (((previous.Style & item.Style) & GlyphStyle.Mono) == 0)
+                    spaces = Math.Min(spaces, 1);
+
                 if (spaces > 0)
                     builder.Append(' ', Math.Min(spaces, 40));
             }
@@ -516,7 +520,16 @@ internal sealed partial class PdfMarkdownWriter(HashSet<string> vocabulary, Dict
     private static string EscapeHeading(string text) => EscapeText(text).TrimEnd('#').Trim();
 
     // A paragraph that starts like a heading, a quote, a list or a rule would change its kind.
-    private static string EscapeStart(string text) => BlockStartRegex().IsMatch(text) ? $"\\{text}" : text;
+    // Markdown escapes only punctuation, so a number of a list keeps its digits and escapes its dot: "1\. Text".
+    private static string EscapeStart(string text)
+    {
+        Match match = BlockStartRegex().Match(text);
+        if (!match.Success)
+            return text;
+
+        int digits = match.Groups["digits"].Length;
+        return digits > 0 ? $"{text[..digits]}\\{text[digits..]}" : $"\\{text}";
+    }
 
     [GeneratedRegex(@"^(?<number>\d+|[*†‡§])\s*")]
     private static partial Regex FootnoteNumberRegex();
@@ -536,7 +549,7 @@ internal sealed partial class PdfMarkdownWriter(HashSet<string> vocabulary, Dict
     [GeneratedRegex(@"^\p{Ll}+")]
     private static partial Regex WordStartRegex();
 
-    [GeneratedRegex(@"^(?:#|>|[-+=]\s|\d+[.)]\s)")]
+    [GeneratedRegex(@"^(?:#|>|[-+=]\s|(?<digits>\d+)[.)]\s)")]
     private static partial Regex BlockStartRegex();
 
     [GeneratedRegex(@"[ \t]{2,}")]

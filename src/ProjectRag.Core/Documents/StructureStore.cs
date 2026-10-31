@@ -115,6 +115,26 @@ public sealed class StructureStore(Database database)
     }
 
     /// <summary>
+    /// Finds an anchor of a document and the chunk at it.
+    /// </summary>
+    /// <param name="documentId">The key of the document.</param>
+    /// <param name="name">The name of the anchor.</param>
+    /// <param name="cancellationToken">The token that cancels the query.</param>
+    /// <returns>The anchor, or <see langword="null"/> when the document has no such anchor.</returns>
+    public async Task<AnchorView?> GetAnchorAsync(long documentId, string name, CancellationToken cancellationToken)
+    {
+        await using NpgsqlConnection connection = await database.OpenAsync(cancellationToken);
+        return await connection.QuerySingleOrDefaultAsync<AnchorView>(new CommandDefinition(
+            """
+            SELECT a.name, a.char_offset,
+                   (SELECT t.chunk_id FROM chunk t WHERE t.document_id = a.document_id AND t.char_end > a.char_offset ORDER BY t.char_start LIMIT 1) AS chunk_id
+            FROM anchor a
+            WHERE a.document_id = @DocumentId AND a.name = @Name
+            """,
+            new { DocumentId = documentId, Name = name }, cancellationToken: cancellationToken));
+    }
+
+    /// <summary>
     /// Finds the file of a document on the disk: the folder of its source and its path.
     /// </summary>
     /// <param name="documentId">The key of the document.</param>

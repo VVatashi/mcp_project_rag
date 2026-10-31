@@ -134,6 +134,9 @@ internal sealed class Line
 /// </remarks>
 internal static class PdfLayout
 {
+    /// <summary>The text of the extender of a large brace: the piece between the end and the middle.</summary>
+    public const string Extender = "⎪";
+
     /// <summary>
     /// Builds the lines of a page.
     /// </summary>
@@ -278,21 +281,19 @@ internal static class PdfLayout
             });
         }
 
-        pieces = [.. items.Where(static item => (item.Style & GlyphStyle.MathExtension) != 0).OrderBy(static item => item.Left).ThenByDescending(static item => item.Baseline)];
+        pieces = [.. items.Where(static item => (item.Style & GlyphStyle.MathExtension) != 0).OrderBy(static item => item.Left).ThenByDescending(static item => item.Top)];
         foreach (Item piece in pieces)
         {
-            if (used.Contains(piece))
+            // Two sums of two lines are two operators, not the pieces of one. An extender joins the delimiter above it.
+            if (used.Contains(piece) || piece.Text == Extender || LargeOperators.Contains(piece.Text))
                 continue;
 
+            // A stack repeats one piece, such as the bar of a large |, with the extenders of a brace between. A brace next to a bar is no part of it.
+            // The pieces of one delimiter touch, so the bars of two lines one above the other stay two delimiters.
             List<Item> stack = [piece];
-            // A stack repeats one piece, such as the bar of a large |. A brace next to a bar is no part of it.
-            // Two sums of two lines are two operators, not the pieces of one.
-            if (LargeOperators.Contains(piece.Text))
-                continue;
-
-            foreach (Item other in pieces.Where(other => other != piece && !used.Contains(other) && other.Text == piece.Text && Math.Abs(other.Left - piece.Left) < piece.Size * 0.3).OrderByDescending(static other => other.Baseline))
+            foreach (Item other in pieces.Where(other => other != piece && !used.Contains(other) && (other.Text == piece.Text || other.Text == Extender) && Math.Abs(other.Left - piece.Left) < piece.Size * 0.3 && other.Top < piece.Top).OrderByDescending(static other => other.Top))
             {
-                if (stack[^1].Baseline - other.Baseline <= piece.Size * 1.1)
+                if (Math.Abs(other.Top - stack[^1].Bottom) <= piece.Size * 0.15)
                     stack.Add(other);
             }
 
@@ -307,7 +308,7 @@ internal static class PdfLayout
             items.RemoveAll(stack.Contains);
             items.Add(new Item
             {
-                Text = stack.Select(static member => member.Text).GroupBy(static text => text).MaxBy(static group => group.Count())!.Key,
+                Text = piece.Text,
                 Left = stack.Min(static member => member.Left),
                 Right = stack.Max(static member => member.Right),
                 Top = top,
@@ -319,6 +320,9 @@ internal static class PdfLayout
                 IsFloating = true,
             });
         }
+
+        // An extender outside a brace has no meaning of its own.
+        items.RemoveAll(static item => item.Text == Extender);
     }
 
     private static readonly HashSet<string> LargeOperators = new(StringComparer.Ordinal) { "∑", "∏", "∐", "∫", "∮", "⋃", "⋂", "⨁", "⨂", "⨀", "⋁", "⋀" };
@@ -362,14 +366,18 @@ internal static class PdfLayout
     {
         double center = (item.Left + item.Right) / 2;
         // The limits of a text formula sit right of the operator as scripts. Only centered limits are display limits.
-        return item.IsMath && !item.IsTall && center >= op.Left && center <= op.Right;
+        // The operator of the next row of a formula is no limit.
+        return item.IsMath && !item.IsTall && !LargeOperators.Contains(item.Text) && center >= op.Left && center <= op.Right;
     }
 
     // A short rule with formula items right above and right below it is the bar of a fraction.
     private static void JoinFractions(List<Item> items, IReadOnlyList<Rule> rules)
     {
-        foreach (Rule rule in rules.Where(static rule => rule.Width < 200).OrderBy(static rule => rule.Width))
+        foreach (Rule rule in rules.OrderBy(static rule => rule.Width))
         {
+            if (JoinRoot(items, rule) || rule.Width >= 200)
+                continue;
+
             List<Item> above = [.. items.Where(item => Covers(rule, item) && item.Bottom >= rule.Y - 1 && item.Bottom <= rule.Y + (item.Size * 0.6))];
             List<Item> below = [.. items.Where(item => Covers(rule, item) && item.Top <= rule.Y + 1 && item.Top >= rule.Y - (item.Size * 0.6))];
             // The rule of a footnote has text above and below it. A fraction has parts of a formula, or digits as in 1/2.
@@ -402,6 +410,37 @@ internal static class PdfLayout
         }
     }
 
+    // TeX sets a root as the sign √ and a rule from the top of the sign over the radicand. A shorter rule inside goes first, so a fraction under the root is ready.
+    private static bool JoinRoot(List<Item> items, Rule rule)
+    {
+        Item? sign = items.FirstOrDefault(item => item.Text == "√" && Math.Abs(item.Right - rule.Left) <= 1.5 && Math.Abs(item.Top - rule.Y) <= 1.5);
+        if (sign is null)
+            return false;
+
+        List<Item> radicand = [.. items.Where(item => item != sign && Covers(rule, item) && item.Top <= rule.Y + 1 && item.Bottom >= sign.Bottom - (sign.Size * 0.3))];
+        if (radicand.Count == 0)
+            return false;
+
+        // The root sits on the baseline of the larger part of its radicand. A radicand of only formula parts takes the middle of the sign.
+        List<double> baselines = [.. radicand.Where(item => !item.IsFloating && item.Size >= sign.Size * 0.85).Select(static item => item.Baseline)];
+        string latex = $"\\sqrt{{{MathWriter.WriteRows(BuildRows(radicand))}}}";
+        items.RemoveAll(item => item == sign || radicand.Contains(item));
+        items.Add(new Item
+        {
+            Text = latex,
+            IsLatex = true,
+            Left = sign.Left,
+            Right = rule.Right,
+            Top = rule.Y,
+            Bottom = Math.Min(sign.Bottom, radicand.Min(static item => item.Bottom)),
+            Baseline = baselines.Count > 0 ? Median(baselines) : ((rule.Y + sign.Bottom) / 2) - (sign.Size * 0.25),
+            Size = sign.Size,
+            Style = GlyphStyle.Math,
+            IsFloating = true,
+        });
+        return true;
+    }
+
     private static bool IsFormulaPart(List<Item> items) =>
         items.Count(static item => item.IsMath || item.Text.All(char.IsDigit)) >= items.Count * 0.6;
 
@@ -420,7 +459,11 @@ internal static class PdfLayout
             int best = -1;
             for (int j = 0; j < rows.Count; j++)
             {
-                if (j == i || rows[j].Size * 0.85 < size || Math.Abs(rows[j].Baseline - baseline) > rows[j].Size * 0.75 || !Overlaps(rows[j].Items, scripts))
+                if (j == i || !Overlaps(rows[j].Items, scripts))
+                    continue;
+
+                bool near = rows[j].Size * 0.85 >= size && Math.Abs(rows[j].Baseline - baseline) <= rows[j].Size * 0.75;
+                if (!near && !HangsOnTall(rows[j].Items, scripts) && !FollowsLarger(rows[j].Items, scripts))
                     continue;
 
                 if (best < 0 || Math.Abs(rows[j].Baseline - baseline) < Math.Abs(rows[best].Baseline - baseline))
@@ -434,6 +477,16 @@ internal static class PdfLayout
             rows.RemoveAt(i);
         }
     }
+
+    // A script of a tall item, such as the square of a large parenthesis, sits as high as the item, farther than the script of a letter.
+    private static bool HangsOnTall(List<Item> line, List<Item> scripts) =>
+        scripts.All(script => line.Any(host => (host.IsTall || host.IsLatex) && script.Size <= host.Size * 0.85 && script.Left - host.Right >= -1 && script.Left - host.Right <= script.Size * 0.6
+            && script.Baseline <= host.Top && script.Baseline >= host.Bottom));
+
+    // A script of a larger item in a row of smaller text, such as the plus of Z⁺ in a row of small capitals, follows its item closely.
+    private static bool FollowsLarger(List<Item> line, List<Item> scripts) =>
+        scripts.All(script => line.Any(host => script.Size <= host.Size * 0.85 && script.Left - host.Right >= -1 && script.Left - host.Right <= script.Size * 0.6
+            && Math.Abs(script.Baseline - host.Baseline) <= host.Size * 0.75));
 
     private static bool Overlaps(List<Item> line, List<Item> scripts)
     {
@@ -450,8 +503,10 @@ internal static class PdfLayout
         List<Item> result = [];
         foreach (Item item in sorted)
         {
+            // A script is smaller than its base. In a row of small capitals the base is larger than the row.
             double shift = item.Baseline - baseline;
-            bool isScript = !item.IsTall && item.Size <= size * 0.85 && Math.Abs(shift) >= Math.Min(0.8, size * 0.06) && result.Count > 0;
+            double reference = result.Count > 0 ? Math.Max(size, result[^1].Size) : size;
+            bool isScript = !item.IsTall && item.Size <= reference * 0.85 && Math.Abs(shift) >= Math.Min(0.8, reference * 0.06) && result.Count > 0;
             if (!isScript)
             {
                 result.Add(item);

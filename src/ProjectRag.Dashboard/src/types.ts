@@ -88,6 +88,7 @@ export interface Chunk {
   pageStart: number | null;
   pageEnd: number | null;
   overlapChars: number;
+  startsBlock: boolean;
 }
 
 export interface Section {
@@ -103,6 +104,12 @@ export interface Section {
   pageStart: number | null;
   pageEnd: number | null;
   chunkCount: number;
+}
+
+export interface Anchor {
+  name: string;
+  charOffset: number;
+  chunkId: number | null;
 }
 
 export interface ChunkLink {

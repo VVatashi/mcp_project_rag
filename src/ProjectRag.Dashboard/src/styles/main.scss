@@ -252,6 +252,7 @@ textarea {
   color: var(--accent);
   cursor: pointer;
   text-align: left;
+  text-decoration: none;
 
   &:hover {
     text-decoration: underline;
@@ -564,6 +565,7 @@ textarea {
   background: none;
   color: var(--text-muted);
   cursor: pointer;
+  text-decoration: none;
 
   &--on {
     color: var(--accent);
@@ -626,6 +628,20 @@ textarea {
 
 .markdown {
   overflow-wrap: anywhere;
+
+  // The block at the target of a link or a hit.
+  &__target {
+    outline: 2px solid var(--mark);
+    outline-offset: 4px;
+    border-radius: 2px;
+    // The bar at the top of the page must not cover the block.
+    scroll-margin-top: 72px;
+  }
+
+  // A link that the dashboard cannot follow keeps its text.
+  &__link {
+    text-decoration: underline dotted;
+  }
 
   > :first-child {
     margin-top: 0;

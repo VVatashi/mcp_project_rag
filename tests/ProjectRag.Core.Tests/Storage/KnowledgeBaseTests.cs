@@ -188,6 +188,11 @@ public sealed class KnowledgeBaseTests : IAsyncLifetime
         Assert.Equal(["A", "A", "A > 2 Second"], sections.Select(static section => section.Path));
         Assert.Equal("2", sections[2].Number);
         Assert.Equal(sections[1].SectionId, sections[2].ParentId);
+
+        DocumentSummary b = (await documents.FindAsync("gl", "docs/b.md", cancellationToken))!;
+        AnchorView anchor = (await structure.GetAnchorAsync(b.DocumentId, "usage", cancellationToken))!;
+        Assert.Equal(link.TargetChunkId, anchor.ChunkId);
+        Assert.Null(await structure.GetAnchorAsync(b.DocumentId, "missing", cancellationToken));
     }
 
     [Fact]
