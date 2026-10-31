@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ProjectRag.Core\ProjectRag.Core.csproj" />
+  </ItemGroup>
+
+  <!-- The tests of the database build the services of the knowledge base from an in-memory configuration. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Configuration" />
+    <PackageReference Include="Microsoft.Extensions.Logging" />
+  </ItemGroup>
+
+</Project>
