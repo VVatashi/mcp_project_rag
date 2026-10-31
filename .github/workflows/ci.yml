@@ -1,0 +1,73 @@
+name: ci
+
+# Builds the solution, runs the tests, checks the format and builds the dashboard.
+# The tests of the database run against the image of pgvector. The llama.cpp servers are fakes in the tests.
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # A push to master keeps its run. A new push to a pull request replaces the old run.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_USER: project_rag
+          POSTGRES_PASSWORD: project_rag
+          POSTGRES_DB: project_rag
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd "pg_isready -U project_rag -d project_rag"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      # The build treats warnings as errors and checks the naming, the usings and the XML docs.
+      - name: Build
+        run: dotnet build ProjectRag.slnx --configuration Release --nologo
+
+      - name: Test
+        env:
+          PROJECTRAG_TEST_DATABASE: Host=127.0.0.1;Port=5434;Database=project_rag_test;Username=project_rag;Password=project_rag
+        run: dotnet test --project tests/ProjectRag.Core.Tests --configuration Release --no-build
+
+      - name: Check the format
+        run: dotnet format ProjectRag.slnx --verify-no-changes --severity warn
+
+  dashboard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: src/ProjectRag.Dashboard
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/ProjectRag.Dashboard/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
