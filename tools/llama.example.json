@@ -1,0 +1,6 @@
+{
+  "LlamaPath": "C:/llama.cpp",
+  "ModelsPath": "C:/models",
+  "EmbeddingDevice": "CUDA0",
+  "RerankDevice": "CUDA0"
+}
