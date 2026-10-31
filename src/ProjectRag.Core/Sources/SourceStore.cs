@@ -16,7 +16,7 @@ public sealed class SourceStore(Database database)
 {
     // The counts come from subqueries. A join of documents and chunks would multiply the rows.
     private const string SelectSql = """
-        SELECT s.source_id, s.name, s.description, s.root_path, s.include_globs, s.exclude_globs, s.category_rules::text AS category_rules, s.created_at, s.indexed_at,
+        SELECT s.source_id, s.name, s.description, s.root_path, s.include_globs, s.exclude_globs, s.category_rules::text AS category_rules, s.replacements::text AS replacements, s.created_at, s.indexed_at,
                (SELECT count(*) FROM document d WHERE d.source_id = s.source_id) AS document_count,
                (SELECT count(*) FROM chunk c JOIN document d USING (document_id) WHERE d.source_id = s.source_id) AS chunk_count,
                (SELECT count(*) FROM chunk_embedding e JOIN chunk c USING (chunk_id) JOIN document d USING (document_id)
@@ -91,8 +91,8 @@ public sealed class SourceStore(Database database)
         await using NpgsqlConnection connection = await database.OpenAsync(cancellationToken);
         return await connection.ExecuteScalarAsync<int>(new CommandDefinition(
             """
-            INSERT INTO source (name, description, root_path, include_globs, exclude_globs, category_rules)
-            VALUES (@Name, @Description, @RootPath, @IncludeGlobs, @ExcludeGlobs, CAST(@CategoryRules AS jsonb))
+            INSERT INTO source (name, description, root_path, include_globs, exclude_globs, category_rules, replacements)
+            VALUES (@Name, @Description, @RootPath, @IncludeGlobs, @ExcludeGlobs, CAST(@CategoryRules AS jsonb), CAST(@Replacements AS jsonb))
             RETURNING source_id
             """,
             Parameters(input, 0), cancellationToken: cancellationToken));
@@ -114,7 +114,7 @@ public sealed class SourceStore(Database database)
             """
             UPDATE source
             SET name = @Name, description = @Description, root_path = @RootPath, include_globs = @IncludeGlobs, exclude_globs = @ExcludeGlobs,
-                category_rules = CAST(@CategoryRules AS jsonb)
+                category_rules = CAST(@CategoryRules AS jsonb), replacements = CAST(@Replacements AS jsonb)
             WHERE source_id = @SourceId
             """,
             Parameters(input, sourceId), cancellationToken: cancellationToken));
@@ -154,6 +154,9 @@ public sealed class SourceStore(Database database)
         IncludeGlobs = input.Includes().ToArray(),
         ExcludeGlobs = input.Excludes().ToArray(),
         CategoryRules = JsonSerializer.Serialize(input.Rules().Select(static rule => new CategoryRule { Pattern = rule.Pattern.Trim(), Category = rule.Category.Trim() }), JsonOptions),
+        Replacements = JsonSerializer.Serialize(
+            (input.Replacements ?? []).Select(static replacement => new TextReplacement { Pattern = replacement.Pattern.Trim(), Find = replacement.Find, Replace = replacement.Replace ?? string.Empty }),
+            JsonOptions),
     };
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -175,6 +178,8 @@ public sealed class SourceStore(Database database)
 
         public string CategoryRules { get; init; } = "[]";
 
+        public string Replacements { get; init; } = "[]";
+
         public DateTime CreatedAt { get; init; }
 
         public DateTime? IndexedAt { get; init; }
@@ -194,6 +199,7 @@ public sealed class SourceStore(Database database)
             IncludeGlobs = IncludeGlobs,
             ExcludeGlobs = ExcludeGlobs,
             CategoryRules = JsonSerializer.Deserialize<List<CategoryRule>>(CategoryRules, JsonOptions) ?? [],
+            Replacements = JsonSerializer.Deserialize<List<TextReplacement>>(Replacements, JsonOptions) ?? [],
             CreatedAt = CreatedAt,
             IndexedAt = IndexedAt,
             DocumentCount = DocumentCount,

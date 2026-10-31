@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -104,6 +106,17 @@ public sealed class Indexer(
         string.Create(CultureInfo.InvariantCulture, $"{DocumentReader.Version};{options.MaxChars};{options.AtomicMaxChars};{options.OverlapChars};{options.MinChars}");
 
     /// <summary>
+    /// Gives the version of a file: the version of the parser with a hash of the replacements of the file.
+    /// A change of the replacements of a file reads that file again.
+    /// </summary>
+    /// <param name="parserVersion">The version of the parser.</param>
+    /// <param name="replacements">The replacements of the file.</param>
+    /// <returns>The version, for example <c>8;1800;3000;300;400;3f2a9c01b7de</c>.</returns>
+    internal static string FileVersion(string parserVersion, IReadOnlyList<TextReplacement> replacements) =>
+        replacements.Count == 0 ? parserVersion
+            : $"{parserVersion};{Hash(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(replacements.Select(static replacement => new[] { replacement.Find, replacement.Replace }))))[..12]}";
+
+    /// <summary>
     /// Computes the SHA-256 of bytes in lowercase hexadecimal.
     /// </summary>
     internal static string Hash(ReadOnlySpan<byte> bytes) => Convert.ToHexStringLower(SHA256.HashData(bytes));
@@ -136,7 +149,9 @@ public sealed class Indexer(
             // PostgreSQL keeps microseconds, so the time of the file loses its last digit before the comparison.
             DateTime modifiedAt = new(info.LastWriteTimeUtc.Ticks - (info.LastWriteTimeUtc.Ticks % 10), DateTimeKind.Utc);
             DocumentFileState? state = known.GetValueOrDefault(path);
-            if (state is not null && state.SizeBytes == info.Length && state.ModifiedAt == modifiedAt && state.ParserVersion == parserVersion)
+            IReadOnlyList<TextReplacement> replacements = SourceScanner.Replacements(source, path);
+            string fileVersion = FileVersion(parserVersion, replacements);
+            if (state is not null && state.SizeBytes == info.Length && state.ModifiedAt == modifiedAt && state.ParserVersion == fileVersion)
             {
                 run.DocumentsUnchanged++;
                 continue;
@@ -148,7 +163,7 @@ public sealed class Indexer(
             try
             {
                 bytes = await File.ReadAllBytesAsync(info.FullName, cancellationToken);
-                if (state is not null && state.ContentHash == Hash(bytes) && state.ParserVersion == parserVersion)
+                if (state is not null && state.ContentHash == Hash(bytes) && state.ParserVersion == fileVersion)
                 {
                     await documents.TouchAsync(state.DocumentId, bytes.LongLength, modifiedAt, cancellationToken);
                     run.DocumentsUnchanged++;
@@ -156,8 +171,17 @@ public sealed class Indexer(
                 }
 
                 // Every format becomes Markdown first. The structure and the chunks come from the Markdown.
-                structure = MarkdownStructureReader.Read(DocumentReader.Read(path, bytes), path);
+                DocumentText text = DocumentReader.Read(path, bytes);
+                structure = MarkdownStructureReader.Read(text with { Content = TextReplacement.ApplyAll(text.Content, replacements) }, path);
                 chunks = chunker.Split(structure);
+            }
+            // A replacement that runs too long or breaks a mark fails its file with a warning that names the replacement.
+            catch (Exception exception) when (exception is RegexMatchTimeoutException or InvalidOperationException && replacements.Count > 0)
+            {
+                logger.LogWarning(exception, "A replacement of the source {Source} failed on the file {Path}.", source.Name, path);
+                warnings.Add($"A replacement failed on {path}: {exception.Message} Fix the replacements of the source.");
+                run.DocumentsFailed++;
+                continue;
             }
             // A locked, unreadable or broken file must not stop the run. PdfPig throws many kinds of exceptions on a damaged PDF.
 #pragma warning disable CA1031
@@ -169,7 +193,7 @@ public sealed class Indexer(
                 continue;
             }
 
-            DocumentFile file = new(Hash(bytes), parserVersion, bytes.LongLength, modifiedAt, SourceScanner.Category(source, path));
+            DocumentFile file = new(Hash(bytes), fileVersion, bytes.LongLength, modifiedAt, SourceScanner.Category(source, path));
 
             List<(TextChunk Chunk, string Hash)> hashed = [.. chunks.Select(static chunk => (chunk, Hash(Encoding.UTF8.GetBytes(chunk.EmbeddingText))))];
             run.ChunksReused += await documents.SaveAsync(source.SourceId, path, structure, file, hashed, cancellationToken);

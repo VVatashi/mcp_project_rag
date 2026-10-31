@@ -149,5 +149,7 @@ Every chunk has balanced fences of code and formulas. The tests of the chunker c
 - The importer reads one column. A page with two columns mixes the lines of both columns.
 - A table needs wide rules above and below it. A table without rules becomes paragraphs of text, and a table with unclear columns becomes a fenced block of plain text. The text stays searchable, but the columns are lost.
 - A figure keeps only its caption and the labels that are text.
+- An error of the published file stays in the text, because its glyphs show the error too. The Metal specification shows `sparse_color<Tv>` as `sparse_color-Tv`.
+  The replacements of a source fix such errors with regular expressions for the matching files, before the chunks.
 - A bookmark or a link that points into a turned page keeps the height of the page before the turn. Its target may land on another block of that page.
 - A new version of the importer or the chunker reads every file again. Unchanged chunks keep their vectors by the hash of their text.

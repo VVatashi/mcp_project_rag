@@ -16,6 +16,7 @@ export interface Source {
   includeGlobs: string[];
   excludeGlobs: string[];
   categoryRules: CategoryRule[];
+  replacements: TextReplacement[];
   createdAt: string;
   indexedAt: string | null;
   documentCount: number;
@@ -30,6 +31,13 @@ export interface SourceInput {
   includeGlobs: string[] | null;
   excludeGlobs: string[] | null;
   categoryRules: CategoryRule[] | null;
+  replacements: TextReplacement[] | null;
+}
+
+export interface TextReplacement {
+  pattern: string;
+  find: string;
+  replace: string;
 }
 
 export interface CategoryRule {

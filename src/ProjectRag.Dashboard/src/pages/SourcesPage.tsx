@@ -6,7 +6,7 @@ import { Empty, ErrorBanner, Panel, Progress } from '../components/Common';
 import { RunsTable } from '../components/RunsTable';
 import { formatDate, formatNumber, percent } from '../format';
 import { useLoad } from '../hooks';
-import type { CategoryRule, Source, SourceInput } from '../types';
+import type { CategoryRule, Source, SourceInput, TextReplacement } from '../types';
 
 interface FormState {
   sourceId: number | null;
@@ -16,9 +16,10 @@ interface FormState {
   includeGlobs: string;
   excludeGlobs: string;
   categoryRules: string;
+  replacements: string;
 }
 
-const emptyForm: FormState = { sourceId: null, name: '', description: '', rootPath: '', includeGlobs: '', excludeGlobs: '', categoryRules: '' };
+const emptyForm: FormState = { sourceId: null, name: '', description: '', rootPath: '', includeGlobs: '', excludeGlobs: '', categoryRules: '', replacements: '' };
 
 // A rule of a category is a line "pattern = category", for example "ECMA-33*.pdf = csharp".
 function readRules(text: string): CategoryRule[] {
@@ -26,6 +27,22 @@ function readRules(text: string): CategoryRule[] {
     const at = line.lastIndexOf('=');
     return at < 0 ? { pattern: line, category: '' } : { pattern: line.slice(0, at).trim(), category: line.slice(at + 1).trim() };
   });
+}
+
+// The replacements are JSON: a regular expression may hold any character, so no separator of a line would do.
+function readReplacements(text: string): TextReplacement[] {
+  if (!text.trim()) return [];
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch (exception) {
+    throw new Error(`The replacements are not valid JSON: ${exception instanceof Error ? exception.message : String(exception)}`, { cause: exception });
+  }
+
+  const isReplacement = (item: unknown): item is TextReplacement =>
+    typeof item === 'object' && item !== null && ['pattern', 'find', 'replace'].every((key) => typeof (item as Record<string, unknown>)[key] === 'string');
+  if (!Array.isArray(value) || !value.every(isReplacement)) throw new Error('The replacements must be an array of objects with the texts "pattern", "find" and "replace".');
+  return value;
 }
 
 function writeRules(rules: CategoryRule[]): string {
@@ -71,11 +88,20 @@ export function SourcesPage() {
       includeGlobs: source.includeGlobs.join('\n'),
       excludeGlobs: source.excludeGlobs.join('\n'),
       categoryRules: writeRules(source.categoryRules),
+      replacements: source.replacements.length > 0 ? JSON.stringify(source.replacements, null, 2) : '',
     });
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!form) return;
+    let replacements: TextReplacement[];
+    try {
+      replacements = readReplacements(form.replacements);
+    } catch (exception) {
+      setError(exception instanceof Error ? exception.message : String(exception));
+      return;
+    }
+
     const input: SourceInput = {
       name: form.name,
       description: form.description,
@@ -84,6 +110,7 @@ export function SourcesPage() {
       // An empty field keeps the default patterns for a new source.
       excludeGlobs: form.sourceId === null && !form.excludeGlobs.trim() ? null : lines(form.excludeGlobs),
       categoryRules: readRules(form.categoryRules),
+      replacements,
     };
     const saved = await act(() => (form.sourceId === null ? api.addSource(input) : api.updateSource(form.sourceId, input)));
     if (saved) setForm(null);
@@ -163,6 +190,19 @@ export function SourcesPage() {
                 placeholder={'ECMA-33*.pdf = csharp\nvkspec.pdf = vulkan'}
               />
               <small>A line "pattern = category" gives the matching documents a category. The first matching line wins. Other documents take the name of the source.</small>
+            </label>
+            <label>
+              Replacements
+              <textarea
+                rows={4}
+                className="mono"
+                value={form.replacements}
+                onChange={(event) => setForm({ ...form, replacements: event.target.value })}
+                placeholder={'[{ "pattern": "Metal-*.pdf", "find": "sparse_color-(Tv?)\\\\b", "replace": "sparse_color<$1>" }]'}
+              />
+              <small>
+                JSON: a pattern of the files, a regular expression of .NET and its replacement. They fix errors of a published file in its Markdown before the chunks. A change reads the matching files again.
+              </small>
             </label>
             <div className="form__actions">
               <button type="submit" className="button button--primary" disabled={busy}>

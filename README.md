@@ -97,6 +97,17 @@ A change of the rules gives the stored documents their new categories at once, w
 ]
 ```
 
+A published file may hold errors of its own. The Metal specification shows `sparse_color<Tv>` as `sparse_color-Tv` in the PDF itself.
+The replacements of a source fix such errors: a pattern of the files, a regular expression of .NET and its replacement.
+The indexer applies them to the Markdown of each matching file before the chunks. They change the text between the marks of pages and anchors, never the marks.
+A change of the replacements reads only the matching files again. A replacement that runs longer than 2 seconds fails its file with a warning.
+
+```json
+"replacements": [
+  { "pattern": "Metal-Shading-Language-Specification.pdf", "find": "sparse_color-(Tv?)\\b", "replace": "sparse_color<$1>" }
+]
+```
+
 The indexer runs over a new or changed source at once and over all sources every 10 minutes. A run does these steps:
 
 1. It skips each file with the stored size and time.
@@ -145,7 +156,7 @@ On a shared machine, set a token in `appsettings.Local.json`.
 | --- | --- |
 | `GET /api/status` | The state of the database, the models, the counts and the indexer |
 | `GET /api/sources` | The sources |
-| `POST /api/sources` | Adds a source: `name`, `description`, `rootPath`, `includeGlobs`, `excludeGlobs`, `categoryRules` |
+| `POST /api/sources` | Adds a source: `name`, `description`, `rootPath`, `includeGlobs`, `excludeGlobs`, `categoryRules`, `replacements` |
 | `PUT /api/sources/{id}` | Changes a source |
 | `DELETE /api/sources/{id}` | Deletes a source with its documents. The files stay |
 | `POST /api/sources/{id}/index` | Puts a source into the queue of the indexer |

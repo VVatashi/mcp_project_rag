@@ -41,6 +41,11 @@ public sealed class Source
     public IReadOnlyList<CategoryRule> CategoryRules { get; init; } = [];
 
     /// <summary>
+    /// Gets the replacements that fix the text of some files, in their order.
+    /// </summary>
+    public IReadOnlyList<TextReplacement> Replacements { get; init; } = [];
+
+    /// <summary>
     /// Gets the time when the source was added.
     /// </summary>
     public DateTime CreatedAt { get; init; }
