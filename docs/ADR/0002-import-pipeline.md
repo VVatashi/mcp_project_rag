@@ -83,7 +83,10 @@ The chunker reads the blocks of Markdig, not lines:
 2. A chunk with code, a formula or a table may grow to 3000 characters, so such a block stays whole. Code and TeX hold about three characters per token, so 3000 characters fit the slot of 2048 tokens.
 3. A caption "Table 8.20:" stays with its table. A lead-in that ends with a colon stays with the formula or the code after it.
 4. A paragraph over the limit splits after a sentence. The split skips abbreviations such as "e.g." and never falls inside a code span, a formula or a link. The next chunk repeats the last sentence.
+   Without the end of a sentence in reach, the split falls at the last space, and the next chunk repeats the words before it. Only a text without spaces, such as Chinese, splits at the limit, and the split keeps a surrogate pair whole.
 5. A block of code, a formula or a table over 3000 characters splits between lines. The next chunk repeats the last lines, the header of the table and the fence of the code or the formula, so each chunk stays valid Markdown.
+   Each chunk adds new lines, and a line over the limit splits like text.
+6. A list item or a quote with code, a formula or a table gives its parts as blocks of their own kinds, so the code stays whole there too.
 
 ### Links and the objects of the source
 
@@ -125,13 +128,13 @@ The measurements on the three OpenGL specifications (2122 pages):
 | Links that resolve to a chunk | all | all | all |
 | Import of the file | 6 s | 7 s | 3 s |
 
-Every chunk has balanced fences of code and formulas.
+Every chunk has balanced fences of code and formulas. The tests of the chunker check this also for code inside a list item and for code over the larger limit.
 
 ## Consequences
 
 - KaTeX reads every formula, but a valid formula may still differ from the original. A matrix becomes rows in `gathered` without brackets, and a root becomes `\surd` without its bar.
   The view of a chunk next to its PDF page is the way to check the meaning.
 - The importer reads one column. A page with two columns mixes the lines of both columns.
-- A table without rules, or a table with merged cells, becomes a fenced block of plain text. The text stays searchable, but the columns are lost.
+- A table needs wide rules above and below it. A table without rules becomes paragraphs of text, and a table with unclear columns becomes a fenced block of plain text. The text stays searchable, but the columns are lost.
 - A figure keeps only its caption and the labels that are text.
 - A new version of the importer or the chunker reads every file again. Unchanged chunks keep their vectors by the hash of their text.

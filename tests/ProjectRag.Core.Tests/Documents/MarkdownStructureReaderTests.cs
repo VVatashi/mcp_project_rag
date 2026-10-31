@@ -60,6 +60,32 @@ public sealed class MarkdownStructureReaderTests
     }
 
     [Fact]
+    public void Read_ResolvesALinkFromTheRootOfTheSource()
+    {
+        DocumentStructure structure = MarkdownStructureReader.Read(new DocumentText("Doc", "See [x](/docs/a.md#b).\n"), "dir/doc.md");
+
+        DocumentLink link = Assert.Single(structure.Links);
+        Assert.Equal("docs/a.md", link.TargetPath);
+    }
+
+    [Fact]
+    public void Read_TakesALetterAsANumberOnlyBeforeADigit()
+    {
+        DocumentStructure structure = Read("# Guide\n\n## A Brief History\n\nText.\n\n## A.1 Extensions\n\nText.\n");
+
+        Assert.Null(structure.Sections[2].Number);
+        Assert.Equal("A.1", structure.Sections[3].Number);
+    }
+
+    [Fact]
+    public void Read_SkipsTheMentionOfACaption()
+    {
+        DocumentStructure structure = Read("<!-- rag:anchor table-4 -->\n| a |\n| --- |\n| 1 |\n\nTable 4: The caption.\n");
+
+        Assert.Empty(structure.Links);
+    }
+
+    [Fact]
     public void FindTitle_PrefersTheFrontMatter()
     {
         Assert.Equal("From YAML", MarkdownStructureReader.FindTitle("---\ntitle: \"From YAML\"\n---\n# From heading\n"));

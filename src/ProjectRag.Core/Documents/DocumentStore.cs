@@ -249,11 +249,12 @@ public sealed class DocumentStore(Database database)
 
         // A link belongs to each chunk whose range holds its start. An overlap gives a link to both chunks.
         List<(long ChunkId, int Ordinal, DocumentLink Link)> links = [];
+        IReadOnlyList<DocumentLink> sorted = structure.Links;
         foreach ((TextChunk chunk, _) in chunks)
         {
             int ordinal = 0;
-            foreach (DocumentLink link in structure.Links.Where(link => link.Start >= chunk.Start && link.Start < chunk.End))
-                links.Add((chunkIds[chunk.Ordinal], ordinal++, link));
+            for (int i = FirstLinkAt(sorted, chunk.Start); i < sorted.Count && sorted[i].Start < chunk.End; i++)
+                links.Add((chunkIds[chunk.Ordinal], ordinal++, sorted[i]));
         }
 
         await connection.ExecuteAsync(new CommandDefinition(
@@ -307,6 +308,22 @@ public sealed class DocumentStore(Database database)
         return await connection.ExecuteAsync(new CommandDefinition(
             "DELETE FROM document WHERE source_id = @SourceId AND NOT (path = ANY (@Paths))",
             new { SourceId = sourceId, Paths = paths.ToArray() }, cancellationToken: cancellationToken));
+    }
+
+    private static int FirstLinkAt(IReadOnlyList<DocumentLink> links, int start)
+    {
+        int low = 0;
+        int high = links.Count;
+        while (low < high)
+        {
+            int middle = (low + high) / 2;
+            if (links[middle].Start < start)
+                low = middle + 1;
+            else
+                high = middle;
+        }
+
+        return low;
     }
 
     private static string EscapeLike(string text) => text.Replace(@"\", @"\\", StringComparison.Ordinal).Replace("%", @"\%", StringComparison.Ordinal).Replace("_", @"\_", StringComparison.Ordinal);

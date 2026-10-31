@@ -49,7 +49,7 @@ public sealed record DocumentBlock(BlockKind Kind, int Start, int End, int Secti
 /// A section of a document: the text from a heading to the next heading of the same or a higher level.
 /// </summary>
 /// <param name="Index">The index of the section in <see cref="DocumentStructure.Sections"/>. The section 0 holds the text before the first heading.</param>
-/// <param name="Parent">The index of the parent section, or -1 for a top section.</param>
+/// <param name="Parent">The index of the parent section. A heading at the top level has the parent 0, and the section 0 has -1.</param>
 /// <param name="Level">The level of the heading, from 1. The section 0 has the level 0.</param>
 /// <param name="Title">The text of the heading, or the title of the document for the section 0.</param>
 /// <param name="Number">The number at the start of the heading, for example <c>8.14.2</c>, or <see langword="null"/>.</param>

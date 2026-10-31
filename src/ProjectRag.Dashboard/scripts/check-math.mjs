@@ -37,8 +37,13 @@ async function* documents() {
   const sources = await (await fetch(`${api}/api/sources`, { headers })).json();
   const wanted = sourceIndex >= 0 ? sources.filter((source) => source.name === args[sourceIndex + 1]) : sources;
   for (const source of wanted) {
-    const page = await (await fetch(`${api}/api/documents?sourceId=${source.sourceId}&limit=500`, { headers })).json();
-    for (const document of page.items) {
+    const items = [];
+    for (let offset = 0; ; offset += 500) {
+      const page = await (await fetch(`${api}/api/documents?sourceId=${source.sourceId}&offset=${offset}&limit=500`, { headers })).json();
+      items.push(...page.items);
+      if (page.items.length === 0 || offset + page.items.length >= page.total) break;
+    }
+    for (const document of items) {
       let text = '';
       for (let offset = 0; offset < document.contentLength || offset === 0; ) {
         const part = await (await fetch(`${api}/api/documents/${document.documentId}/content?offset=${offset}&length=100000`, { headers })).json();

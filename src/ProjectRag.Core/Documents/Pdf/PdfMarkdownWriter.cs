@@ -98,7 +98,7 @@ internal sealed partial class PdfMarkdownWriter(HashSet<string> vocabulary, Dict
     }
 
     // The inline text of a block: the lines joined with spaces, a hyphen at a line end resolved, and the page marks of a block over a page break.
-    private string WriteInline(PdfBlock block, HashSet<string> footnotes)
+    private string WriteInline(PdfBlock block, HashSet<string> footnotes, bool inTable = false)
     {
         List<(SegmentKind Kind, string Text, string? Link)> segments = [];
         for (int i = 0; i < block.Lines.Count; i++)
@@ -134,10 +134,11 @@ internal sealed partial class PdfMarkdownWriter(HashSet<string> vocabulary, Dict
 
             builder.Append(kind switch
             {
-                SegmentKind.Code => CodeSpan(text),
+                // A cell of a pipe table ends at a pipe, also inside a code span or a formula. The text escapes its pipes itself.
+                SegmentKind.Code => inTable ? CodeSpan(text).Replace("|", "\\|", StringComparison.Ordinal) : CodeSpan(text),
                 // An empty formula would write "$$", the fence of a display formula.
                 SegmentKind.Math when IsEmptyMath(text) => " ",
-                SegmentKind.Math => $"${text.Trim()}$",
+                SegmentKind.Math => inTable ? $"${text.Trim().Replace("|", "\\|", StringComparison.Ordinal)}$" : $"${text.Trim()}$",
                 SegmentKind.Footnote => $"[^{text}]",
                 SegmentKind.Mark => text,
                 _ => EscapeText(text),
@@ -453,7 +454,7 @@ internal sealed partial class PdfMarkdownWriter(HashSet<string> vocabulary, Dict
             {
                 int column = columns.Select((x, index) => (Distance: Math.Abs(x - segment[0].Left), index)).MinBy(static pair => pair.Distance).index;
                 Line cellLine = new() { Page = block.Page, Items = segment, Size = segment[0].Size, Baseline = segment[0].Baseline };
-                string text = WriteInline(new PdfBlock { Kind = PdfBlockKind.Paragraph, Page = block.Page, Lines = [cellLine] }, footnotes).Replace("|", "\\|", StringComparison.Ordinal);
+                string text = WriteInline(new PdfBlock { Kind = PdfBlockKind.Paragraph, Page = block.Page, Lines = [cellLine] }, footnotes, inTable: true);
                 values[column] = values[column] is null ? text : $"{values[column]} {text}";
             }
 

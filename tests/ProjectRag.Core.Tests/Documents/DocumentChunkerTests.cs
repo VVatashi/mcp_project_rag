@@ -116,6 +116,49 @@ public sealed partial class DocumentChunkerTests
     }
 
     [Fact]
+    public void Split_KeepsCodeInsideAListItemFenced()
+    {
+        string code = string.Join('\n', Enumerable.Range(0, 60).Select(static i => $"   echo step {i:D2}; run --flag value"));
+        IReadOnlyList<TextChunk> chunks = Split($"1. Install the tools:\n\n   ```bash\n{code}\n   ```\n\n2. Run them.\n", maxChars: 300, atomicMaxChars: 600, overlapChars: 80);
+
+        Assert.True(chunks.Count > 2);
+        Assert.All(chunks, static chunk => Assert.Equal(0, CountOf(chunk.Body, "```") % 2));
+        Assert.StartsWith("1. Install the tools:", chunks[0].Body, StringComparison.Ordinal);
+        Assert.All(chunks, static chunk => Assert.True(chunk.Body.Length <= 600, $"{chunk.Body.Length} characters"));
+    }
+
+    [Fact]
+    public void Split_CutsATextWithoutSpacesAtTheLimitAndKeepsSurrogatePairs()
+    {
+        string text = string.Concat(Enumerable.Repeat("知識庫😀", 400));
+        IReadOnlyList<TextChunk> chunks = Split(text, maxChars: 301, overlapChars: 50);
+
+        Assert.True(chunks.Count > 3);
+        foreach (TextChunk chunk in chunks)
+        {
+            Assert.True(chunk.Body.Length <= 301);
+            Assert.False(char.IsLowSurrogate(chunk.Body[0]));
+            Assert.False(char.IsHighSurrogate(chunk.Body[^1]));
+        }
+
+        // Without spaces there is no place for an overlap, so the chunks follow each other.
+        Assert.Equal(text.Length, chunks.Sum(static chunk => chunk.Body.Length));
+    }
+
+    [Fact]
+    public void Split_GivesEveryPieceOfCodeNewLines()
+    {
+        string code = "```\nshort line\n" + new string('x', 280) + "\n" + string.Join('\n', Enumerable.Range(0, 20).Select(static i => $"line {i:D2}")) + "\n" + new string('y', 900) + "\n```";
+        IReadOnlyList<TextChunk> chunks = Split(code, maxChars: 200, atomicMaxChars: 300, overlapChars: 60);
+
+        Assert.All(chunks, static chunk => Assert.True(chunk.Body.Length <= 300 + 10, $"{chunk.Body.Length} characters"));
+        Assert.All(chunks, static chunk => Assert.NotEqual("```\n```", chunk.Body));
+        // No chunk only repeats the previous one.
+        for (int i = 1; i < chunks.Count; i++)
+            Assert.True(chunks[i].End > chunks[i - 1].End, $"chunk {i} adds nothing");
+    }
+
+    [Fact]
     public void Split_GivesNoChunksForAnEmptyDocument() => Assert.Empty(Split("\n\n## Heading only\n\n"));
 
     private static IReadOnlyList<TextChunk> Split(string content, int maxChars = 1800, int atomicMaxChars = 3000, int overlapChars = 300)
@@ -123,6 +166,8 @@ public sealed partial class DocumentChunkerTests
         DocumentStructure structure = MarkdownStructureReader.Read(new DocumentText(MarkdownStructureReader.FindTitle(content) ?? "Doc", content), "doc.md");
         return new DocumentChunker(new ChunkingOptions { MaxChars = maxChars, AtomicMaxChars = atomicMaxChars, OverlapChars = overlapChars }).Split(structure);
     }
+
+    private static int CountOf(string text, string value) => (text.Length - text.Replace(value, string.Empty, StringComparison.Ordinal).Length) / value.Length;
 
     [GeneratedRegex(@"Sentence number \d+[^.]*e\.g\.[^.]*\.")]
     private static partial Regex SentenceRegex();

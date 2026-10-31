@@ -130,8 +130,10 @@ public sealed class StructureStore(Database database)
             return null;
 
         // The stored path comes from the scan of the folder. The check still keeps a changed root from reaching other files.
-        string root = System.IO.Path.TrimEndingDirectorySeparator(System.IO.Path.GetFullPath(found.Root)) + System.IO.Path.DirectorySeparatorChar;
+        // The relative path works for a root such as "D:\" too, where a prefix with a separator would fail.
+        string root = System.IO.Path.GetFullPath(found.Root);
         string full = System.IO.Path.GetFullPath(System.IO.Path.Combine(root, found.Path));
-        return full.StartsWith(root, StringComparison.OrdinalIgnoreCase) ? full : null;
+        string relative = System.IO.Path.GetRelativePath(root, full);
+        return relative == ".." || relative.StartsWith(".." + System.IO.Path.DirectorySeparatorChar, StringComparison.Ordinal) || System.IO.Path.IsPathRooted(relative) ? null : full;
     }
 }

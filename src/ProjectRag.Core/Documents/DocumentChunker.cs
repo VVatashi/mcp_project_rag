@@ -62,7 +62,8 @@ public sealed partial class DocumentChunker
                 bool unitAtomic = unit.Any(static block => block.IsAtomic);
                 int unitLength = unit[^1].End - unit[0].Start;
                 int limit = currentAtomic || unitAtomic ? _atomicMaxChars : _maxChars;
-                if (current.Count > 0 && unit[^1].End - current[0].Start <= limit)
+                // The repeated header of a table or fence of code counts toward the size of the chunk.
+                if (current.Count > 0 && unit[^1].End - current[0].Start + (current[0].Prefix?.Length ?? 0) <= limit)
                 {
                     current.Add(new Piece(unit[0].Start, unit[^1].End));
                     currentAtomic |= unitAtomic;
@@ -123,7 +124,7 @@ public sealed partial class DocumentChunker
         foreach (DocumentBlock block in unit)
         {
             int limit = block.IsAtomic ? _atomicMaxChars : _maxChars;
-            if (current is { } open && block.End - open.Start <= limit)
+            if (current is { } open && block.End - open.Start + (open.Prefix?.Length ?? 0) <= limit)
             {
                 current = open with { End = block.End };
                 continue;
@@ -145,7 +146,9 @@ public sealed partial class DocumentChunker
         return pieces;
     }
 
-    // A text splits after a sentence. Without a sentence end in reach it splits at a space, and the next piece repeats the words before the cut.
+    // A text splits after a sentence, and the next piece repeats that sentence when it is short.
+    // Without a sentence end in reach the text splits at its last space, and the next piece repeats the words before the cut.
+    // Only a text without spaces, such as Chinese, splits at the limit, and the cut keeps a surrogate pair whole.
     private List<Piece> SplitText(string content, int start, int end)
     {
         List<(int Start, int End)> protectedRanges = ProtectedRanges(content, start, end);
@@ -156,26 +159,24 @@ public sealed partial class DocumentChunker
             int limit = pieceStart + _maxChars;
             int cut = LastSentenceEnd(content, pieceStart, limit, protectedRanges);
             int next;
-            if (cut > pieceStart)
+            if (cut >= 0)
             {
-                // The next piece starts with the last sentence of this piece when that sentence is short.
                 int previousSentence = LastSentenceEnd(content, pieceStart, cut - 1, protectedRanges);
-                next = previousSentence > pieceStart && cut - previousSentence <= _overlapChars ? SkipSpace(content, previousSentence) : SkipSpace(content, cut);
-                next = Math.Min(next, end);
+                next = previousSentence >= 0 && cut - previousSentence <= _overlapChars ? SkipSpace(content, previousSentence) : SkipSpace(content, cut);
             }
             else
             {
-                cut = LastSpace(content, pieceStart + (_maxChars / 2), limit, protectedRanges);
-                if (cut <= pieceStart)
-                    cut = char.IsLowSurrogate(content[limit]) ? limit - 1 : limit;
+                cut = LastSpace(content, pieceStart, limit, protectedRanges);
+                if (cut < 0)
+                    cut = SafeCut(content, limit);
 
-                int back = LastSpace(content, Math.Max(pieceStart + 1, cut - _overlapChars), cut - 1, protectedRanges);
-                next = Math.Min(back > pieceStart ? SkipSpace(content, back) : cut, end);
+                int back = LastSpace(content, Math.Max(pieceStart, cut - _overlapChars), cut - 1, protectedRanges);
+                next = back >= 0 ? SkipSpace(content, back) : cut;
             }
 
             pieces.Add(new Piece(pieceStart, cut));
             // The overlap must not keep the piece from moving on.
-            pieceStart = Math.Max(next, pieceStart + 1);
+            pieceStart = Math.Min(Math.Max(next, pieceStart + 1), end);
         }
 
         if (pieceStart < end)
@@ -213,41 +214,68 @@ public sealed partial class DocumentChunker
             body = 1;
         }
 
+        int Length(int line) => lines[line].End - lines[line].Start;
+
         List<Piece> pieces = [];
-        int index = body;
-        int pieceStart = block.Start;
         int overhead = (prefix?.Length ?? 0) + (suffix?.Length ?? 0) + 1;
-        while (index < lines.Count)
+        int next = body;
+        int overlapFrom = body;
+        while (next < lines.Count)
         {
-            int startIndex = index;
-            int length = pieces.Count == 0 ? lines[index].Start - block.Start : overhead;
-            while (index < lines.Count && (index == startIndex || length + lines[index].End - lines[index].Start <= _atomicMaxChars))
+            // A line longer than the limit splits like text.
+            if (Length(next) + overhead > _atomicMaxChars)
             {
-                length += lines[index].End - lines[index].Start;
-                index++;
+                List<Piece> parts = SplitText(content, lines[next].Start, lines[next].End);
+                for (int k = 0; k < parts.Count; k++)
+                {
+                    bool isLastPart = k == parts.Count - 1 && next + 1 >= lines.Count;
+                    pieces.Add(new Piece(pieces.Count == 0 ? block.Start : parts[k].Start, parts[k].End, pieces.Count == 0 ? null : prefix, isLastPart ? null : suffix));
+                }
+
+                next++;
+                overlapFrom = next;
+                continue;
             }
 
-            bool isLast = index >= lines.Count;
-            pieces.Add(new Piece(pieceStart, lines[index - 1].End, pieces.Count == 0 ? null : prefix, isLast ? null : suffix));
+            // A piece holds the overlap and at least one new line.
+            int length = pieces.Count == 0 ? lines[next].Start - block.Start : overhead + lines[next].Start - lines[overlapFrom].Start;
+            int end = next;
+            do
+            {
+                length += Length(end);
+                end++;
+            }
+            while (end < lines.Count && length + Length(end) <= _atomicMaxChars);
+
+            bool isLast = end >= lines.Count;
+            pieces.Add(new Piece(pieces.Count == 0 ? block.Start : lines[overlapFrom].Start, lines[end - 1].End, pieces.Count == 0 ? null : prefix, isLast ? null : suffix));
             if (isLast)
                 break;
 
-            // The next piece repeats the last lines that fit into the overlap, at least the last line when it fits.
-            int back = index;
+            // The next piece repeats the last lines that fit into the overlap and still leave room for its first new line.
+            int back = end;
             int overlap = 0;
-            while (back - 1 > startIndex && overlap + lines[back - 1].End - lines[back - 1].Start <= _overlapChars)
+            while (back - 1 > next && overlap + Length(back - 1) <= _overlapChars && overhead + overlap + Length(back - 1) + Length(end) <= _atomicMaxChars)
             {
                 back--;
-                overlap += lines[back].End - lines[back].Start;
+                overlap += Length(back);
             }
 
-            index = back;
-            pieceStart = lines[index].Start;
+            overlapFrom = back;
+            next = end;
+        }
+
+        // A closing fence alone would make a chunk without content, so the piece before it takes the fence.
+        if (pieces.Count > 1 && suffix is not null && pieces[^1].Start == lines[^1].Start && FenceRegex().IsMatch(content[lines[^1].Start..lines[^1].End]))
+        {
+            pieces[^2] = pieces[^2] with { End = pieces[^1].End, Suffix = null };
+            pieces.RemoveAt(pieces.Count - 1);
         }
 
         return pieces;
     }
 
+    // Returns the index of the space after the last end of a sentence in the range, or -1 when there is none.
     private static int LastSentenceEnd(string content, int start, int limit, List<(int Start, int End)> protectedRanges)
     {
         for (int i = Math.Min(limit, content.Length) - 1; i > start; i--)
@@ -272,7 +300,7 @@ public sealed partial class DocumentChunker
             return i;
         }
 
-        return start;
+        return -1;
     }
 
     private static bool IsAbbreviation(string content, int start, int dot)
@@ -286,6 +314,7 @@ public sealed partial class DocumentChunker
         return word.Length <= 1 || Abbreviations.Contains(word) || word.All(static c => char.IsDigit(c) || c == '.');
     }
 
+    // Returns the index of the last space in the range outside the protected ranges, or -1 when there is none.
     private static int LastSpace(string content, int start, int limit, List<(int Start, int End)> protectedRanges)
     {
         for (int i = Math.Min(limit, content.Length) - 1; i > start; i--)
@@ -294,8 +323,10 @@ public sealed partial class DocumentChunker
                 return i;
         }
 
-        return start;
+        return -1;
     }
+
+    private static int SafeCut(string content, int index) => index > 0 && index < content.Length && char.IsLowSurrogate(content[index]) ? index - 1 : index;
 
     private static int SkipSpace(string content, int index)
     {
@@ -366,9 +397,23 @@ public sealed partial class DocumentChunker
         {
             StringBuilder builder = new(end - start);
             int position = start;
-            foreach ((int hiddenStart, int hiddenEnd) in structure.Hidden)
+            // The hidden ranges come sorted, so the search starts at the first range that ends after the start.
+            IReadOnlyList<(int Start, int End)> hidden = structure.Hidden;
+            int low = 0;
+            int high = hidden.Count;
+            while (low < high)
             {
-                if (hiddenEnd <= position || hiddenStart >= end)
+                int middle = (low + high) / 2;
+                if (hidden[middle].End <= start)
+                    low = middle + 1;
+                else
+                    high = middle;
+            }
+
+            for (int i = low; i < hidden.Count && hidden[i].Start < end; i++)
+            {
+                (int hiddenStart, int hiddenEnd) = hidden[i];
+                if (hiddenEnd <= position)
                     continue;
 
                 builder.Append(structure.Content, position, Math.Max(0, hiddenStart - position));

@@ -461,6 +461,7 @@ public static partial class PdfMarkdownImporter
                 continue;
 
             previous.Continuations.Add((previous.Lines.Count, block.Page));
+            previous.Continuations.AddRange(block.Continuations.Select(continuation => (continuation.Line + previous.Lines.Count, continuation.Page)));
             previous.Lines.AddRange(block.Lines);
             previous.Anchors.AddRange(block.Anchors);
             blocks.RemoveAt(i);

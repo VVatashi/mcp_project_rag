@@ -156,7 +156,7 @@ public static partial class MarkdownStructureReader
     }
 
     // The leading number of a heading: "8.14.2 Coordinate Wrapping", "4.3.5. Uniform Variables", "A.1 Extensions".
-    [GeneratedRegex(@"^(?<number>(?:\d+|[A-Z])(?:\.\d+)*)\.?\s+\S")]
+    [GeneratedRegex(@"^(?<number>(?:\d+|[A-Z](?=\.\d))(?:\.\d+)*)\.?\s+\S")]
     private static partial Regex NumberRegex();
 
     [GeneratedRegex(@"^<!-- rag:(?<kind>page|anchor) (?<value>[^ >]+) -->$")]
@@ -215,10 +215,10 @@ public static partial class MarkdownStructureReader
                     break;
                 case ListBlock list:
                     foreach (Block item in list)
-                        AddBlock(BlockKind.ListItem, item.Span.Start, Math.Min(content.Length, item.Span.End + 1));
+                        AddContainer(item, BlockKind.ListItem);
                     break;
-                case QuoteBlock:
-                    AddBlock(BlockKind.Quote, start, end);
+                case QuoteBlock quote:
+                    AddContainer(quote, BlockKind.Quote);
                     break;
                 case FootnoteGroup group:
                     // Markdig moves the footnotes to the end of the document. Each keeps the place of its text, see Finish.
@@ -282,6 +282,7 @@ public static partial class MarkdownStructureReader
         {
             // A mention inside a link adds nothing: the link already points at the target.
             List<(int Start, int End)> linked = [.. _links.Select(static link => (link.Start, link.End))];
+            HashSet<int> blockStarts = [.. _blocks.Select(static block => block.Start)];
             Dictionary<string, string> sections = new(StringComparer.Ordinal);
             foreach (DocumentSection section in _sections)
             {
@@ -292,7 +293,7 @@ public static partial class MarkdownStructureReader
             foreach (LiteralInline literal in markdown.Descendants<LiteralInline>())
             {
                 int position = literal.Span.Start;
-                if (literal.Parent is LinkInline || _headings.Any(range => position >= range.Start && position < range.End))
+                if (literal.Parent is LinkInline || literal.FirstParentOfType<LinkInline>() is not null || InHeading(position))
                     continue;
 
                 string text = literal.Content.ToString();
@@ -300,7 +301,7 @@ public static partial class MarkdownStructureReader
                 {
                     int start = literal.Span.Start + match.Index;
                     // A caption such as "Table 8.20: …" names its own table. A mention at the start of a block is no link.
-                    if (linked.Any(range => start >= range.Start && start < range.End) || _blocks.Any(block => block.Start == start))
+                    if (blockStarts.Contains(start) || linked.Any(range => start >= range.Start && start < range.End))
                         continue;
 
                     string number = match.Groups["number"].Value;
@@ -323,7 +324,10 @@ public static partial class MarkdownStructureReader
             {
                 int start = html.Span.Start;
                 if (TryMark(html.Tag.Trim(), start))
+                {
                     _hidden.Add((start, Math.Min(content.Length, html.Span.End + 1)));
+                    FlushAnchors(start);
+                }
             }
 
             _pages.Sort(static (a, b) => a.Offset.CompareTo(b.Offset));
@@ -352,7 +356,8 @@ public static partial class MarkdownStructureReader
         private static string? ResolvePath(string path, string target)
         {
             // The paths of a source use forward slashes and stay inside the source.
-            string directory = path.Contains('/', StringComparison.Ordinal) ? path[..path.LastIndexOf('/')] : string.Empty;
+            // A link that starts with a slash starts at the root of the source.
+            string directory = target.StartsWith('/') || !path.Contains('/', StringComparison.Ordinal) ? string.Empty : path[..path.LastIndexOf('/')];
             List<string> parts = [.. directory.Split('/', StringSplitOptions.RemoveEmptyEntries)];
             foreach (string part in target.Replace('\\', '/').Split('/'))
             {
@@ -373,6 +378,25 @@ public static partial class MarkdownStructureReader
             }
 
             return parts.Count == 0 ? null : string.Join('/', parts);
+        }
+
+        // The headings come in the order of the text, so a binary search finds the heading before a place.
+        private bool InHeading(int position)
+        {
+            int low = 0;
+            int high = _headings.Count - 1;
+            while (low <= high)
+            {
+                int middle = (low + high) / 2;
+                if (_headings[middle].End <= position)
+                    low = middle + 1;
+                else if (_headings[middle].Start > position)
+                    high = middle - 1;
+                else
+                    return true;
+            }
+
+            return false;
         }
 
         private bool TryMark(string text, int start)
@@ -421,6 +445,49 @@ public static partial class MarkdownStructureReader
 
             _sections.Add(new DocumentSection(_sections.Count, parent, heading.Level, text.Length == 0 ? title : text, number, anchor, sectionPath, start, content.Length));
             _stack.Add(_sections.Count - 1);
+        }
+
+        // A list item or a quote with code, a formula or a table gives its parts as blocks of their own kinds, so the code stays atomic.
+        // The first part starts at the start of the container and keeps its marker, such as "1." or ">".
+        private void AddContainer(Block container, BlockKind kind)
+        {
+            int start = container.Span.Start;
+            int end = Math.Min(content.Length, container.Span.End + 1);
+            if (container is not ContainerBlock children || !children.Descendants().Any(static block => block is CodeBlock or Table))
+            {
+                AddBlock(kind, start, end);
+                return;
+            }
+
+            bool first = true;
+            foreach (Block child in children)
+            {
+                int childStart = first ? start : child.Span.Start;
+                int childEnd = Math.Min(content.Length, child.Span.End + 1);
+                first = false;
+                switch (child)
+                {
+                    case ListBlock list:
+                        foreach (Block item in list)
+                            AddContainer(item, BlockKind.ListItem);
+                        break;
+                    case QuoteBlock quote:
+                        AddContainer(quote, BlockKind.Quote);
+                        break;
+                    case MathBlock:
+                        AddBlock(BlockKind.Math, childStart, childEnd);
+                        break;
+                    case CodeBlock:
+                        AddBlock(BlockKind.Code, childStart, childEnd);
+                        break;
+                    case Table:
+                        AddBlock(BlockKind.Table, childStart, childEnd);
+                        break;
+                    default:
+                        AddBlock(kind, childStart, childEnd);
+                        break;
+                }
+            }
         }
 
         private void AddBlock(BlockKind kind, int start, int end)
