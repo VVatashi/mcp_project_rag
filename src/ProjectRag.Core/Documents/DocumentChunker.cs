@@ -9,7 +9,7 @@ namespace ProjectRag.Core.Documents;
 /// <remarks>
 /// <para>
 /// A chunk stays inside one section. It collects whole blocks up to <see cref="ChunkingOptions.MaxChars"/>.
-/// A chunk shorter than <see cref="ChunkingOptions.MinChars"/> at the end of a section takes in the next section when that section lies inside the section of the chunk
+/// A chunk shorter than <see cref="ChunkingOptions.MinChars"/> at the end of a section takes in the next small section when that section lies inside the section of the chunk
 /// or shares its parent. The heading of that section then stays in the text of the chunk.
 /// A chunk with code, a formula or a table may grow to <see cref="ChunkingOptions.AtomicMaxChars"/>, so such a block stays whole.
 /// A caption stays with its table or figure, and a short lead-in that ends with a colon stays with the block after it.
@@ -62,8 +62,10 @@ public sealed partial class DocumentChunker
         int currentSection = -1;
         foreach (IGrouping<int, DocumentBlock> section in structure.Blocks.GroupBy(static block => block.Section))
         {
-            // A short chunk goes on into a nearby section. Any other chunk ends with its section.
-            if (current.Count == 0 || current[^1].End - current[0].Start >= _minChars || !IsNear(structure.Sections, currentSection, section.Key))
+            // A short chunk goes on into a nearby small section. Any other chunk ends with its section.
+            // A large section starts a chunk of its own, so its heading names the chunk and the hits of the search.
+            bool small = section.Last().End - section.First().Start < _minChars;
+            if (current.Count == 0 || current[^1].End - current[0].Start >= _minChars || !small || !IsNear(structure.Sections, currentSection, section.Key))
             {
                 writer.Add(current, currentSection);
                 current = [];

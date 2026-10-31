@@ -161,7 +161,7 @@ public sealed partial class DocumentChunkerTests
     [Fact]
     public void Split_JoinsSmallSectionsOfOneParent()
     {
-        const string content = """
+        string content = $"""
             # Spec
 
             ## 2 Extensions
@@ -184,6 +184,10 @@ public sealed partial class DocumentChunkerTests
 
             The second extension.
 
+            ### VK_KHR_c
+
+            {string.Join(' ', Enumerable.Repeat("The third extension adds a large set of commands.", 10))}
+
             ## 3 Formats
 
             The formats.
@@ -191,8 +195,8 @@ public sealed partial class DocumentChunkerTests
             """;
         IReadOnlyList<TextChunk> chunks = Split(content, minChars: 400);
 
-        // A small section takes in its subsections and its small siblings. A section of the first level starts a chunk of its own.
-        Assert.Equal(["Spec > 2 Extensions", "Spec > 3 Formats"], chunks.Select(static chunk => chunk.Heading));
+        // A small section takes in its subsections and its small siblings. A large section and a section of the first level start chunks of their own.
+        Assert.Equal(["Spec > 2 Extensions", "Spec > 2 Extensions > VK_KHR_c", "Spec > 3 Formats"], chunks.Select(static chunk => chunk.Heading));
         Assert.Contains("#### Revision\n\n1\n\n#### Contact", chunks[0].Body, StringComparison.Ordinal);
         Assert.Contains("The second extension.", chunks[0].Body, StringComparison.Ordinal);
     }

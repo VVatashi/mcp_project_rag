@@ -663,7 +663,11 @@ public static partial class PdfMarkdownImporter
     private static void MarkBoldHeadings(List<PdfBlock> blocks, HashSet<int> listPages)
     {
         // The labels of a diagram are bold lines too, but they come in groups. A heading stands alone between other blocks.
+        // A bold line with a number, such as "4.1.10. Implicit Conversions", is a heading when its number goes on from the number of a heading before it:
+        // a child of "4.1" or a sibling of "4.1.9". Its level follows from that heading. Numbered labels of a figure or rows of a table go on from no heading.
         bool[] candidates = [.. blocks.Select(IsBoldLine)];
+        string?[] numbers = [.. blocks.Select((block, index) => candidates[index] ? SectionNumber(block.Lines[0].PlainText) : null)];
+        List<(string Number, int Level)> numbered = [];
         int level = 0;
         for (int i = 0; i < blocks.Count; i++)
         {
@@ -671,32 +675,71 @@ public static partial class PdfMarkdownImporter
             if (block.Kind == PdfBlockKind.Heading)
             {
                 level = block.HeadingLevel;
+                if (SectionNumber(block.HeadingTitle ?? string.Join(' ', block.Lines.Select(static line => line.PlainText))) is { } heading)
+                    numbered.Add((heading, level));
+
                 continue;
             }
 
-            bool alone = (i == 0 || !candidates[i - 1]) && (i == blocks.Count - 1 || !candidates[i + 1]);
             // The second half of a name of the API that a hyphen broke is no heading.
             bool continues = i > 0 && blocks[i - 1].Lines.Count > 0 && blocks[i - 1].Lines[^1].PlainText.TrimEnd().EndsWith('-');
-            if (continues)
+            if (!candidates[i] || continues || level is 0 || listPages.Contains(block.Page))
                 continue;
 
-            if (!candidates[i] || !alone || level is 0 or >= 6 || listPages.Contains(block.Page))
+            // A line of the contents ends with a page number of two digits or more, or with dot leaders. "Transform Feedback 2" is a title.
+            string text = block.Lines[0].PlainText.Trim();
+            if (numbers[i] is { } number && NumberedLevel(numbered, number) is { } numberedLevel && !ContentsEndRegex().IsMatch(text))
+            {
+                level = Math.Min(6, numberedLevel);
+                numbered.Add((number, level));
+                block.Kind = PdfBlockKind.Heading;
+                block.HeadingLevel = level;
+                block.HeadingTitle = text;
+                continue;
+            }
+
+            // A line that starts with a digit and goes on from no heading, such as the label "2 Rasterization" of a figure, is no heading.
+            // A name such as "H.264 Picture Parameter Sets" counts as a label. A numbered heading next to a label is no part of its group.
+            if (char.IsDigit(text[0]))
+                continue;
+
+            bool before = i > 0 && candidates[i - 1] && blocks[i - 1].Kind != PdfBlockKind.Heading;
+            bool after = i < blocks.Count - 1 && candidates[i + 1] && (numbers[i + 1] is not { } next || NumberedLevel(numbered, next) is null);
+            if (before || after || level >= 6)
                 continue;
 
             block.Kind = PdfBlockKind.Heading;
             block.HeadingLevel = level + 1;
-            block.HeadingTitle = block.Lines[0].PlainText.Trim();
+            block.HeadingTitle = text;
         }
     }
+
+    // The level of a numbered line from the headings before it: one level below "4.1" for "4.1.10", the level of "4.1.9" for "4.1.10".
+    // A number that goes on from no heading gives no level.
+    private static int? NumberedLevel(List<(string Number, int Level)> numbered, string number)
+    {
+        int parent = numbered.FindLastIndex(heading => number.StartsWith(heading.Number + ".", StringComparison.Ordinal));
+        int sibling = numbered.FindLastIndex(heading => ParentNumber(heading.Number) is { } shared && shared == ParentNumber(number));
+        if (parent < 0 && sibling < 0)
+            return null;
+
+        return parent >= 0 && parent > sibling ? numbered[parent].Level + 1 : numbered[sibling].Level;
+    }
+
+    private static string? SectionNumber(string text) => SectionNumberRegex().Match(text.Trim()) is { Success: true } match ? match.Groups["number"].Value : null;
+
+    private static string? ParentNumber(string number) => number.LastIndexOf('.') is var dot and > 0 ? number[..dot] : null;
 
     private static bool IsBoldLine(PdfBlock block)
     {
         if (block.Kind != PdfBlockKind.Paragraph || block.Lines.Count != 1)
             return false;
 
+        // A heading below the outline may carry a number, such as "4.1.10. Implicit Conversions" of a specification whose outline stops at the second level.
         Line line = block.Lines[0];
         string text = line.PlainText.Trim();
-        return text.Length is >= 3 and <= 80 && text[^1] is not ('.' or ':' or ',' or ';' or '-') && char.IsLetter(text[0]) && !text.Contains("://", StringComparison.Ordinal)
+        return text.Length is >= 3 and <= 80 && text[^1] is not ('.' or ':' or ',' or ';' or '-') && (char.IsLetter(text[0]) || SectionNumberRegex().IsMatch(text))
+            && !text.Contains("://", StringComparison.Ordinal)
             && !text.Contains('=', StringComparison.Ordinal) && WordRegex().IsMatch(text) && !ChapterRegex().IsMatch(text)
             && line.Items.All(static item => (item.Style & GlyphStyle.Bold) != 0 && !item.IsMath);
     }
@@ -795,6 +838,9 @@ public static partial class PdfMarkdownImporter
 
     [GeneratedRegex(@"\S\s+\d{1,4}$")]
     private static partial Regex PageNumberEndRegex();
+
+    [GeneratedRegex(@"(?:\s\d{2,4}|\.\s?\.\s?\.\s*\d+)$")]
+    private static partial Regex ContentsEndRegex();
 
     [GeneratedRegex(@"\p{L}{3,}")]
     private static partial Regex WordRegex();
