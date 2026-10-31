@@ -101,7 +101,7 @@ public sealed class Indexer(
     /// <param name="options">The options of the chunker.</param>
     /// <returns>The version, for example <c>2;1800;3000;300</c>.</returns>
     internal static string ParserVersion(ChunkingOptions options) =>
-        string.Create(CultureInfo.InvariantCulture, $"{DocumentReader.Version};{options.MaxChars};{options.AtomicMaxChars};{options.OverlapChars}");
+        string.Create(CultureInfo.InvariantCulture, $"{DocumentReader.Version};{options.MaxChars};{options.AtomicMaxChars};{options.OverlapChars};{options.MinChars}");
 
     /// <summary>
     /// Computes the SHA-256 of bytes in lowercase hexadecimal.
@@ -169,7 +169,7 @@ public sealed class Indexer(
                 continue;
             }
 
-            DocumentFile file = new(Hash(bytes), parserVersion, bytes.LongLength, modifiedAt);
+            DocumentFile file = new(Hash(bytes), parserVersion, bytes.LongLength, modifiedAt, SourceScanner.Category(source, path));
 
             List<(TextChunk Chunk, string Hash)> hashed = [.. chunks.Select(static chunk => (chunk, Hash(Encoding.UTF8.GetBytes(chunk.EmbeddingText))))];
             run.ChunksReused += await documents.SaveAsync(source.SourceId, path, structure, file, hashed, cancellationToken);
@@ -181,6 +181,10 @@ public sealed class Indexer(
             logger.LogDebug("The indexer read {Path}: {Chunks} chunks.", path, chunks.Count);
             progress?.Invoke(run);
         }
+
+        // The rules of the categories may change without a change of the files, so each run gives every document its category again.
+        // The rules may change while the run reads the files, so the run takes the current rules.
+        await documents.ApplyCategoriesAsync(await sources.GetAsync(source.SourceId, null, cancellationToken) ?? source, cancellationToken);
 
         // An empty folder is more often a moment of a branch switch or an unplugged drive than a real deletion.
         // The vectors of a source take minutes to rebuild, so the indexer keeps the documents and warns.

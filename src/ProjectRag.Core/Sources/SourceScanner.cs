@@ -27,4 +27,24 @@ public static class SourceScanner
             .Select(path => Path.GetRelativePath(source.RootPath, path).Replace('\\', '/'))
             .Order(StringComparer.Ordinal)];
     }
+
+    /// <summary>
+    /// Gives a document of a source its category: the category of the first rule whose pattern matches the path, or the name of the source.
+    /// </summary>
+    /// <param name="source">The source.</param>
+    /// <param name="path">The path of the document relative to the folder of the source.</param>
+    /// <returns>The category.</returns>
+    public static string Category(Source source, string path)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        foreach (CategoryRule rule in source.CategoryRules)
+        {
+            Matcher matcher = new(StringComparison.OrdinalIgnoreCase);
+            matcher.AddInclude(rule.Pattern);
+            if (matcher.Match(path).HasMatches)
+                return rule.Category;
+        }
+
+        return source.Name;
+    }
 }

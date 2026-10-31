@@ -375,7 +375,8 @@ internal static class PdfLayout
     {
         foreach (Rule rule in rules.OrderBy(static rule => rule.Width))
         {
-            if (JoinRoot(items, rule) || rule.Width >= 200)
+            // The rules of the cells of a table, such as the layout of the bits of a format, touch each other at one height. A fraction has a rule of its own.
+            if (JoinRoot(items, rule) || rule.Width >= 200 || rules.Any(other => other != rule && Math.Abs(other.Y - rule.Y) < 0.5 && (Math.Abs(other.Left - rule.Right) < 1.5 || Math.Abs(other.Right - rule.Left) < 1.5)))
                 continue;
 
             List<Item> above = [.. items.Where(item => Covers(rule, item) && item.Bottom >= rule.Y - 1 && item.Bottom <= rule.Y + (item.Size * 0.6))];
@@ -544,7 +545,8 @@ internal static class PdfLayout
         }
 
         // A prototype of a function sets its parameters in italics, so a line of code is mostly, not fully, monospace.
-        if (total > 0 && mono >= total * 0.7)
+        // An item of a list with a bullet stays text, also when it names an identifier in monospace.
+        if (total > 0 && mono >= total * 0.7 && line.Items[0].Text is not ("•" or "◦" or "▪" or "‣"))
             return LineKind.Code;
 
         // A display formula starts with a formula item and is mostly formula. A sentence with an inline formula starts with a word.

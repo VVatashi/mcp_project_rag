@@ -57,13 +57,15 @@ public static partial class PdfMarkdownImporter
             MarkFootnotes(lines[i], bodySize);
         }
 
-        Dictionary<int, List<PdfBookmark>> unmatched = MarkHeadings(pages, lines, bookmarks, bodySize);
+        Dictionary<int, List<PdfBookmark>> unmatched = MarkHeadings(pages, lines, UsefulOutline(pages, bookmarks), bodySize);
         HashSet<string> vocabulary = Vocabulary(lines);
         List<PdfBlock> blocks = [];
         for (int i = 0; i < pages.Count; i++)
             blocks.AddRange(BuildBlocks(pages[i].Number, lines[i], unmatched.GetValueOrDefault(pages[i].Number) ?? []));
 
-        MarkBoldHeadings(blocks, [.. pages.Where(static page => page.Turned).Select(static page => page.Number)]);
+        // A turned page holds a figure or a wide table, and a page of contents lists the headings of other pages: their bold lines are no headings.
+        HashSet<int> listPages = [.. pages.Where((page, index) => page.Turned || IsContentsPage(lines[index])).Select(static page => page.Number)];
+        MarkBoldHeadings(blocks, listPages);
         JoinPageBreaks(blocks);
         Dictionary<(int Page, int Index), string> linkTargets = AnchorLinkTargets(pages, blocks);
         PdfMarkdownWriter writer = new(vocabulary, pages.ToDictionary(static page => page.Number), linkTargets);
@@ -85,21 +87,61 @@ public static partial class PdfMarkdownImporter
     // A line at the top or the bottom of a page that repeats on many pages is a running header or footer. A number counts as any number.
     private static void RemoveRunningLines(IReadOnlyList<PdfPageModel> pages, List<List<Line>> lines)
     {
-        Dictionary<string, int> counts = new(StringComparer.Ordinal);
+        Dictionary<string, List<int>> places = new(StringComparer.Ordinal);
         for (int i = 0; i < pages.Count; i++)
         {
             List<Line> page = lines[i];
             foreach (string key in page.Where(line => IsEdge(pages[i], page, line)).Select(static line => LineKey(line.PlainText)).Distinct(StringComparer.Ordinal))
-                counts[key] = counts.GetValueOrDefault(key) + 1;
+            {
+                if (!places.TryGetValue(key, out List<int>? indexes))
+                    places[key] = indexes = [];
+
+                indexes.Add(i);
+            }
         }
 
+        // A header of the whole document repeats on many pages. A header of a chapter, such as "Chapter 12 Expressions", repeats on a run of pages:
+        // the even and the odd pages may differ, so the run allows a gap of one page.
+        // The first page of a run keeps its line, so the head of a table that repeats on each page stays once.
         int threshold = Math.Max(3, (int)Math.Ceiling(pages.Count * 0.3));
+        HashSet<(string Key, int Page)> running = [];
+        foreach ((string key, List<int> indexes) in places)
+        {
+            bool everywhere = indexes.Count >= threshold;
+            int start = 0;
+            for (int i = 1; i <= indexes.Count; i++)
+            {
+                if (i < indexes.Count && indexes[i] - indexes[i - 1] <= 2)
+                    continue;
+
+                // A run of four pages or more is a running line. A line of a word or less, such as the "}" at the end of a listing, is no header.
+                for (int j = everywhere ? start : start + 1; j < i && (everywhere || (i - start >= 4 && key.Count(char.IsLetter) >= 3)); j++)
+                    running.Add((key, indexes[j]));
+
+                start = i;
+            }
+        }
+
+        // A name with a number that stands at the edges of many pages, such as "ECMA-334", marks the first and the last line of a page as a running line,
+        // also on the first page of a chapter and in a short chapter. A word without a number, such as "the", is no mark.
+        Dictionary<string, int> words = new(StringComparer.Ordinal);
+        for (int i = 0; i < pages.Count; i++)
+        {
+            List<Line> page = lines[i];
+            foreach (string word in page.Where(line => IsEdge(pages[i], page, line)).SelectMany(static line => EdgeWords(line.PlainText)).Where(static word => word.Contains('#', StringComparison.Ordinal)).Distinct(StringComparer.Ordinal))
+                words[word] = words.GetValueOrDefault(word) + 1;
+        }
+
+        HashSet<string> markers = [.. words.Where(pair => pair.Value >= threshold).Select(static pair => pair.Key)];
         for (int i = 0; i < pages.Count; i++)
         {
             PdfPageModel page = pages[i];
             List<Line> pageLines = lines[i];
             HashSet<Line> edges = [.. pageLines.Where(line => IsEdge(page, pageLines, line))];
-            pageLines.RemoveAll(line => edges.Contains(line) && (counts[LineKey(line.PlainText)] >= threshold || PageHeaderRegex().IsMatch(line.PlainText)));
+            Line? first = pageLines.FirstOrDefault();
+            Line? last = pageLines.LastOrDefault();
+            pageLines.RemoveAll(line => edges.Contains(line) && (running.Contains((LineKey(line.PlainText), i)) || PageHeaderRegex().IsMatch(line.PlainText)
+                || ((line == first || line == last) && EdgeWords(line.PlainText).Any(markers.Contains))));
         }
     }
 
@@ -109,6 +151,10 @@ public static partial class PdfMarkdownImporter
         int index = lines.IndexOf(line);
         return (index < 2 && line.Bottom > page.Height * 0.75) || (index >= lines.Count - 2 && line.Top < page.Height * 0.17);
     }
+
+    // The words of a line with three letters or more, with their digits replaced, so "ECMA-334" and "ECMA-335" count as one word.
+    private static IEnumerable<string> EdgeWords(string text) =>
+        text.Split(' ', StringSplitOptions.RemoveEmptyEntries).Where(static word => word.Count(char.IsLetter) >= 3).Select(static word => DigitsRegex().Replace(word, "#").ToUpperInvariant());
 
     private static string LineKey(string text) => DigitsRegex().Replace(text.Replace(" ", string.Empty, StringComparison.Ordinal), "#").ToUpperInvariant();
 
@@ -211,7 +257,16 @@ public static partial class PdfMarkdownImporter
     // A bookmark marks its heading line: the line near the top of the target whose text matches the title, with or without its number.
     // A chapter of LaTeX sets "Chapter 8" and its name on two lines far below the target, so a chapter searches farther and drops the line "Chapter 8".
     // A bookmark without a matching line becomes a heading of its own at its place.
-    private static Dictionary<int, List<PdfBookmark>> MarkHeadings(IReadOnlyList<PdfPageModel> pages, List<List<Line>> lines, IReadOnlyList<PdfBookmark> bookmarks, double bodySize)
+    // A file of a word processor may keep its internal bookmarks, such as "OLE_LINK6", on the first page or on no page.
+    // Such an outline names no sections, so the headings come from the fonts. A useful outline has titles that reach two pages at least.
+    private static List<PdfBookmark> UsefulOutline(IReadOnlyList<PdfPageModel> pages, IReadOnlyList<PdfBookmark> bookmarks)
+    {
+        HashSet<int> numbers = [.. pages.Select(static page => page.Number)];
+        List<PdfBookmark> titles = [.. bookmarks.Where(bookmark => numbers.Contains(bookmark.Page) && !InternalBookmarkRegex().IsMatch(bookmark.Title))];
+        return titles.Select(static bookmark => bookmark.Page).Distinct().Count() >= Math.Min(2, pages.Count) ? titles : [];
+    }
+
+    private static Dictionary<int, List<PdfBookmark>> MarkHeadings(IReadOnlyList<PdfPageModel> pages, List<List<Line>> lines, List<PdfBookmark> bookmarks, double bodySize)
     {
         Dictionary<int, List<PdfBookmark>> unmatched = [];
         Dictionary<int, int> indexes = pages.Select(static (page, index) => (page.Number, index)).ToDictionary(static pair => pair.Number, static pair => pair.index);
@@ -256,20 +311,61 @@ public static partial class PdfMarkdownImporter
             return unmatched;
         }
 
-        // Without an outline, a short bold or larger line is a heading. A larger size gives a higher level.
+        // Without an outline, a short bold or a much larger line is a heading. A larger size gives a higher level.
+        // A larger line in a regular font is a note, such as "This clause contains only informative text".
         List<double> sizes = [.. lines.SelectMany(static page => page).Where(line => line.Size > bodySize * 1.15 && line.Kind == LineKind.Text).Select(static line => Math.Round(line.Size)).Distinct().OrderDescending().Take(5)];
-        foreach (Line line in lines.SelectMany(static page => page))
+        Dictionary<Line, (int Level, int Dots)> headings = [];
+        foreach (List<Line> page in lines)
         {
-            string text = line.PlainText;
-            bool bold = line.Items.All(static item => (item.Style & GlyphStyle.Bold) != 0);
-            if (line.Kind != LineKind.Text || line.InTable || line.IsFootnote || text.Length > 120 || text.EndsWith('.') || !char.IsLetterOrDigit(text[0]))
+            if (IsContentsPage(page))
                 continue;
 
-            int rank = sizes.IndexOf(Math.Round(line.Size));
-            if (rank >= 0)
-                line.HeadingLevel = rank + 1;
-            else if (bold && SectionNumberRegex().IsMatch(text))
-                line.HeadingLevel = Math.Min(6, sizes.Count + 1 + SectionNumberRegex().Match(text).Groups["number"].Value.Count(static c => c == '.'));
+            foreach (Line line in page.Where(static line => line.Kind == LineKind.Text && !line.IsFootnote))
+            {
+                string text = line.PlainText;
+                if (line.InTable || text.Length > 120 || text.EndsWith('.') || !char.IsLetterOrDigit(text[0]))
+                    continue;
+
+                bool bold = line.Items.All(static item => (item.Style & GlyphStyle.Bold) != 0);
+                int rank = sizes.IndexOf(Math.Round(line.Size));
+                Match number = SectionNumberRegex().Match(text);
+                int level = rank >= 0 && (bold || line.Size >= bodySize * 1.4) ? rank + 1 : 0;
+                if (level > 0 || (bold && number.Success))
+                    headings[line] = (level, number.Success ? number.Groups["number"].Value.Count(static c => c == '.') : -1);
+            }
+        }
+
+        // A numbered heading takes its level from the depth of its number, below the level of the shortest numbers.
+        List<(int Level, int Dots)> numbered = [.. headings.Values.Where(static candidate => candidate.Dots >= 0)];
+        if (numbered.Count > 0)
+        {
+            int minDots = numbered.Min(static candidate => candidate.Dots);
+            int top = numbered.Where(candidate => candidate.Dots == minDots && candidate.Level > 0).Select(static candidate => candidate.Level).DefaultIfEmpty(sizes.Count + 1).Min();
+            foreach (Line line in headings.Keys.ToList().Where(line => headings[line].Dots >= 0))
+                headings[line] = (Math.Min(6, top + headings[line].Dots - minDots), headings[line].Dots);
+        }
+
+        // A long title wraps onto the next line with the same font and no number.
+        foreach (List<Line> page in lines)
+        {
+            Line? previous = null;
+            int level = 0;
+            foreach (Line line in page)
+            {
+                if (!headings.TryGetValue(line, out (int Level, int Dots) candidate))
+                {
+                    previous = null;
+                    continue;
+                }
+
+                bool wraps = previous is not null && level == candidate.Level && candidate.Dots < 0
+                    && Math.Abs(previous.Size - line.Size) < 0.5 && previous.Baseline - line.Baseline < line.Size * 1.6;
+                line.HeadingLevel = wraps ? -1 : candidate.Level;
+                if (!wraps)
+                    level = candidate.Level;
+
+                previous = line;
+            }
         }
 
         return unmatched;
@@ -293,6 +389,14 @@ public static partial class PdfMarkdownImporter
     {
         List<PdfBlock> blocks = [];
         lines.RemoveAll(static line => line.HeadingLevel == -2);
+        // A box of a note has its label, such as "NOTE", in a column left of its text. The label sits between the lines of the text and is no part of it.
+        for (int i = lines.Count - 1; i >= 0; i--)
+        {
+            Line line = lines[i];
+            bool beside = (i == 0 || line.Right < lines[i - 1].Left - 2) && (i == lines.Count - 1 || line.Right < lines[i + 1].Left - 2);
+            if (beside && line.HeadingLevel == 0 && NoteLabelRegex().IsMatch(line.PlainText))
+                lines.RemoveAt(i);
+        }
         foreach (Line line in lines.Where(static line => line.Kind == LineKind.Math))
         {
             foreach (Item brace in line.Items.Where(static item => item.IsTall && item.Text is "{" or "\\{"))
@@ -332,6 +436,30 @@ public static partial class PdfMarkdownImporter
                 && lines[i - 1].Baseline - lines[i].Baseline < lines[i].Size * 1.6 && lines[i].Baseline - lines[i + 1].Baseline < lines[i].Size * 1.6
                 && lines[i].PlainText.TrimEnd() is not [.., '{' or '}' or ';'])
                 lines[i].Kind = LineKind.Text;
+        }
+
+        // An item of a list goes on at the indent of its text, also with a long identifier in monospace on the next line.
+        // A listing under an item, after a line that ends with a colon or with more than one word per line, stays code.
+        double? bulletLeft = null;
+        for (int i = 0; i < lines.Count; i++)
+        {
+            Line line = lines[i];
+            if (line.Kind == LineKind.Text && BulletStartRegex().IsMatch(line.PlainText))
+            {
+                bulletLeft = line.PlainText.TrimEnd().EndsWith(':') ? null : line.Left;
+                continue;
+            }
+
+            bool goesOn = bulletLeft is { } left && line.Left > left + (line.Size * 0.3) && lines[i - 1].Baseline - line.Baseline < line.Size * 1.6 && !line.InTable;
+            if (goesOn && line.Kind == LineKind.Code && !line.PlainText.Trim().Contains(' ', StringComparison.Ordinal))
+            {
+                line.Kind = LineKind.Text;
+                bulletLeft = null;
+                continue;
+            }
+
+            if (!goesOn || line.Kind != LineKind.Text || line.PlainText.TrimEnd().EndsWith(':'))
+                bulletLeft = null;
         }
 
         ExtendCode(lines);
@@ -476,7 +604,8 @@ public static partial class PdfMarkdownImporter
             case PdfBlockKind.Table:
                 return kind == PdfBlockKind.Table;
             case PdfBlockKind.Code:
-                return kind == PdfBlockKind.Code && gap < line.Size * 2.2;
+                // An empty line inside a listing leaves a gap of about two lines.
+                return kind == PdfBlockKind.Code && gap < line.Size * 3.5;
             case PdfBlockKind.Math:
                 return kind == PdfBlockKind.Math && gap < line.Size * 3;
             case PdfBlockKind.Footnote:
@@ -503,10 +632,16 @@ public static partial class PdfMarkdownImporter
     }
 
     // A short line of bold text alone, without an end of a sentence, is a heading below the outline, such as "Errors" or "Texture-Combined Samplers".
-    private static void MarkBoldHeadings(List<PdfBlock> blocks, HashSet<int> turnedPages)
+    // A page of the table of contents lists the headings with their page numbers at the ends of the lines.
+    private static bool IsContentsPage(List<Line> page)
+    {
+        List<Line> texts = [.. page.Where(static line => line.Kind == LineKind.Text && !line.IsFootnote && !line.InTable)];
+        return texts.Count >= 5 && texts.Count(static line => PageNumberEndRegex().IsMatch(line.PlainText)) * 3 >= texts.Count;
+    }
+
+    private static void MarkBoldHeadings(List<PdfBlock> blocks, HashSet<int> listPages)
     {
         // The labels of a diagram are bold lines too, but they come in groups. A heading stands alone between other blocks.
-        // A page with turned text holds a figure or a wide table, so its bold lines are labels.
         bool[] candidates = [.. blocks.Select(IsBoldLine)];
         int level = 0;
         for (int i = 0; i < blocks.Count; i++)
@@ -524,7 +659,7 @@ public static partial class PdfMarkdownImporter
             if (continues)
                 continue;
 
-            if (!candidates[i] || !alone || level is 0 or >= 6 || turnedPages.Contains(block.Page))
+            if (!candidates[i] || !alone || level is 0 or >= 6 || listPages.Contains(block.Page))
                 continue;
 
             block.Kind = PdfBlockKind.Heading;
@@ -552,6 +687,14 @@ public static partial class PdfMarkdownImporter
         {
             PdfBlock previous = blocks[i - 1];
             PdfBlock block = blocks[i];
+            // A listing goes on at the top of the next page. Code holds no mark of a page, so its lines stay with the page of its start.
+            if (block.Kind == PdfBlockKind.Code && previous.Kind == PdfBlockKind.Code && block.Page == previous.Page + 1 && block.Anchors.Count == 0)
+            {
+                previous.Lines.AddRange(block.Lines);
+                blocks.RemoveAt(i);
+                continue;
+            }
+
             if (block.Page == previous.Page || block.Kind != PdfBlockKind.Paragraph || previous.Kind is not (PdfBlockKind.Paragraph or PdfBlockKind.ListItem))
                 continue;
 
@@ -625,11 +768,25 @@ public static partial class PdfMarkdownImporter
     [GeneratedRegex(@"^\s*(?:[•◦▪‣–—-]|\(?\d{1,2}[.)]|\(?[a-z][.)])\s")]
     private static partial Regex ListMarkerRegex();
 
-    [GeneratedRegex(@"^(?<number>\d+(?:\.\d+)*)\.?\s+\S")]
+    // A number may start with a letter of an annex or a Roman number of a part: "B.2", "II.22.2".
+    [GeneratedRegex(@"^(?<number>(?:\d+|(?:[IVX]{1,4}|[A-Z])\.\d+)(?:\.\d+)*)\.?\s+\S")]
     private static partial Regex SectionNumberRegex();
+
+    [GeneratedRegex(@"\S\s+\d{1,4}$")]
+    private static partial Regex PageNumberEndRegex();
 
     [GeneratedRegex(@"\p{L}{3,}")]
     private static partial Regex WordRegex();
+
+    [GeneratedRegex(@"^\s*[•◦▪‣]\s")]
+    private static partial Regex BulletStartRegex();
+
+    // The hidden bookmarks of a word processor: "OLE_LINK6", "_Toc123", "_Ref456".
+    [GeneratedRegex(@"^(?:OLE_LINK|_Toc|_Ref|_Hlk|DD)\w*$", RegexOptions.CultureInvariant)]
+    private static partial Regex InternalBookmarkRegex();
+
+    [GeneratedRegex(@"^\s*(?:NOTE|WARNING|CAUTION|TIP|IMPORTANT)\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex NoteLabelRegex();
 
     [GeneratedRegex(@"(?:^|[\s,(])\p{L}[\p{L}\d]{3,}(?:[\s,)]|$)")]
     private static partial Regex ArgumentRegex();

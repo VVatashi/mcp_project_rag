@@ -32,7 +32,10 @@ public sealed class StructureStore(Database database)
         IEnumerable<SectionView> rows = await connection.QueryAsync<SectionView>(new CommandDefinition(
             """
             SELECT s.section_id, s.parent_id, s.ordinal, s.level, s.number, s.title, s.path, s.char_start, s.char_end, s.page_start, s.page_end,
-                   (SELECT count(*) FROM chunk c WHERE c.section_id = s.section_id) AS chunk_count
+                   (SELECT count(*) FROM chunk c
+                    WHERE c.document_id = s.document_id AND (c.section_id = s.section_id
+                       OR (c.char_start < coalesce((SELECT n.char_start FROM section n WHERE n.document_id = s.document_id AND n.ordinal = s.ordinal + 1), s.char_end)
+                           AND c.char_end > s.char_start))) AS chunk_count
             FROM section s
             WHERE s.document_id = @DocumentId
             ORDER BY s.ordinal

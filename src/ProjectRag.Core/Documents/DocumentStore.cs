@@ -1,7 +1,11 @@
+using System.Globalization;
+using System.Text.RegularExpressions;
+
 using Dapper;
 
 using Npgsql;
 
+using ProjectRag.Core.Sources;
 using ProjectRag.Core.Storage;
 
 namespace ProjectRag.Core.Documents;
@@ -10,13 +14,13 @@ namespace ProjectRag.Core.Documents;
 /// Reads and writes the documents and their chunks.
 /// </summary>
 /// <param name="database">The database.</param>
-public sealed class DocumentStore(Database database)
+public sealed partial class DocumentStore(Database database)
 {
     /// <summary>The most characters that <see cref="GetContentAsync"/> returns at once.</summary>
     public const int MaxContentLength = 100_000;
 
     private const string SummarySql = """
-        SELECT d.document_id, d.source_id, s.name AS source, d.path, d.title, d.size_bytes, d.modified_at, d.indexed_at,
+        SELECT d.document_id, d.source_id, s.name AS source, d.category, d.path, d.title, d.size_bytes, d.modified_at, d.indexed_at,
                length(d.content) AS content_length,
                (SELECT count(*) FROM chunk c WHERE c.document_id = d.document_id) AS chunk_count
         FROM document d
@@ -26,6 +30,7 @@ public sealed class DocumentStore(Database database)
     // A text matches by a part of the path or the title, or by the similarity of trigrams (operator <% of pg_trgm).
     private const string FilterSql = """
         WHERE (cardinality(@SourceIds) = 0 OR d.source_id = ANY (@SourceIds))
+          AND (@Category = '' OR d.category = @Category)
           AND (@Text = '' OR d.path ILIKE @Like OR d.title ILIKE @Like OR @Text <% d.path OR @Text <% d.title)
         """;
 
@@ -33,17 +38,19 @@ public sealed class DocumentStore(Database database)
     /// Lists documents.
     /// </summary>
     /// <param name="sourceIds">The sources, or an empty list for all sources.</param>
+    /// <param name="category">The category, or an empty text for all categories.</param>
     /// <param name="text">A part of the path or the title, or an empty text for all documents. The best matches come first.</param>
     /// <param name="offset">The number of documents to skip.</param>
     /// <param name="limit">The most documents to return.</param>
     /// <param name="cancellationToken">The token that cancels the query.</param>
     /// <returns>The documents and the number of all matches.</returns>
-    public async Task<(IReadOnlyList<DocumentSummary> Items, long Total)> ListAsync(IReadOnlyCollection<int> sourceIds, string text, int offset, int limit, CancellationToken cancellationToken)
+    public async Task<(IReadOnlyList<DocumentSummary> Items, long Total)> ListAsync(IReadOnlyCollection<int> sourceIds, string category, string text, int offset, int limit, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(sourceIds);
+        ArgumentNullException.ThrowIfNull(category);
         ArgumentNullException.ThrowIfNull(text);
         text = text.Trim();
-        object parameters = new { SourceIds = sourceIds.ToArray(), Text = text, Like = $"%{EscapeLike(text)}%", Offset = offset, Limit = limit };
+        object parameters = new { SourceIds = sourceIds.ToArray(), Category = category.Trim(), Text = text, Like = $"%{EscapeLike(text)}%", Offset = offset, Limit = limit };
         await using NpgsqlConnection connection = await database.OpenAsync(cancellationToken);
         IEnumerable<DocumentSummary> rows = await connection.QueryAsync<DocumentSummary>(new CommandDefinition(
             $"""
@@ -56,6 +63,50 @@ public sealed class DocumentStore(Database database)
         long total = await connection.ExecuteScalarAsync<long>(new CommandDefinition(
             $"SELECT count(*) FROM document d {FilterSql}", parameters, cancellationToken: cancellationToken));
         return ([.. rows], total);
+    }
+
+    /// <summary>
+    /// Reads the categories of the documents with their counts.
+    /// </summary>
+    /// <param name="modelId">The model for <see cref="CategoryInfo.EmbeddedCount"/>, or <see langword="null"/> when no model is ready.</param>
+    /// <param name="cancellationToken">The token that cancels the query.</param>
+    /// <returns>The categories in the order of their names.</returns>
+    public async Task<IReadOnlyList<CategoryInfo>> GetCategoriesAsync(short? modelId, CancellationToken cancellationToken)
+    {
+        await using NpgsqlConnection connection = await database.OpenAsync(cancellationToken);
+        IEnumerable<CategoryInfo> rows = await connection.QueryAsync<CategoryInfo>(new CommandDefinition(
+            """
+            SELECT d.category AS name, count(DISTINCT d.document_id) AS document_count, count(c.chunk_id) AS chunk_count,
+                   count(c.chunk_id) FILTER (WHERE EXISTS (SELECT 1 FROM chunk_embedding e WHERE e.chunk_id = c.chunk_id AND e.model_id = @ModelId)) AS embedded_count
+            FROM document d
+            LEFT JOIN chunk c USING (document_id)
+            GROUP BY d.category
+            ORDER BY d.category
+            """,
+            new { ModelId = modelId ?? 0 }, cancellationToken: cancellationToken));
+        return [.. rows];
+    }
+
+    /// <summary>
+    /// Gives the documents of a source the categories of its rules. A change of the rules needs no new read of the files.
+    /// </summary>
+    /// <param name="source">The source with its rules.</param>
+    /// <param name="cancellationToken">The token that cancels the queries.</param>
+    /// <returns>The number of documents with a new category.</returns>
+    public async Task<int> ApplyCategoriesAsync(Source source, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        await using NpgsqlConnection connection = await database.OpenAsync(cancellationToken);
+        string[] paths = [.. await connection.QueryAsync<string>(new CommandDefinition(
+            "SELECT path FROM document WHERE source_id = @SourceId", new { source.SourceId }, cancellationToken: cancellationToken))];
+        string[] categories = [.. paths.Select(path => SourceScanner.Category(source, path))];
+        return await connection.ExecuteAsync(new CommandDefinition(
+            """
+            UPDATE document d SET category = v.category
+            FROM unnest(@Paths, @Categories) AS v(path, category)
+            WHERE d.source_id = @SourceId AND d.path = v.path AND d.category <> v.category
+            """,
+            new { source.SourceId, Paths = paths, Categories = categories }, cancellationToken: cancellationToken));
     }
 
     /// <summary>
@@ -108,33 +159,90 @@ public sealed class DocumentStore(Database database)
     }
 
     /// <summary>
-    /// Reads the chunks of a document.
+    /// Reads a page of the chunks of a document. A specification of thousands of pages has thousands of chunks, so a reader takes them in pages.
     /// </summary>
     /// <param name="documentId">The key of the document.</param>
+    /// <param name="sectionId">The section whose own chunks to read, or <see langword="null"/> for all chunks.</param>
+    /// <param name="offset">The number of chunks to skip.</param>
+    /// <param name="limit">The most chunks to return.</param>
     /// <param name="modelId">The model for <see cref="ChunkView.HasEmbedding"/>, or <see langword="null"/> when no model is ready.</param>
     /// <param name="cancellationToken">The token that cancels the query.</param>
-    /// <returns>The chunks in their order.</returns>
-    public async Task<IReadOnlyList<ChunkView>> GetChunksAsync(long documentId, short? modelId, CancellationToken cancellationToken)
+    /// <returns>The chunks of the page in their order and the counts.</returns>
+    public async Task<ChunkPage> GetChunksAsync(long documentId, long? sectionId, int offset, int limit, short? modelId, CancellationToken cancellationToken)
     {
+        object parameters = new { DocumentId = documentId, SectionId = sectionId, Offset = offset, Limit = limit, ModelId = modelId ?? 0 };
         await using NpgsqlConnection connection = await database.OpenAsync(cancellationToken);
         IEnumerable<ChunkView> rows = await connection.QueryAsync<ChunkView>(new CommandDefinition(
             """
             SELECT c.chunk_id, c.ordinal, c.heading, c.body, c.char_start, c.char_end, c.section_id, c.page_start, c.page_end, c.overlap_chars,
                    EXISTS (SELECT 1 FROM chunk_embedding e WHERE e.chunk_id = c.chunk_id AND e.model_id = @ModelId) AS has_embedding
             FROM chunk c
-            WHERE c.document_id = @DocumentId
+            WHERE c.document_id = @DocumentId AND (@SectionId::bigint IS NULL OR c.section_id = @SectionId OR EXISTS (
+                SELECT 1 FROM section s
+                WHERE s.section_id = @SectionId AND c.char_start < coalesce((SELECT n.char_start FROM section n WHERE n.document_id = s.document_id AND n.ordinal = s.ordinal + 1), s.char_end)
+                  AND c.char_end > s.char_start))
             ORDER BY c.ordinal
+            OFFSET @Offset LIMIT @Limit
             """,
-            new { DocumentId = documentId, ModelId = modelId ?? 0 }, cancellationToken: cancellationToken));
-        List<ChunkView> chunks = [.. rows];
-        // The offsets count UTF-16 units, so the check reads the content here and not in SQL.
-        string content = await connection.ExecuteScalarAsync<string>(new CommandDefinition(
-            "SELECT content FROM document WHERE document_id = @DocumentId", new { DocumentId = documentId }, cancellationToken: cancellationToken)) ?? string.Empty;
-        foreach (ChunkView chunk in chunks)
-            chunk.StartsBlock = StartsBlock(content, chunk.CharStart);
-
-        return chunks;
+            parameters, cancellationToken: cancellationToken));
+        (long total, long embedded) = await connection.QuerySingleAsync<(long, long)>(new CommandDefinition(
+            """
+            SELECT count(*) FILTER (WHERE @SectionId::bigint IS NULL OR c.section_id = @SectionId OR EXISTS (
+                       SELECT 1 FROM section s
+                       WHERE s.section_id = @SectionId AND c.char_start < coalesce((SELECT n.char_start FROM section n WHERE n.document_id = s.document_id AND n.ordinal = s.ordinal + 1), s.char_end)
+                         AND c.char_end > s.char_start)),
+                   count(*) FILTER (WHERE EXISTS (SELECT 1 FROM chunk_embedding e WHERE e.chunk_id = c.chunk_id AND e.model_id = @ModelId))
+            FROM chunk c
+            WHERE c.document_id = @DocumentId
+            """,
+            parameters, cancellationToken: cancellationToken));
+        return new ChunkPage([.. rows], total, embedded);
     }
+
+    /// <summary>
+    /// Reads the places where a view of the text of a document can start: the starts of the chunks that start a block of the Markdown.
+    /// </summary>
+    /// <param name="documentId">The key of the document.</param>
+    /// <param name="cancellationToken">The token that cancels the query.</param>
+    /// <returns>The offsets in their order.</returns>
+    public async Task<IReadOnlyList<int>> GetBoundariesAsync(long documentId, CancellationToken cancellationToken)
+    {
+        await using NpgsqlConnection connection = await database.OpenAsync(cancellationToken);
+        IEnumerable<int> starts = await connection.QueryAsync<int>(new CommandDefinition(
+            "SELECT char_start FROM chunk WHERE document_id = @DocumentId ORDER BY char_start", new { DocumentId = documentId }, cancellationToken: cancellationToken));
+        // The offsets count UTF-16 units, so the check reads the content here and not in SQL.
+        string content = await ContentAsync(connection, documentId, cancellationToken);
+        return [.. starts.Where(start => StartsBlock(content, start)).Distinct()];
+    }
+
+    /// <summary>
+    /// Reads the display formulas of a document with their pages.
+    /// </summary>
+    /// <param name="documentId">The key of the document.</param>
+    /// <param name="cancellationToken">The token that cancels the query.</param>
+    /// <returns>The formulas in their order.</returns>
+    public async Task<IReadOnlyList<FormulaView>> GetFormulasAsync(long documentId, CancellationToken cancellationToken)
+    {
+        await using NpgsqlConnection connection = await database.OpenAsync(cancellationToken);
+        string content = await ContentAsync(connection, documentId, cancellationToken);
+        List<(int Offset, int Page)> pages = [.. PageMarkRegex().Matches(content).Select(static match => (match.Index, int.Parse(match.Groups["page"].ValueSpan, CultureInfo.InvariantCulture)))];
+        List<FormulaView> formulas = [];
+        int next = 0;
+        int? page = null;
+        foreach (Match match in DisplayFormulaRegex().Matches(content))
+        {
+            for (; next < pages.Count && pages[next].Offset <= match.Index; next++)
+                page = pages[next].Page;
+
+            formulas.Add(new FormulaView(match.Groups["latex"].Value, match.Index, page));
+        }
+
+        return formulas;
+    }
+
+    private static async Task<string> ContentAsync(NpgsqlConnection connection, long documentId, CancellationToken cancellationToken) =>
+        await connection.ExecuteScalarAsync<string>(new CommandDefinition(
+            "SELECT content FROM document WHERE document_id = @DocumentId", new { DocumentId = documentId }, cancellationToken: cancellationToken)) ?? string.Empty;
 
     // A block of Markdown starts after an empty line, or after the line of a service mark such as an anchor before a table.
     internal static bool StartsBlock(string content, int offset)
@@ -189,14 +297,14 @@ public sealed class DocumentStore(Database database)
         await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
         long documentId = await connection.ExecuteScalarAsync<long>(new CommandDefinition(
             """
-            INSERT INTO document (source_id, path, title, content, content_hash, parser_version, size_bytes, modified_at)
-            VALUES (@SourceId, @Path, @Title, @Content, @ContentHash, @ParserVersion, @SizeBytes, @ModifiedAt)
+            INSERT INTO document (source_id, path, title, content, content_hash, parser_version, size_bytes, modified_at, category)
+            VALUES (@SourceId, @Path, @Title, @Content, @ContentHash, @ParserVersion, @SizeBytes, @ModifiedAt, @Category)
             ON CONFLICT (source_id, path) DO UPDATE
             SET title = EXCLUDED.title, content = EXCLUDED.content, content_hash = EXCLUDED.content_hash, parser_version = EXCLUDED.parser_version,
-                size_bytes = EXCLUDED.size_bytes, modified_at = EXCLUDED.modified_at, indexed_at = now()
+                size_bytes = EXCLUDED.size_bytes, modified_at = EXCLUDED.modified_at, category = EXCLUDED.category, indexed_at = now()
             RETURNING document_id
             """,
-            new { SourceId = sourceId, Path = path, structure.Title, structure.Content, file.ContentHash, file.ParserVersion, file.SizeBytes, file.ModifiedAt },
+            new { SourceId = sourceId, Path = path, structure.Title, structure.Content, file.ContentHash, file.ParserVersion, file.SizeBytes, file.ModifiedAt, file.Category },
             transaction, cancellationToken: cancellationToken));
 
         long[] oldIds = [.. await connection.QueryAsync<long>(new CommandDefinition(
@@ -350,6 +458,13 @@ public sealed class DocumentStore(Database database)
     }
 
     private static string EscapeLike(string text) => text.Replace(@"\", @"\\", StringComparison.Ordinal).Replace("%", @"\%", StringComparison.Ordinal).Replace("_", @"\_", StringComparison.Ordinal);
+
+    [GeneratedRegex(@"<!-- rag:page (?<page>\d+) -->")]
+    private static partial Regex PageMarkRegex();
+
+    // A display formula of the importers: two dollars on a line of their own before and after the LaTeX.
+    [GeneratedRegex(@"^\$\$\n(?<latex>[\s\S]*?)\n\$\$$", RegexOptions.Multiline)]
+    private static partial Regex DisplayFormulaRegex();
 }
 
 /// <summary>
@@ -359,4 +474,5 @@ public sealed class DocumentStore(Database database)
 /// <param name="ParserVersion">The version of the importers and the options of the chunker.</param>
 /// <param name="SizeBytes">The size in bytes.</param>
 /// <param name="ModifiedAt">The time of the last write in UTC, cut to microseconds like the timestamps of PostgreSQL.</param>
-internal sealed record DocumentFile(string ContentHash, string ParserVersion, long SizeBytes, DateTime ModifiedAt);
+/// <param name="Category">The category from the rules of the source.</param>
+internal sealed record DocumentFile(string ContentHash, string ParserVersion, long SizeBytes, DateTime ModifiedAt, string Category);

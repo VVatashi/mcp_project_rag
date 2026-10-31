@@ -39,7 +39,7 @@ function AnchorRoute() {
 
 function DocumentsRoute() {
   const [parameters] = useSearchParams();
-  return <DocumentsPage sourceId={numberOrNull(parameters.get('source'))} />;
+  return <DocumentsPage sourceId={numberOrNull(parameters.get('source'))} category={parameters.get('category')} />;
 }
 
 export function App() {

@@ -86,6 +86,17 @@ The next run of the indexer embeds them. The page Status shows the state of each
 A source is a folder with the documentation of one project. Its name, for example `axion`, lets an agent search one project.
 The default patterns read `**/*.md`, `**/*.markdown`, `**/*.txt`, `**/*.rst`, `**/*.adoc` and `**/*.pdf`. They skip `.git`, `node_modules`, `bin`, `obj`, `artifacts` and `.venv`.
 
+Each document has a category, a topic such as `csharp` or `vulkan`. One folder may hold the documentation of several topics, so the category belongs to the document.
+The rules of a source give the categories: a pattern of the paths and a category, the first matching rule wins. A document without a matching rule takes the name of its source.
+A change of the rules gives the stored documents their new categories at once, without a new read of the files.
+
+```json
+"categoryRules": [
+  { "pattern": "ECMA-33*.pdf", "category": "csharp" },
+  { "pattern": "vkspec.pdf", "category": "vulkan" }
+]
+```
+
 The indexer runs over a new or changed source at once and over all sources every 10 minutes. A run does these steps:
 
 1. It skips each file with the stored size and time.
@@ -114,8 +125,9 @@ Other clients take a JSON entry:
 
 | Tool | What it does |
 | --- | --- |
+| `list_categories` | Lists the categories of the documents, such as `csharp` or `vulkan`, with their counts |
 | `list_sources` | Lists the sources with their descriptions and counts |
-| `search` | Searches the chunks. It takes a query, the names of sources and a number of hits |
+| `search` | Searches the chunks. It takes a query, the categories, the names of sources and a number of hits |
 | `find_documents` | Finds documents by a part of the path or the title, with tolerance for typos |
 | `read_document` | Reads the text of a document from an offset. A hit gives the offset in `charStart` |
 | `read_chunk` | Reads a chunk by its `chunkId`: its section, its pages, the previous and the next chunk, its links with their targets and the chunks that link to it |
@@ -133,20 +145,23 @@ On a shared machine, set a token in `appsettings.Local.json`.
 | --- | --- |
 | `GET /api/status` | The state of the database, the models, the counts and the indexer |
 | `GET /api/sources` | The sources |
-| `POST /api/sources` | Adds a source: `name`, `description`, `rootPath`, `includeGlobs`, `excludeGlobs` |
+| `POST /api/sources` | Adds a source: `name`, `description`, `rootPath`, `includeGlobs`, `excludeGlobs`, `categoryRules` |
 | `PUT /api/sources/{id}` | Changes a source |
 | `DELETE /api/sources/{id}` | Deletes a source with its documents. The files stay |
 | `POST /api/sources/{id}/index` | Puts a source into the queue of the indexer |
 | `GET /api/runs?sourceId=&limit=` | The last runs of the indexer |
-| `GET /api/documents?sourceId=&q=&offset=&limit=` | The documents. `q` matches a part of the path or the title |
+| `GET /api/categories` | The categories of the documents with their counts |
+| `GET /api/documents?sourceId=&category=&q=&offset=&limit=` | The documents. `q` matches a part of the path or the title |
 | `GET /api/documents/{id}` | A document |
 | `GET /api/documents/{id}/content?offset=&length=` | A part of the text of a document, up to 100000 characters |
-| `GET /api/documents/{id}/chunks` | The chunks of a document |
+| `GET /api/documents/{id}/chunks?sectionId=&offset=&limit=` | A page of the chunks of a document, up to 500, with the counts |
+| `GET /api/documents/{id}/boundaries` | The offsets where a view of the text can start: the starts of the chunks that start a block |
+| `GET /api/documents/{id}/formulas` | The display formulas of a document with their pages |
 | `GET /api/documents/{id}/sections` | The sections of a document with their numbers and pages |
 | `GET /api/documents/{id}/anchors/{name}` | An anchor of a document: its offset and the chunk at it |
 | `GET /api/documents/{id}/file` | The original file |
 | `GET /api/chunks/{id}` | A chunk with its section, pages, neighbors, links and backlinks |
-| `POST /api/search` | The search: `query`, `sources`, `limit`, `rerank` |
+| `POST /api/search` | The search: `query`, `categories`, `sources`, `limit`, `rerank` |
 
 ## Configuration
 
@@ -171,6 +186,7 @@ The server reads `src/ProjectRag.Server/appsettings.json`. Put the settings of o
 | `Chunking:MaxChars` | 1800 | The size of a chunk. A change reads every file again |
 | `Chunking:AtomicMaxChars` | 3000 | The size of a chunk with code, a formula or a table, which splits only beyond it |
 | `Chunking:OverlapChars` | 300 | The most characters that a chunk repeats from the previous one when a block splits |
+| `Chunking:MinChars` | 400 | A shorter chunk at the end of a section takes in the next sections of the third level or deeper: its subsections and its siblings. 0 keeps each chunk in one section |
 | `Chunking:MaxFileBytes` | 64 MB | The size of the largest file |
 | `Indexing:ScanIntervalMinutes` | 10 | The interval of the scans of all sources. 0 turns them off |
 

@@ -52,6 +52,7 @@ public sealed class SearchService(
         RerankOptions rerank = rerankOptions.CurrentValue;
         int limit = Math.Clamp(request.Limit ?? options.DefaultLimit, 1, options.MaxLimit);
         int[] sourceIds = await ResolveSourcesAsync(request.Sources, cancellationToken);
+        string[] categories = await ResolveCategoriesAsync(request.Categories, cancellationToken);
         List<string> notes = [];
 
         EmbeddingModel? model = null;
@@ -84,7 +85,7 @@ public sealed class SearchService(
 
         bool useReranker = (request.Rerank ?? rerank.Enabled) && rerank.Candidates > 1;
         int candidates = useReranker ? Math.Max(limit, rerank.Candidates) : limit;
-        IReadOnlyList<SearchHit> hits = await store.SearchAsync(model, vector, query, sourceIds, candidates, options, cancellationToken);
+        IReadOnlyList<SearchHit> hits = await store.SearchAsync(model, vector, query, sourceIds, categories, candidates, options, cancellationToken);
         string mode = model is null ? "text" : hits.Any(static hit => hit.TextRank is not null) ? "hybrid" : "vector";
 
         bool reranked = false;
@@ -107,6 +108,20 @@ public sealed class SearchService(
         }
 
         return new SearchResult(mode, reranked, notes, [.. hits.Take(limit)]);
+    }
+
+    private async Task<string[]> ResolveCategoriesAsync(IReadOnlyList<string>? names, CancellationToken cancellationToken)
+    {
+        string[] wanted = [.. (names ?? []).Select(static name => name?.Trim() ?? string.Empty).Where(static name => name.Length > 0).Distinct(StringComparer.Ordinal)];
+        if (wanted.Length == 0)
+            return [];
+
+        IReadOnlySet<string> found = await store.FindCategoriesAsync(wanted, cancellationToken);
+        string[] missing = [.. wanted.Where(name => !found.Contains(name))];
+        if (missing.Length > 0)
+            throw new ArgumentException($"The knowledge base has no category {string.Join(", ", missing)}.");
+
+        return wanted;
     }
 
     private async Task<int[]> ResolveSourcesAsync(IReadOnlyList<string>? names, CancellationToken cancellationToken)

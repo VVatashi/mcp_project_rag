@@ -2,19 +2,30 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 
 import { api } from '../api';
-import { Empty, ErrorBanner, Panel } from '../components/Common';
+import { Empty, ErrorBanner, Pager, Panel } from '../components/Common';
 import { formatBytes, formatDate, formatNumber } from '../format';
 import { useLoad } from '../hooks';
 
 const pageSize = 50;
 
-export function DocumentsPage({ sourceId }: { sourceId: number | null }) {
+export function DocumentsPage({ sourceId, category }: { sourceId: number | null; category: string | null }) {
   const navigate = useNavigate();
   const sources = useLoad(api.sources, []);
+  const categories = useLoad(api.categories, []);
   const [text, setText] = useState('');
   const [offset, setOffset] = useState(0);
-  const documents = useLoad(() => api.documents(sourceId, text, offset, pageSize), [sourceId, text, offset]);
+  const documents = useLoad(() => api.documents(sourceId, category, text, offset, pageSize), [sourceId, category, text, offset]);
   const total = documents.data?.total ?? 0;
+  // The filters live in the address, so a link can name a category or a source.
+  const filter = (next: { source?: number | null; category?: string | null }) => {
+    const parameters = new URLSearchParams();
+    const nextSource = next.source === undefined ? sourceId : next.source;
+    const nextCategory = next.category === undefined ? category : next.category;
+    if (nextSource !== null) parameters.set('source', String(nextSource));
+    if (nextCategory) parameters.set('category', nextCategory);
+    setOffset(0);
+    void navigate(`/documents${parameters.size > 0 ? `?${parameters}` : ''}`);
+  };
 
   return (
     <div className="page">
@@ -23,13 +34,15 @@ export function DocumentsPage({ sourceId }: { sourceId: number | null }) {
         title="Documents"
         actions={
           <>
-            <select
-              value={sourceId ?? ''}
-              onChange={(event) => {
-                setOffset(0);
-                void navigate(event.target.value ? `/documents?source=${event.target.value}` : '/documents');
-              }}
-            >
+            <select value={category ?? ''} onChange={(event) => filter({ category: event.target.value || null })}>
+              <option value="">All categories</option>
+              {categories.data?.map((item) => (
+                <option key={item.name} value={item.name}>
+                  {item.name} ({formatNumber(item.documentCount)})
+                </option>
+              ))}
+            </select>
+            <select value={sourceId ?? ''} onChange={(event) => filter({ source: event.target.value ? Number(event.target.value) : null })}>
               <option value="">All sources</option>
               {sources.data?.map((source) => (
                 <option key={source.sourceId} value={source.sourceId}>
@@ -57,6 +70,7 @@ export function DocumentsPage({ sourceId }: { sourceId: number | null }) {
                 <thead>
                   <tr>
                     <th>Title</th>
+                    <th>Category</th>
                     <th>Source</th>
                     <th>Path</th>
                     <th className="num">Chunks</th>
@@ -72,6 +86,7 @@ export function DocumentsPage({ sourceId }: { sourceId: number | null }) {
                           {document.title}
                         </Link>
                       </td>
+                      <td>{document.category}</td>
                       <td>{document.source}</td>
                       <td className="mono small">{document.path}</td>
                       <td className="num">{formatNumber(document.chunkCount)}</td>
@@ -82,17 +97,7 @@ export function DocumentsPage({ sourceId }: { sourceId: number | null }) {
                 </tbody>
               </table>
             </div>
-            <div className="pager">
-              <button type="button" className="button button--small" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - pageSize))}>
-                Previous
-              </button>
-              <span className="muted small">
-                {formatNumber(offset + 1)}–{formatNumber(Math.min(total, offset + pageSize))} of {formatNumber(total)}
-              </span>
-              <button type="button" className="button button--small" disabled={offset + pageSize >= total} onClick={() => setOffset(offset + pageSize)}>
-                Next
-              </button>
-            </div>
+            <Pager offset={offset} pageSize={pageSize} total={total} onChange={setOffset} />
           </>
         )}
       </Panel>

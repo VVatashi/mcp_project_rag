@@ -348,7 +348,7 @@ internal sealed partial class PdfMarkdownWriter(HashSet<string> vocabulary, Dict
     // Code keeps its indentation: the distance from the leftmost line in characters of the font.
     private static string WriteCode(List<Line> lines)
     {
-        double left = lines.Min(static line => line.Left);
+        Dictionary<int, double> lefts = lines.GroupBy(static line => line.Page).ToDictionary(static group => group.Key, static group => group.Min(static line => line.Left));
         double width = lines.SelectMany(static line => line.Items).Where(static item => (item.Style & GlyphStyle.Mono) != 0).Select(PdfLayout.MonoWidth).DefaultIfEmpty(6).Average();
         List<string> body = [];
         for (int i = 0; i < lines.Count; i++)
@@ -357,7 +357,7 @@ internal sealed partial class PdfMarkdownWriter(HashSet<string> vocabulary, Dict
             if (i > 0 && lines[i - 1].Baseline - lines[i].Baseline > lines[i].Size * 1.8)
                 body.Add(string.Empty);
 
-            int indent = (int)Math.Round((lines[i].Left - left) / width);
+            int indent = (int)Math.Round((lines[i].Left - lefts[lines[i].Page]) / width);
             body.Add(new string(' ', Math.Clamp(indent, 0, 40)) + MonoText(lines[i].Items));
         }
 
@@ -517,7 +517,12 @@ internal sealed partial class PdfMarkdownWriter(HashSet<string> vocabulary, Dict
         return builder.ToString();
     }
 
-    private static string EscapeHeading(string text) => EscapeText(text).TrimEnd('#').Trim();
+    // A "#" at the end of a heading would close it, so "C#" keeps its sign escaped.
+    private static string EscapeHeading(string text)
+    {
+        string escaped = EscapeText(text).Trim();
+        return escaped.EndsWith('#') ? $"{escaped[..^1]}\\#" : escaped;
+    }
 
     // A paragraph that starts like a heading, a quote, a list or a rule would change its kind.
     // Markdown escapes only punctuation, so a number of a list keeps its digits and escapes its dot: "1\. Text".

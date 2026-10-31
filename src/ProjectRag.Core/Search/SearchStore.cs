@@ -36,14 +36,16 @@ public sealed class SearchStore(Database database)
     /// <param name="vector">The vector of the query, or <see langword="null"/> for the full text search only.</param>
     /// <param name="query">The text of the query.</param>
     /// <param name="sourceIds">The sources, or an empty list for all sources.</param>
+    /// <param name="categories">The categories of the documents, or an empty list for all categories.</param>
     /// <param name="limit">The most hits.</param>
     /// <param name="options">The options of the fusion.</param>
     /// <param name="cancellationToken">The token that cancels the query.</param>
     /// <returns>The hits, the best first.</returns>
-    public async Task<IReadOnlyList<SearchHit>> SearchAsync(EmbeddingModel? model, float[]? vector, string query, IReadOnlyCollection<int> sourceIds, int limit, SearchOptions options, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<SearchHit>> SearchAsync(EmbeddingModel? model, float[]? vector, string query, IReadOnlyCollection<int> sourceIds, IReadOnlyCollection<string> categories, int limit, SearchOptions options, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(query);
         ArgumentNullException.ThrowIfNull(sourceIds);
+        ArgumentNullException.ThrowIfNull(categories);
         ArgumentNullException.ThrowIfNull(options);
         bool hasVector = model is not null && vector is not null;
         string vectorSql = hasVector
@@ -56,6 +58,7 @@ public sealed class SearchStore(Database database)
                     JOIN document d USING (document_id)
                     WHERE ce.model_id = {model.ModelId}
                       AND (cardinality(@SourceIds) = 0 OR d.source_id = ANY (@SourceIds))
+                      AND (cardinality(@Categories) = 0 OR d.category = ANY (@Categories))
                     ORDER BY distance
                     LIMIT @Pool
                 ) e
@@ -76,6 +79,7 @@ public sealed class SearchStore(Database database)
                 WHERE numnode(q.tsq) > 0
                   AND c.tsv @@ q.tsq
                   AND (cardinality(@SourceIds) = 0 OR d.source_id = ANY (@SourceIds))
+                  AND (cardinality(@Categories) = 0 OR d.category = ANY (@Categories))
                 ORDER BY ts_rank(c.tsv, q.tsq) DESC, c.chunk_id
                 LIMIT @Pool
             ),
@@ -84,7 +88,7 @@ public sealed class SearchStore(Database database)
                        coalesce(@Weight / (@RrfK + vec.r), 0) + coalesce((1 - @Weight) / (@RrfK + fts.r), 0) AS score
                 FROM vec FULL JOIN fts USING (chunk_id)
             )
-            SELECT c.chunk_id, c.document_id, s.name AS source, d.path, d.title, c.heading, c.body, c.char_start, c.char_end,
+            SELECT c.chunk_id, c.document_id, s.name AS source, d.category, d.path, d.title, c.heading, c.body, c.char_start, c.char_end,
                    c.page_start, c.page_end, c.section_id, (SELECT count(*) FROM chunk_link l WHERE l.chunk_id = c.chunk_id) AS link_count,
                    f.vector_rank, f.text_rank, f.score
             FROM fused f
@@ -111,6 +115,7 @@ public sealed class SearchStore(Database database)
                 Vector = vector ?? [],
                 Query = query,
                 SourceIds = sourceIds.ToArray(),
+                Categories = categories.ToArray(),
                 options.Pool,
                 Weight = Math.Clamp(options.VectorWeight, 0, 1),
                 options.RrfK,
@@ -118,5 +123,20 @@ public sealed class SearchStore(Database database)
             },
             transaction, cancellationToken: cancellationToken));
         return [.. hits];
+    }
+
+    /// <summary>
+    /// Finds which of the categories have documents.
+    /// </summary>
+    /// <param name="categories">The categories.</param>
+    /// <param name="cancellationToken">The token that cancels the query.</param>
+    /// <returns>The categories with documents.</returns>
+    public async Task<IReadOnlySet<string>> FindCategoriesAsync(IReadOnlyCollection<string> categories, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(categories);
+        await using NpgsqlConnection connection = await database.OpenAsync(cancellationToken);
+        IEnumerable<string> found = await connection.QueryAsync<string>(new CommandDefinition(
+            "SELECT DISTINCT category FROM document WHERE category = ANY (@Categories)", new { Categories = categories.ToArray() }, cancellationToken: cancellationToken));
+        return found.ToHashSet(StringComparer.Ordinal);
     }
 }

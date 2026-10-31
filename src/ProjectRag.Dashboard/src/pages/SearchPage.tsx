@@ -9,7 +9,7 @@ import { useLoad } from '../hooks';
 import type { SearchResult } from '../types';
 
 export function SearchPage() {
-  const sources = useLoad(api.sources, []);
+  const categories = useLoad(api.categories, []);
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
   const [limit, setLimit] = useState(8);
@@ -26,7 +26,7 @@ export function SearchPage() {
     setError(undefined);
     const started = performance.now();
     try {
-      setResult(await api.search({ query, sources: selected.length > 0 ? selected : null, limit, rerank }));
+      setResult(await api.search({ query, categories: selected.length > 0 ? selected : null, sources: null, limit, rerank }));
       setElapsed(Math.round(performance.now() - started));
     } catch (exception) {
       setError(exception instanceof Error ? exception.message : String(exception));
@@ -51,10 +51,10 @@ export function SearchPage() {
           {busy ? 'Searching…' : 'Search'}
         </button>
         <div className="search__options">
-          {sources.data?.map((source) => (
-            <label key={source.sourceId} className={`chip ${selected.includes(source.name) ? 'chip--on' : ''}`}>
-              <input type="checkbox" checked={selected.includes(source.name)} onChange={() => toggle(source.name)} />
-              {source.name}
+          {categories.data?.map((category) => (
+            <label key={category.name} className={`chip ${selected.includes(category.name) ? 'chip--on' : ''}`} title={`${category.documentCount} documents`}>
+              <input type="checkbox" checked={selected.includes(category.name)} onChange={() => toggle(category.name)} />
+              {category.name}
             </label>
           ))}
           <span className="search__spacer" />
@@ -106,7 +106,7 @@ export function SearchPage() {
                   </span>
                 </div>
                 <div className="hit__path mono small">
-                  {hit.source} ·{' '}
+                  {hit.category} · {hit.source} ·{' '}
                   <Link className="link" to={`/documents/${hit.documentId}/text?offset=${hit.charStart}`}>
                     {hit.path}
                   </Link>

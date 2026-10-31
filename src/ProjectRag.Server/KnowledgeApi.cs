@@ -53,7 +53,7 @@ internal static class KnowledgeApi
             }
         });
 
-        api.MapPut("/sources/{sourceId:int}", static async Task<Results<Ok<Source>, NotFound, ValidationProblem, Conflict<string>>> (int sourceId, SourceInput input, SourceStore sources, IndexScheduler scheduler, CancellationToken cancellationToken) =>
+        api.MapPut("/sources/{sourceId:int}", static async Task<Results<Ok<Source>, NotFound, ValidationProblem, Conflict<string>>> (int sourceId, SourceInput input, SourceStore sources, DocumentStore documents, IndexScheduler scheduler, CancellationToken cancellationToken) =>
         {
             Normalize(input);
             if (input.Validate() is { Count: > 0 } errors)
@@ -69,8 +69,11 @@ internal static class KnowledgeApi
                 return TypedResults.Conflict($"A source with the name {input.Name} exists.");
             }
 
+            // The new rules give the stored documents their categories at once. A run of the indexer may wait for hours behind the vectors of a large source.
+            Source source = (await sources.GetAsync(sourceId, null, cancellationToken))!;
+            await documents.ApplyCategoriesAsync(source, cancellationToken);
             scheduler.Enqueue(sourceId);
-            return TypedResults.Ok((await sources.GetAsync(sourceId, null, cancellationToken))!);
+            return TypedResults.Ok(source);
         });
 
         api.MapDelete("/sources/{sourceId:int}", static async Task<Results<NoContent, NotFound>> (int sourceId, SourceStore sources, CancellationToken cancellationToken) =>
@@ -87,10 +90,13 @@ internal static class KnowledgeApi
         api.MapGet("/runs", static (int? sourceId, int? limit, IndexRunStore runs, CancellationToken cancellationToken) =>
             runs.ListAsync(sourceId, Math.Clamp(limit ?? 20, 1, MaxPageSize), cancellationToken));
 
-        api.MapGet("/documents", static async (int? sourceId, string? q, int? offset, int? limit, DocumentStore documents, CancellationToken cancellationToken) =>
+        api.MapGet("/categories", static async (DocumentStore documents, EmbeddingModelRegistry models, CancellationToken cancellationToken) =>
+            await documents.GetCategoriesAsync(await CurrentModelIdAsync(models, cancellationToken), cancellationToken));
+
+        api.MapGet("/documents", static async (int? sourceId, string? category, string? q, int? offset, int? limit, DocumentStore documents, CancellationToken cancellationToken) =>
         {
             (IReadOnlyList<DocumentSummary> items, long total) = await documents.ListAsync(
-                sourceId is { } id ? [id] : [], q ?? string.Empty, Math.Max(0, offset ?? 0), Math.Clamp(limit ?? 50, 1, MaxPageSize), cancellationToken);
+                sourceId is { } id ? [id] : [], category ?? string.Empty, q ?? string.Empty, Math.Max(0, offset ?? 0), Math.Clamp(limit ?? 50, 1, MaxPageSize), cancellationToken);
             return new DocumentPage(items, total);
         });
 
@@ -105,8 +111,14 @@ internal static class KnowledgeApi
             return TypedResults.Ok(await documents.GetContentAsync(document, offset ?? 0, length ?? DocumentStore.MaxContentLength, cancellationToken));
         });
 
-        api.MapGet("/documents/{documentId:long}/chunks", static async (long documentId, DocumentStore documents, EmbeddingModelRegistry models, CancellationToken cancellationToken) =>
-            await documents.GetChunksAsync(documentId, await CurrentModelIdAsync(models, cancellationToken), cancellationToken));
+        api.MapGet("/documents/{documentId:long}/chunks", static async (long documentId, long? sectionId, int? offset, int? limit, DocumentStore documents, EmbeddingModelRegistry models, CancellationToken cancellationToken) =>
+            await documents.GetChunksAsync(documentId, sectionId, Math.Max(0, offset ?? 0), Math.Clamp(limit ?? 50, 1, MaxPageSize), await CurrentModelIdAsync(models, cancellationToken), cancellationToken));
+
+        api.MapGet("/documents/{documentId:long}/boundaries", static (long documentId, DocumentStore documents, CancellationToken cancellationToken) =>
+            documents.GetBoundariesAsync(documentId, cancellationToken));
+
+        api.MapGet("/documents/{documentId:long}/formulas", static (long documentId, DocumentStore documents, CancellationToken cancellationToken) =>
+            documents.GetFormulasAsync(documentId, cancellationToken));
 
         api.MapGet("/documents/{documentId:long}/sections", static (long documentId, StructureStore structure, CancellationToken cancellationToken) =>
             structure.GetSectionsAsync(documentId, cancellationToken));
@@ -158,6 +170,8 @@ internal static class KnowledgeApi
             input.RootPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(input.RootPath));
 
         input.Description = input.Description?.Trim();
+        input.CategoryRules = input.CategoryRules?.Where(static rule => rule is not null)
+            .Select(static rule => new CategoryRule { Pattern = rule.Pattern?.Trim() ?? string.Empty, Category = rule.Category?.Trim() ?? string.Empty }).ToList();
     }
 }
 

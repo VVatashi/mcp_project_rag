@@ -33,6 +33,15 @@ public sealed class ChunkingOptions
     public int OverlapChars { get; set; } = 300;
 
     /// <summary>
+    /// Gets or sets the size below which a chunk at the end of a section takes in the next section of the same parent, with its heading in the text.
+    /// </summary>
+    /// <remarks>
+    /// A specification has many short sections, such as "Revision" or "Contact" of an extension. A chunk of one line has no context for the search.
+    /// 0 keeps every chunk inside one section. A change makes the indexer read every file again.
+    /// </remarks>
+    public int MinChars { get; set; } = 400;
+
+    /// <summary>
     /// Gets or sets the size of the largest file that the indexer reads. A larger file is skipped with a warning.
     /// </summary>
     public long MaxFileBytes { get; set; } = 64L * 1024 * 1024;

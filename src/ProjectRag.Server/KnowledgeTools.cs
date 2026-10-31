@@ -12,7 +12,7 @@ using ProjectRag.Core.Sources;
 namespace ProjectRag.Server;
 
 /// <summary>
-/// The tools of the MCP endpoint <c>/mcp</c>: the search, the list of the sources, the search of documents by name, the read of a document and of a chunk with its links.
+/// The tools of the MCP endpoint <c>/mcp</c>: the search, the lists of the categories and the sources, the search of documents by name, the read of a document and of a chunk with its links.
 /// </summary>
 /// <param name="search">The search.</param>
 /// <param name="sources">The store of the sources.</param>
@@ -28,7 +28,8 @@ internal sealed class KnowledgeTools(SearchService search, SourceStore sources, 
     /// </summary>
     public const string Instructions = """
         This server is a local knowledge base of the technical and project documentation of the user.
-        Call list_sources first to learn the projects. Call search with a question or keywords in English or Russian.
+        Call list_categories first to learn the topics, such as csharp, vulkan or opengl. Call search with a question or keywords in English or Russian,
+        and narrow it with categories when the question names a topic. list_sources gives the folders that hold the documents.
         A hit gives the source, the path of the document, the path of its section and the text.
         To follow a hit, call read_chunk with its chunkId: it gives the section, the pages, the previous and the next chunk, the links of the chunk with their target chunks, and the chunks that link to it.
         To read more of a document, call read_document with the source, the path and an offset a little before charStart.
@@ -47,17 +48,26 @@ internal sealed class KnowledgeTools(SearchService search, SourceStore sources, 
         return [.. list.Select(static source => new SourceInfo(source.Name, source.Description, source.DocumentCount, source.ChunkCount, source.EmbeddedCount, source.IndexedAt))];
     }
 
+    [McpServerTool(Name = "list_categories", Title = "List the categories", ReadOnly = true, Idempotent = true, OpenWorld = false)]
+    [Description("Lists the categories of the documents, such as csharp, vulkan or opengl, with the numbers of documents and chunks. A category is a topic of the documentation.")]
+    public async Task<IReadOnlyList<CategoryInfo>> ListCategoriesAsync(CancellationToken cancellationToken)
+    {
+        short? modelId = (await models.GetStatusAsync(cancellationToken)).Model?.ModelId;
+        return await documents.GetCategoriesAsync(modelId, cancellationToken);
+    }
+
     [McpServerTool(Name = "search", Title = "Search the documentation", ReadOnly = true, Idempotent = true, OpenWorld = false)]
     [Description("Searches the documentation with a hybrid of vector and full text search, then reorders the hits with a reranker. Returns chunks of documents, the best first.")]
     public async Task<SearchResult> SearchAsync(
         [Description("A question or keywords, in English or Russian.")] string query,
+        [Description("The categories to search, such as csharp or vulkan. Leave it out to search all categories.")] string[]? categories = null,
         [Description("The names of the sources to search. Leave it out to search all sources.")] string[]? sources = null,
         [Description("The number of hits, from 1 to 50. The default is 8.")] int? limit = null,
         CancellationToken cancellationToken = default)
     {
         try
         {
-            return await search.SearchAsync(new SearchRequest { Query = query, Sources = sources, Limit = limit }, cancellationToken);
+            return await search.SearchAsync(new SearchRequest { Query = query, Categories = categories, Sources = sources, Limit = limit }, cancellationToken);
         }
         catch (ArgumentException exception)
         {
@@ -70,6 +80,7 @@ internal sealed class KnowledgeTools(SearchService search, SourceStore sources, 
     public async Task<IReadOnlyList<DocumentSummary>> FindDocumentsAsync(
         [Description("A part of the path or the title. Leave it out to list all documents.")] string? text = null,
         [Description("The name of a source. Leave it out to search all sources.")] string? source = null,
+        [Description("A category, such as csharp. Leave it out to search all categories.")] string? category = null,
         [Description("The most documents, from 1 to 100. The default is 20.")] int? limit = null,
         CancellationToken cancellationToken = default)
     {
@@ -83,7 +94,10 @@ internal sealed class KnowledgeTools(SearchService search, SourceStore sources, 
             sourceIds = [.. found.Values];
         }
 
-        (IReadOnlyList<DocumentSummary> items, _) = await documents.ListAsync(sourceIds, text ?? string.Empty, 0, Math.Clamp(limit ?? 20, 1, 100), cancellationToken);
+        if (!string.IsNullOrWhiteSpace(category) && !(await documents.GetCategoriesAsync(null, cancellationToken)).Any(item => item.Name == category.Trim()))
+            throw new McpException($"The knowledge base has no category {category}. Call list_categories.");
+
+        (IReadOnlyList<DocumentSummary> items, _) = await documents.ListAsync(sourceIds, category ?? string.Empty, text ?? string.Empty, 0, Math.Clamp(limit ?? 20, 1, 100), cancellationToken);
         return items;
     }
 

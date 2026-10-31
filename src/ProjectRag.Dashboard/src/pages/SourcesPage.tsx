@@ -6,7 +6,7 @@ import { Empty, ErrorBanner, Panel, Progress } from '../components/Common';
 import { RunsTable } from '../components/RunsTable';
 import { formatDate, formatNumber, percent } from '../format';
 import { useLoad } from '../hooks';
-import type { Source, SourceInput } from '../types';
+import type { CategoryRule, Source, SourceInput } from '../types';
 
 interface FormState {
   sourceId: number | null;
@@ -15,9 +15,22 @@ interface FormState {
   rootPath: string;
   includeGlobs: string;
   excludeGlobs: string;
+  categoryRules: string;
 }
 
-const emptyForm: FormState = { sourceId: null, name: '', description: '', rootPath: '', includeGlobs: '', excludeGlobs: '' };
+const emptyForm: FormState = { sourceId: null, name: '', description: '', rootPath: '', includeGlobs: '', excludeGlobs: '', categoryRules: '' };
+
+// A rule of a category is a line "pattern = category", for example "ECMA-33*.pdf = csharp".
+function readRules(text: string): CategoryRule[] {
+  return lines(text).map((line) => {
+    const at = line.lastIndexOf('=');
+    return at < 0 ? { pattern: line, category: '' } : { pattern: line.slice(0, at).trim(), category: line.slice(at + 1).trim() };
+  });
+}
+
+function writeRules(rules: CategoryRule[]): string {
+  return rules.map((rule) => `${rule.pattern} = ${rule.category}`).join('\n');
+}
 
 function lines(text: string): string[] {
   return text
@@ -57,6 +70,7 @@ export function SourcesPage() {
       rootPath: source.rootPath,
       includeGlobs: source.includeGlobs.join('\n'),
       excludeGlobs: source.excludeGlobs.join('\n'),
+      categoryRules: writeRules(source.categoryRules),
     });
 
   const submit = async (event: FormEvent) => {
@@ -69,6 +83,7 @@ export function SourcesPage() {
       includeGlobs: lines(form.includeGlobs),
       // An empty field keeps the default patterns for a new source.
       excludeGlobs: form.sourceId === null && !form.excludeGlobs.trim() ? null : lines(form.excludeGlobs),
+      categoryRules: readRules(form.categoryRules),
     };
     const saved = await act(() => (form.sourceId === null ? api.addSource(input) : api.updateSource(form.sourceId, input)));
     if (saved) setForm(null);
@@ -139,6 +154,16 @@ export function SourcesPage() {
                 />
               </label>
             </div>
+            <label>
+              Categories
+              <textarea
+                rows={4}
+                value={form.categoryRules}
+                onChange={(event) => setForm({ ...form, categoryRules: event.target.value })}
+                placeholder={'ECMA-33*.pdf = csharp\nvkspec.pdf = vulkan'}
+              />
+              <small>A line "pattern = category" gives the matching documents a category. The first matching line wins. Other documents take the name of the source.</small>
+            </label>
             <div className="form__actions">
               <button type="submit" className="button button--primary" disabled={busy}>
                 {form.sourceId === null ? 'Add and index' : 'Save and index'}

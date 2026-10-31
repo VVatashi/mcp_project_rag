@@ -3,17 +3,22 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router';
 
 import { api } from '../api';
-import { Badge, Empty, ErrorBanner, Panel } from '../components/Common';
+import { Badge, Empty, ErrorBanner, Pager, Panel } from '../components/Common';
 import { Markdown } from '../components/Markdown';
 import { PdfPage } from '../components/PdfPage';
 import { anchorAddress, decodePart, formatBytes, formatDate, formatNumber, numberOrNull } from '../format';
 import { useLoad } from '../hooks';
-import type { Chunk } from '../types';
+import type { Formula } from '../types';
 
 const windowLength = 20000;
 
 // The text before the target, so the reader sees its context.
 const contextLength = 1000;
+
+// A specification of thousands of pages has thousands of sections and chunks. The lists show them in pages.
+const sectionPageSize = 200;
+const chunkPageSize = 50;
+const formulaPageSize = 50;
 
 const tabs = ['text', 'sections', 'chunks', 'formulas'] as const;
 
@@ -21,51 +26,6 @@ type Tab = (typeof tabs)[number];
 
 function isTab(value: string | undefined): value is Tab {
   return tabs.some((tab) => tab === value);
-}
-
-interface Formula {
-  latex: string;
-  offset: number;
-  page: number | null;
-  error: string | null;
-}
-
-// The display formulas of the content with their pages. KaTeX checks each one, as the dashboard renders it.
-function findFormulas(content: string): Formula[] {
-  const pages = [...content.matchAll(/<!-- rag:page (\d+) -->/g)].map((match) => ({ offset: match.index, page: Number(match[1]) }));
-  const formulas: Formula[] = [];
-  for (const match of content.matchAll(/^\$\$\n([\s\S]*?)\n\$\$$/gm)) {
-    const latex = match[1] ?? '';
-    let error: string | null = null;
-    try {
-      katex.renderToString(latex, { displayMode: true, throwOnError: true, strict: 'ignore' });
-    } catch (exception) {
-      error = exception instanceof Error ? exception.message : String(exception);
-    }
-
-    const page = pages.filter((mark) => mark.offset <= match.index).at(-1)?.page ?? null;
-    formulas.push({ latex, offset: match.index, page, error });
-  }
-
-  return formulas;
-}
-
-async function loadContent(documentId: number): Promise<string> {
-  let text = '';
-  for (let offset = 0; ; ) {
-    const part = await api.content(documentId, offset, 100000);
-    text += part.text;
-    if (part.text.length === 0 || part.offset + part.text.length >= part.totalLength) return text;
-    offset = part.offset + part.text.length;
-  }
-}
-
-/**
- * The places where a window of text can start: the starts of the chunks that start a block.
- * A window from them never starts inside a paragraph, a table or a code block.
- */
-function findBoundaries(chunks: Chunk[]): number[] {
-  return [0, ...chunks.filter((chunk) => chunk.startsBlock).map((chunk) => chunk.charStart)].sort((a, b) => a - b);
 }
 
 /** The last boundary at or before the value. */
@@ -91,38 +51,52 @@ function boundaryAfter(boundaries: number[], value: number): number {
 }
 
 /**
- * A document with its text, its sections, its chunks and its formulas. The tab is a part of the address.
+ * A document with its text, its sections, its chunks and its formulas. The tab is a part of the address, and so is the page of a list (?from=).
  * The text tab shows a window of the Markdown. It shows the place of the offset in the query, or of the anchor in the hash, for example /documents/4/text#p123-2.
  */
 export function DocumentPage({ documentId, tab: tabName }: { documentId: number; tab: string | undefined }) {
-  const [parameters] = useSearchParams();
+  const [parameters, setParameters] = useSearchParams();
   const { hash } = useLocation();
   const anchorName = hash.length > 1 ? decodePart(hash.slice(1)) : null;
   const offset = numberOrNull(parameters.get('offset'));
   const sectionId = numberOrNull(parameters.get('section'));
+  const from = Math.max(0, numberOrNull(parameters.get('from')) ?? 0);
   const tab: Tab = isTab(tabName) ? tabName : anchorName !== null || offset !== null ? 'text' : 'sections';
 
   const document = useLoad(() => api.document(documentId), [documentId]);
-  const chunks = useLoad(() => api.chunks(documentId), [documentId]);
+  // The first chunk gives the counts of the whole document.
+  const counts = useLoad(() => api.chunks(documentId, null, 0, 1), [documentId]);
   const sections = useLoad(() => api.sections(documentId), [documentId]);
+  const chunks = useLoad(() => (tab === 'chunks' ? api.chunks(documentId, sectionId, from, chunkPageSize) : Promise.resolve(undefined)), [documentId, tab, sectionId, from]);
   const anchor = useLoad(() => (anchorName === null ? Promise.resolve(null) : api.anchor(documentId, anchorName)), [documentId, anchorName]);
 
   const info = document.data;
-  const embedded = chunks.data?.filter((chunk) => chunk.hasEmbedding).length ?? 0;
-  const shownChunks = chunks.data?.filter((chunk) => sectionId === null || chunk.sectionId === sectionId) ?? [];
   const anchorHref = (name: string) => `/documents/${documentId}/text#${encodeURIComponent(name)}`;
   // The load keeps the previous anchor until the next one comes.
   const target = anchorName === null ? offset : anchor.data?.name === anchorName ? anchor.data.charOffset : null;
+  const shownSections = sections.data?.filter((section) => section.level > 0) ?? [];
+  const goTo = (value: number) => {
+    const next = new URLSearchParams(parameters);
+    next.set('from', String(value));
+    setParameters(next);
+    window.scrollTo({ top: 0 });
+  };
 
   return (
     <div className="page">
-      <ErrorBanner message={document.error ?? chunks.error ?? sections.error ?? (anchor.error && `The anchor “${anchorName}” does not resolve: ${anchor.error}`)} />
+      <ErrorBanner message={document.error ?? counts.error ?? sections.error ?? chunks.error ?? (anchor.error && `The anchor “${anchorName}” does not resolve: ${anchor.error}`)} />
       <Link className="link" to="/documents">
         ← Documents
       </Link>
       {info && (
         <Panel title={info.title}>
           <dl className="facts">
+            <dt>Category</dt>
+            <dd>
+              <Link className="link" to={`/documents?category=${encodeURIComponent(info.category)}`}>
+                {info.category}
+              </Link>
+            </dd>
             <dt>Source</dt>
             <dd>{info.source}</dd>
             <dt>Path</dt>
@@ -133,7 +107,7 @@ export function DocumentPage({ documentId, tab: tabName }: { documentId: number;
             </dd>
             <dt>Structure</dt>
             <dd>
-              {formatNumber(sections.data?.length ?? 0)} sections · {formatNumber(info.chunkCount)} chunks · {formatNumber(embedded)} with vectors
+              {formatNumber(sections.data?.length ?? 0)} sections · {formatNumber(info.chunkCount)} chunks · {formatNumber(counts.data?.embeddedCount ?? 0)} with vectors
             </dd>
             <dt>Changed</dt>
             <dd>
@@ -152,41 +126,45 @@ export function DocumentPage({ documentId, tab: tabName }: { documentId: number;
         ))}
       </div>
 
-      {tab === 'text' && chunks.data && <Text documentId={documentId} chunks={chunks.data} target={target} anchorHref={anchorHref} />}
+      {tab === 'text' && <Text documentId={documentId} target={target} anchorHref={anchorHref} />}
 
       {tab === 'sections' && sections.data && (
-        <Panel title="Sections">
-          {sections.data.length === 0 && <Empty>No sections.</Empty>}
+        <Panel title={`Sections (${formatNumber(shownSections.length)})`} actions={<Pager offset={from} pageSize={sectionPageSize} total={shownSections.length} onChange={goTo} />}>
+          {shownSections.length === 0 && <Empty>No sections.</Empty>}
           <ol className="sections">
-            {sections.data
-              .filter((section) => section.level > 0)
-              .map((section) => (
-                <li key={section.sectionId} style={{ paddingLeft: `${(section.level - 1) * 16}px` }}>
-                  <Link className="link" to={`/documents/${documentId}/chunks?section=${section.sectionId}`}>
-                    {section.title}
-                  </Link>{' '}
-                  <span className="muted small">
-                    {section.pageStart !== null && `p. ${section.pageStart}${section.pageEnd !== section.pageStart ? `–${section.pageEnd}` : ''} · `}
-                    {section.chunkCount} chunks
-                  </span>
-                </li>
-              ))}
+            {shownSections.slice(from, from + sectionPageSize).map((section) => (
+              <li key={section.sectionId} style={{ paddingLeft: `${(section.level - 1) * 16}px` }}>
+                <Link className="link" to={`/documents/${documentId}/chunks?section=${section.sectionId}`}>
+                  {section.title}
+                </Link>{' '}
+                <span className="muted small">
+                  {section.pageStart !== null && `p. ${section.pageStart}${section.pageEnd !== section.pageStart ? `–${section.pageEnd}` : ''} · `}
+                  {section.chunkCount} chunks
+                </span>
+              </li>
+            ))}
           </ol>
+          <Pager offset={from} pageSize={sectionPageSize} total={shownSections.length} onChange={goTo} />
         </Panel>
       )}
 
       {tab === 'chunks' && chunks.data && (
-        <>
-          {sectionId !== null && (
-            <p className="muted small">
-              The chunks of one section.{' '}
-              <Link className="link" to={`/documents/${documentId}/chunks`}>
-                Show all
-              </Link>
-            </p>
-          )}
+        <Panel
+          title={sectionId === null ? `Chunks (${formatNumber(chunks.data.total)})` : `Chunks of one section (${formatNumber(chunks.data.total)})`}
+          actions={
+            <>
+              {sectionId !== null && (
+                <Link className="link small" to={`/documents/${documentId}/chunks`}>
+                  Show all
+                </Link>
+              )}
+              <Pager offset={from} pageSize={chunkPageSize} total={chunks.data.total} onChange={goTo} />
+            </>
+          }
+        >
+          {chunks.data.items.length === 0 && <Empty>No chunks.</Empty>}
           <ol className="chunks">
-            {shownChunks.map((chunk) => (
+            {chunks.data.items.map((chunk) => (
               <li key={chunk.chunkId} className="chunk">
                 <div className="chunk__head">
                   <Link className="link chunk__heading" to={`/chunks/${chunk.chunkId}`}>
@@ -203,20 +181,22 @@ export function DocumentPage({ documentId, tab: tabName }: { documentId: number;
               </li>
             ))}
           </ol>
-        </>
+          <Pager offset={from} pageSize={chunkPageSize} total={chunks.data.total} onChange={goTo} />
+        </Panel>
       )}
 
-      {tab === 'formulas' && info && <Formulas documentId={documentId} isPdf={info.path.toLowerCase().endsWith('.pdf')} />}
+      {tab === 'formulas' && info && <Formulas documentId={documentId} isPdf={info.path.toLowerCase().endsWith('.pdf')} from={from} onPage={goTo} />}
     </div>
   );
 }
 
 /**
- * A window of the Markdown of a document. The window starts and ends at the boundaries of chunks.
+ * A window of the Markdown of a document. The window starts and ends at the starts of blocks, which the server gives.
  * With a target the window holds it, and the page scrolls to the block at the target and marks it.
  */
-function Text({ documentId, chunks, target, anchorHref }: { documentId: number; chunks: Chunk[]; target: number | null; anchorHref: (name: string) => string }) {
-  const boundaries = useMemo(() => findBoundaries(chunks), [chunks]);
+function Text({ documentId, target, anchorHref }: { documentId: number; target: number | null; anchorHref: (name: string) => string }) {
+  const loaded = useLoad(() => api.boundaries(documentId), [documentId]);
+  const boundaries = useMemo(() => [0, ...(loaded.data ?? [])], [loaded.data]);
   const [source, setSource] = useState(false);
   // The buttons move the window away from the target to a start of their own. A new target brings the window back to it.
   // A long stretch without the start of a block, such as a large table, starts the window right before the target.
@@ -224,7 +204,7 @@ function Text({ documentId, chunks, target, anchorHref }: { documentId: number; 
   const wanted = Math.max(0, (target ?? 0) - contextLength);
   const snapped = boundaryBefore(boundaries, wanted);
   const start = moved && moved.target === target ? moved.start : target !== null && target - snapped > windowLength / 2 ? wanted : snapped;
-  const content = useLoad(() => api.content(documentId, start, windowLength), [documentId, start]);
+  const content = useLoad(() => (loaded.data ? api.content(documentId, start, windowLength) : Promise.resolve(undefined)), [documentId, start, loaded.data]);
   const textRef = useRef<HTMLDivElement>(null);
   const markRef = useRef<HTMLElement>(null);
 
@@ -251,7 +231,7 @@ function Text({ documentId, chunks, target, anchorHref }: { documentId: number; 
     return () => block.classList.remove('markdown__target');
   }, [text, hit, target, source]);
 
-  if (content.error) return <ErrorBanner message={content.error} />;
+  if (loaded.error ?? content.error) return <ErrorBanner message={loaded.error ?? content.error} />;
   if (!data) return <p className="muted">Loading the text…</p>;
 
   return (
@@ -293,31 +273,55 @@ function Text({ documentId, chunks, target, anchorHref }: { documentId: number; 
   );
 }
 
-function Formulas({ documentId, isPdf }: { documentId: number; isPdf: boolean }) {
-  const content = useLoad(() => loadContent(documentId), [documentId]);
-  const formulas = useMemo(() => (content.data ? findFormulas(content.data) : []), [content.data]);
+interface CheckedFormula extends Formula {
+  error: string | null;
+}
+
+// KaTeX checks each formula, as the dashboard renders it. The check needs no rendering of the page, so it covers all formulas.
+function check(formula: Formula): CheckedFormula {
+  try {
+    katex.renderToString(formula.latex, { displayMode: true, throwOnError: true, strict: 'ignore' });
+    return { ...formula, error: null };
+  } catch (exception) {
+    return { ...formula, error: exception instanceof Error ? exception.message : String(exception) };
+  }
+}
+
+function Formulas({ documentId, isPdf, from, onPage }: { documentId: number; isPdf: boolean; from: number; onPage: (from: number) => void }) {
+  const loaded = useLoad(() => api.formulas(documentId), [documentId]);
+  const formulas = useMemo(() => (loaded.data ?? []).map(check), [loaded.data]);
   const [onlyErrors, setOnlyErrors] = useState(false);
   const [page, setPage] = useState<number | null>(null);
   const errors = formulas.filter((formula) => formula.error !== null).length;
   const shown = onlyErrors ? formulas.filter((formula) => formula.error !== null) : formulas;
 
-  if (content.error) return <ErrorBanner message={content.error} />;
-  if (!content.data) return <p className="muted">Loading the document…</p>;
+  if (loaded.error) return <ErrorBanner message={loaded.error} />;
+  if (!loaded.data) return <p className="muted">Loading the formulas…</p>;
 
   return (
     <div className={isPdf && page !== null ? 'split' : undefined}>
       <Panel
         title={`${formatNumber(formulas.length)} display formulas · ${errors} KaTeX errors`}
         actions={
-          <label className="inline small">
-            <input type="checkbox" checked={onlyErrors} onChange={(event) => setOnlyErrors(event.target.checked)} />
-            Only errors
-          </label>
+          <>
+            <label className="inline small">
+              <input
+                type="checkbox"
+                checked={onlyErrors}
+                onChange={(event) => {
+                  setOnlyErrors(event.target.checked);
+                  onPage(0);
+                }}
+              />
+              Only errors
+            </label>
+            <Pager offset={from} pageSize={formulaPageSize} total={shown.length} onChange={onPage} />
+          </>
         }
       >
         {shown.length === 0 && <Empty>No formulas.</Empty>}
         <ol className="formulas">
-          {shown.map((formula) => (
+          {shown.slice(from, from + formulaPageSize).map((formula) => (
             <li key={formula.offset} className={formula.error ? 'formula formula--error' : 'formula'}>
               <div className="formula__head small muted">
                 {formula.page !== null && isPdf ? (
@@ -334,6 +338,7 @@ function Formulas({ documentId, isPdf }: { documentId: number; isPdf: boolean })
             </li>
           ))}
         </ol>
+        <Pager offset={from} pageSize={formulaPageSize} total={shown.length} onChange={onPage} />
       </Panel>
       {isPdf && page !== null && (
         <Panel title={`Original, page ${page}`}>
