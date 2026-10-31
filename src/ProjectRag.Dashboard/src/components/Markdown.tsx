@@ -7,6 +7,8 @@ import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 
+import { decodePart } from '../format';
+
 // The service marks of the importers are HTML comments. They carry pages and anchors for the index, not text for a reader.
 const marks = /^(?:\s*<!-- rag:[^>]*-->)+\s*$/;
 
@@ -19,7 +21,7 @@ interface MarkdownNode {
   value?: string;
   children?: MarkdownNode[];
   position?: { start: { offset?: number }; end: { offset?: number } };
-  data?: { hProperties?: Record<string, unknown> };
+  data?: { hName?: string; hProperties?: Record<string, unknown> };
 }
 
 function dropMarks(node: MarkdownNode): void {
@@ -36,11 +38,14 @@ function remarkMarks({ offset }: { offset: number | undefined }) {
   return (tree: MarkdownNode) => {
     dropMarks(tree);
     if (offset === undefined) return;
-    for (const block of tree.children ?? []) {
+    tree.children = (tree.children ?? []).map((block) => {
       const end = block.position?.end.offset;
-      if (end === undefined) continue;
+      if (end === undefined) return block;
+      // KaTeX replaces the element of a display formula, so the formula gets a wrapper that keeps the attribute.
+      if (block.type === 'math') return { type: 'block', data: { hName: 'div', hProperties: { 'data-end': offset + end } }, children: [block] };
       block.data = { ...block.data, hProperties: { ...block.data?.hProperties, 'data-end': offset + end } };
-    }
+      return block;
+    });
   };
 }
 
@@ -54,7 +59,7 @@ export const Markdown = memo(function Markdown({ text, anchorHref, offset }: { t
   const components: Components = {
     a: ({ href = '', children }) => {
       if (href.startsWith('#')) {
-        const anchor = decodeURIComponent(href.slice(1));
+        const anchor = decodePart(href.slice(1));
         return anchorHref ? <Link to={anchorHref(anchor)}>{children}</Link> : <span className="markdown__link">{children}</span>;
       }
 

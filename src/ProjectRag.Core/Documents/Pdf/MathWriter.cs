@@ -285,17 +285,26 @@ internal static class MathWriter
     /// </summary>
     public static string EscapeText(string text)
     {
-        // KaTeX has no slash of negation in text, and no increment sign in its text font.
-        text = text.Replace("̸=", "≠", StringComparison.Ordinal).Replace("̸", string.Empty, StringComparison.Ordinal).Replace('∆', 'Δ');
+        // KaTeX has no increment sign in its text font. It sets a negated relation only in math, so the text closes around it.
+        text = text.Replace('∆', 'Δ');
         StringBuilder builder = new(text.Length);
-        foreach (char c in text)
+        for (int i = 0; i < text.Length; i++)
         {
+            char c = text[i];
+            if (c == '\u0338')
+            {
+                // The slash of a negation stands before its relation.
+                if (i + 1 < text.Length)
+                    builder.Append(Negated(text[++i]));
+
+                continue;
+            }
+
             if (char.GetUnicodeCategory(c) is System.Globalization.UnicodeCategory.PrivateUse or System.Globalization.UnicodeCategory.Format or System.Globalization.UnicodeCategory.Control)
                 continue;
 
             builder.Append(c switch
             {
-                // KaTeX sets "≠" only in math, so the text closes around it.
                 '≠' => "}\\ne\\text{",
                 '\\' => "\\textbackslash{}",
                 '{' or '}' or '#' or '$' or '%' or '&' or '_' => $"\\{c}",
@@ -307,6 +316,15 @@ internal static class MathWriter
 
         return builder.ToString();
     }
+
+    private static string Negated(char relation) => relation switch
+    {
+        '=' => "}\\ne\\text{",
+        '∈' => "}\\notin\\text{",
+        '≡' => "}\\not\\equiv\\text{",
+        _ when char.IsLetterOrDigit(relation) || "{}#$%&_^~\\".Contains(relation, StringComparison.Ordinal) => relation.ToString(),
+        _ => $"}}\\not{relation}\\text{{",
+    };
 
     private static int CountOf(string text, string value)
     {

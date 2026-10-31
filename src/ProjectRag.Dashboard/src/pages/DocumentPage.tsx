@@ -6,7 +6,7 @@ import { api } from '../api';
 import { Badge, Empty, ErrorBanner, Panel } from '../components/Common';
 import { Markdown } from '../components/Markdown';
 import { PdfPage } from '../components/PdfPage';
-import { formatBytes, formatDate, formatNumber } from '../format';
+import { anchorAddress, decodePart, formatBytes, formatDate, formatNumber, numberOrNull } from '../format';
 import { useLoad } from '../hooks';
 import type { Chunk } from '../types';
 
@@ -21,11 +21,6 @@ type Tab = (typeof tabs)[number];
 
 function isTab(value: string | undefined): value is Tab {
   return tabs.some((tab) => tab === value);
-}
-
-function numberOrNull(value: string | null): number | null {
-  const parsed = value ? Number(value) : NaN;
-  return Number.isFinite(parsed) ? parsed : null;
 }
 
 interface Formula {
@@ -66,11 +61,11 @@ async function loadContent(documentId: number): Promise<string> {
 }
 
 /**
- * The places where a window of text can start: the starts of the chunks that repeat nothing.
- * Such a chunk starts with a block, so a window from it never starts inside a table or a code block.
+ * The places where a window of text can start: the starts of the chunks that start a block.
+ * A window from them never starts inside a paragraph, a table or a code block.
  */
 function findBoundaries(chunks: Chunk[]): number[] {
-  return [0, ...chunks.filter((chunk) => chunk.overlapChars === 0).map((chunk) => chunk.charStart)].sort((a, b) => a - b);
+  return [0, ...chunks.filter((chunk) => chunk.startsBlock).map((chunk) => chunk.charStart)].sort((a, b) => a - b);
 }
 
 /** The last boundary at or before the value. */
@@ -84,6 +79,17 @@ function boundaryBefore(boundaries: number[], value: number): number {
   return result;
 }
 
+// The previous window ends near the start of the current one: it starts at the first boundary of the length before, or at the length without one.
+function previousStart(boundaries: number[], offset: number): number {
+  const after = boundaryAfter(boundaries, offset - windowLength);
+  return after < offset ? Math.max(0, after) : Math.max(0, offset - windowLength);
+}
+
+/** The first boundary at or after the value, or the value when no boundary follows. */
+function boundaryAfter(boundaries: number[], value: number): number {
+  return boundaries.find((boundary) => boundary >= value) ?? value;
+}
+
 /**
  * A document with its text, its sections, its chunks and its formulas. The tab is a part of the address.
  * The text tab shows a window of the Markdown. It shows the place of the offset in the query, or of the anchor in the hash, for example /documents/4/text#p123-2.
@@ -91,7 +97,7 @@ function boundaryBefore(boundaries: number[], value: number): number {
 export function DocumentPage({ documentId, tab: tabName }: { documentId: number; tab: string | undefined }) {
   const [parameters] = useSearchParams();
   const { hash } = useLocation();
-  const anchorName = hash.length > 1 ? decodeURIComponent(hash.slice(1)) : null;
+  const anchorName = hash.length > 1 ? decodePart(hash.slice(1)) : null;
   const offset = numberOrNull(parameters.get('offset'));
   const sectionId = numberOrNull(parameters.get('section'));
   const tab: Tab = isTab(tabName) ? tabName : anchorName !== null || offset !== null ? 'text' : 'sections';
@@ -193,7 +199,7 @@ export function DocumentPage({ documentId, tab: tabName }: { documentId: number;
                     {formatNumber(chunk.body.length)} characters
                   </span>
                 </div>
-                <Markdown text={chunk.body} anchorHref={(name) => `/documents/${documentId}/anchors/${encodeURIComponent(name)}`} />
+                <Markdown text={chunk.body} anchorHref={(name) => anchorAddress(documentId, name)} />
               </li>
             ))}
           </ol>
@@ -212,10 +218,12 @@ export function DocumentPage({ documentId, tab: tabName }: { documentId: number;
 function Text({ documentId, chunks, target, anchorHref }: { documentId: number; chunks: Chunk[]; target: number | null; anchorHref: (name: string) => string }) {
   const boundaries = useMemo(() => findBoundaries(chunks), [chunks]);
   const [source, setSource] = useState(false);
-  // The buttons move the window away from the target. A new target brings the window back to it.
+  // The buttons move the window away from the target to a start of their own. A new target brings the window back to it.
+  // A long stretch without the start of a block, such as a large table, starts the window right before the target.
   const [moved, setMoved] = useState<{ target: number | null; start: number } | null>(null);
-  const wanted = moved && moved.target === target ? moved.start : Math.max(0, (target ?? 0) - contextLength);
-  const start = boundaryBefore(boundaries, wanted);
+  const wanted = Math.max(0, (target ?? 0) - contextLength);
+  const snapped = boundaryBefore(boundaries, wanted);
+  const start = moved && moved.target === target ? moved.start : target !== null && target - snapped > windowLength / 2 ? wanted : snapped;
   const content = useLoad(() => api.content(documentId, start, windowLength), [documentId, start]);
   const textRef = useRef<HTMLDivElement>(null);
   const markRef = useRef<HTMLElement>(null);
@@ -255,7 +263,7 @@ function Text({ documentId, chunks, target, anchorHref }: { documentId: number; 
             <input type="checkbox" checked={source} onChange={(event) => setSource(event.target.checked)} />
             Markdown source
           </label>
-          <button type="button" className="button button--small" disabled={data.offset === 0} onClick={() => setMoved({ target, start: Math.max(0, data.offset - windowLength) })}>
+          <button type="button" className="button button--small" disabled={data.offset === 0} onClick={() => setMoved({ target, start: previousStart(boundaries, data.offset) })}>
             Previous
           </button>
           <button type="button" className="button button--small" disabled={end >= data.totalLength} onClick={() => setMoved({ target, start: end })}>

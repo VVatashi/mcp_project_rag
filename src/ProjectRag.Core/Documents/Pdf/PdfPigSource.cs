@@ -141,12 +141,13 @@ internal static class PdfPigSource
         // A page may hold its text turned by a quarter, such as a wide table, and turned lines in the margin, such as a running header.
         // The text of the main direction turns into lines from left to right, and the other text goes away.
         List<Letter> letters = [.. page.Letters.Where(static letter => !string.IsNullOrWhiteSpace(letter.Value) && letter.PointSize > 0)];
-        int direction = letters.GroupBy(Direction).OrderByDescending(static group => group.Count()).Select(static group => group.Key).FirstOrDefault();
+        // A letter without an advance, such as the slash of a negation, has no direction of its own and stays with the page.
+        int direction = letters.Select(Direction).OfType<int>().GroupBy(static value => value).OrderByDescending(static group => group.Count()).Select(static group => group.Key).FirstOrDefault();
         PageFrame frame = new(direction, page.Width, page.Height);
         List<Glyph> glyphs = [];
         foreach (Letter letter in letters)
         {
-            if (Direction(letter) != direction)
+            if (Direction(letter) is { } own && own != direction)
                 continue;
 
             GlyphStyle style = Classify(letter.FontName ?? string.Empty);
@@ -190,12 +191,23 @@ internal static class PdfPigSource
     }
 
     // The direction of the baseline of a letter in degrees, to a quarter turn: 0 for a line from left to right, 90 for a line from the bottom up.
-    private static int Direction(Letter letter)
+    // A letter without an advance has no direction.
+    private static int? Direction(Letter letter)
     {
-        double degrees = Math.Atan2(letter.EndBaseLine.Y - letter.StartBaseLine.Y, letter.EndBaseLine.X - letter.StartBaseLine.X) * 180 / Math.PI;
+        double dx = letter.EndBaseLine.X - letter.StartBaseLine.X;
+        double dy = letter.EndBaseLine.Y - letter.StartBaseLine.Y;
+        if (Math.Abs(dx) + Math.Abs(dy) < 0.01)
+            return null;
+
+        double degrees = Math.Atan2(dy, dx) * 180 / Math.PI;
         return ((int)Math.Round(degrees / 90) * 90 + 360) % 360;
     }
 
+    /// <summary>
+    /// Gets the name of a font without the prefix of a subset: "ZBLUAG+NimbusMonL-Regu" becomes "NimbusMonL-Regu".
+    /// </summary>
+    /// <param name="font">The name of the font.</param>
+    /// <returns>The name without the prefix.</returns>
     public static string FontName(string font) => font.Contains('+', StringComparison.Ordinal) ? font[(font.IndexOf('+', StringComparison.Ordinal) + 1)..] : font;
 
     private static bool IsCmsy(string? font) => font is not null && (font.Contains("+CMSY", StringComparison.Ordinal) || font.Contains("+CMBSY", StringComparison.Ordinal));
@@ -248,6 +260,11 @@ internal readonly record struct PageFrame(int Direction, double PageWidth, doubl
     /// <summary>Gets the height of the turned page.</summary>
     public double Height => Direction is 90 or 270 ? PageWidth : PageHeight;
 
+    /// <summary>
+    /// Turns a point of the page into the turned page.
+    /// </summary>
+    /// <param name="point">The point.</param>
+    /// <returns>The turned point.</returns>
     public PdfPoint Turn(PdfPoint point) => Direction switch
     {
         90 => new PdfPoint(point.Y, PageWidth - point.X),
@@ -256,6 +273,11 @@ internal readonly record struct PageFrame(int Direction, double PageWidth, doubl
         _ => point,
     };
 
+    /// <summary>
+    /// Turns a rectangle of the page into the turned page.
+    /// </summary>
+    /// <param name="rectangle">The rectangle.</param>
+    /// <returns>The smallest upright rectangle around the turned corners.</returns>
     public PdfRectangle Turn(PdfRectangle rectangle)
     {
         if (Direction == 0)

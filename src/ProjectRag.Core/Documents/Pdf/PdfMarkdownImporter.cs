@@ -318,7 +318,9 @@ public static partial class PdfMarkdownImporter
 
             double gap = previous.Baseline - line.Baseline;
             bool atMargin = Math.Abs(line.Left - margin) < line.Size && gap < line.Size * 1.6 && !line.Items.Any(static item => item.IsTall);
-            bool goesOn = previous.Right >= right - (line.Size * 2) && line.Left - margin < line.Size * 3 && gap < line.Size * 2.2 && !previous.PlainText.TrimEnd().EndsWith(':');
+            // A display formula with its left edge near the margin, as in the style fleqn, starts at another edge than the text of a list item.
+            bool listIndent = ListMarkerRegex().IsMatch(previous.PlainText) && line.Left > previous.Left + (line.Size * 0.5) && line.Left - previous.Left < line.Size * 3;
+            bool goesOn = previous.Right >= right - (line.Size * 2) && listIndent && gap < (line.Size * 1.6) + Reach(previous, line) && !previous.PlainText.TrimEnd().EndsWith(':');
             if (atMargin || goesOn)
                 line.Kind = LineKind.Text;
         }
@@ -406,6 +408,10 @@ public static partial class PdfMarkdownImporter
             line.Kind = LineKind.Text;
     }
 
+    // A tall inline formula, such as a fraction, widens the gap between two lines by the part that reaches out of its line.
+    private static double Reach(Line upper, Line lower) =>
+        Math.Max(0, lower.Top - (lower.Baseline + (lower.Size * 0.75))) + Math.Max(0, upper.Baseline - (upper.Size * 0.25) - upper.Bottom);
+
     private static bool IsNear(Line line, Line neighbor) => Math.Abs(neighbor.Baseline - line.Baseline) < line.Size * 2.2;
 
     private static bool LooksLikeCode(Line line, Line neighbor)
@@ -478,9 +484,7 @@ public static partial class PdfMarkdownImporter
         }
 
         // A paragraph or a list item goes on while the lines keep the leading, the size and the left edge. An indented first line starts a paragraph.
-        // A tall inline formula, such as a fraction, widens the gap by the part that reaches out of the line.
-        double reach = Math.Max(0, line.Top - (line.Baseline + (line.Size * 0.75))) + Math.Max(0, previous.Baseline - (previous.Size * 0.25) - previous.Bottom);
-        if (kind is not (PdfBlockKind.Paragraph) || gap > (line.Size * 1.6) + reach || Math.Abs(previous.Size - line.Size) > 1)
+        if (kind is not (PdfBlockKind.Paragraph) || gap > (line.Size * 1.6) + Reach(previous, line) || Math.Abs(previous.Size - line.Size) > 1)
             return false;
 
         // The arguments of a call that wraps go on with the call.

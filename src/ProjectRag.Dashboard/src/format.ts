@@ -1,3 +1,23 @@
+/** Reads a number of an address, or gives null for an empty or wrong value. */
+export function numberOrNull(value: string | null | undefined): number | null {
+  const parsed = value ? Number(value) : NaN;
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/** Decodes a part of an address. A broken escape such as "%E0" stays as it is instead of failing the page. */
+export function decodePart(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+/** The address that resolves an anchor of a document to its chunk. A name such as "table-8.14" stays in the query, so the server reads no file extension. */
+export function anchorAddress(documentId: number, name: string): string {
+  return `/documents/${documentId}/anchors?name=${encodeURIComponent(name)}`;
+}
+
 const dateTime = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 const number = new Intl.NumberFormat();
 

@@ -4,6 +4,7 @@ import { Link } from 'react-router';
 import { api } from '../api';
 import { Badge, Empty, ErrorBanner, Panel } from '../components/Common';
 import { Markdown } from '../components/Markdown';
+import { anchorAddress } from '../format';
 import { useLoad } from '../hooks';
 import type { SearchResult } from '../types';
 
@@ -112,7 +113,7 @@ export function SearchPage() {
                   {hit.pageStart !== null && ` · page ${hit.pageStart}${hit.pageEnd !== hit.pageStart ? `–${hit.pageEnd}` : ''}`}
                   {hit.linkCount > 0 && ` · ${hit.linkCount} links`}
                 </div>
-                <Markdown text={hit.body} anchorHref={(anchor) => `/documents/${hit.documentId}/anchors/${encodeURIComponent(anchor)}`} />
+                <Markdown text={hit.body} anchorHref={(anchor) => anchorAddress(hit.documentId, anchor)} />
               </li>
             ))}
           </ol>

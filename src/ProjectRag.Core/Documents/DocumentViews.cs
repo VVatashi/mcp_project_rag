@@ -124,6 +124,12 @@ public sealed class ChunkView
     /// Gets the number of characters at the start that the previous chunk also holds.
     /// </summary>
     public int OverlapChars { get; init; }
+
+    /// <summary>
+    /// Gets a value that tells whether the chunk starts at the start of a block of the Markdown.
+    /// A chunk that splits a paragraph, code or a table starts inside its block, so a view of the text must not start there.
+    /// </summary>
+    public bool StartsBlock { get; set; }
 }
 
 /// <summary>

@@ -5,6 +5,7 @@ import { api } from '../api';
 import { Badge, Empty, ErrorBanner, Panel } from '../components/Common';
 import { Markdown } from '../components/Markdown';
 import { PdfPage } from '../components/PdfPage';
+import { anchorAddress } from '../format';
 import { useLoad } from '../hooks';
 import type { ChunkDetail } from '../types';
 
@@ -26,7 +27,8 @@ export function ChunkPage({ chunkId }: { chunkId: number }) {
   // The chunk knows the targets of its own links. A link in the repeated start of the chunk belongs to the previous chunk, so the page of the anchor resolves it.
   const anchorHref = (anchor: string) => {
     const target = data?.links.find((link) => link.targetPath === null && link.targetAnchor === anchor && link.targetChunkId !== null);
-    return target ? `/chunks/${target.targetChunkId}` : `/documents/${data?.documentId}/anchors/${encodeURIComponent(anchor)}`;
+    if (target) return `/chunks/${target.targetChunkId}`;
+    return data ? anchorAddress(data.documentId, anchor) : '#';
   };
 
   const isPdf = data?.path.toLowerCase().endsWith('.pdf') ?? false;

@@ -51,7 +51,8 @@ internal sealed record Glyph(string Text, double Left, double Right, double Base
     /// <summary>Gets a value that tells whether the glyph belongs to a formula.</summary>
     public bool IsMath => (Style & (GlyphStyle.Math | GlyphStyle.MathExtension)) != 0;
 
-    private bool HasOutline => (Style & GlyphStyle.MathExtension) != 0 || Text == "√";
+    // An outline without height, as from a font without metrics, falls back to the size.
+    private bool HasOutline => ((Style & GlyphStyle.MathExtension) != 0 || Text == "√") && BoxTop - BoxBottom >= Size * 0.1;
 }
 
 /// <summary>

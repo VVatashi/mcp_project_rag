@@ -1,6 +1,7 @@
 import { BrowserRouter, Link, Navigate, NavLink, Route, Routes, useParams, useSearchParams } from 'react-router';
 
 import { getToken, setToken } from './api';
+import { numberOrNull } from './format';
 import { AnchorPage } from './pages/AnchorPage';
 import { ChunkPage } from './pages/ChunkPage';
 import { DocumentPage } from './pages/DocumentPage';
@@ -16,11 +17,6 @@ const sections = [
   { route: '/documents', label: 'Documents' },
 ] as const;
 
-function numberOrNull(value: string | null | undefined): number | null {
-  const parsed = value ? Number(value) : NaN;
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
 // The pages take numbers. A route with a wrong number goes to the list of documents.
 
 function ChunkRoute() {
@@ -35,8 +31,9 @@ function DocumentRoute() {
 }
 
 function AnchorRoute() {
-  const { documentId, name } = useParams();
-  const id = numberOrNull(documentId);
+  const id = numberOrNull(useParams().documentId);
+  const [parameters] = useSearchParams();
+  const name = parameters.get('name');
   return id === null || !name ? <Navigate to="/documents" replace /> : <AnchorPage documentId={id} name={name} />;
 }
 
@@ -79,7 +76,7 @@ export function App() {
             <Route path="/search" element={<SearchPage />} />
             <Route path="/sources" element={<SourcesPage />} />
             <Route path="/documents" element={<DocumentsRoute />} />
-            <Route path="/documents/:documentId/anchors/:name" element={<AnchorRoute />} />
+            <Route path="/documents/:documentId/anchors" element={<AnchorRoute />} />
             <Route path="/documents/:documentId/:tab?" element={<DocumentRoute />} />
             <Route path="/chunks/:chunkId" element={<ChunkRoute />} />
             <Route path="*" element={<Navigate to="/status" replace />} />
