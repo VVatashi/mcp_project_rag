@@ -19,6 +19,9 @@ public sealed partial class DocumentStore(Database database)
     /// <summary>The most characters that <see cref="GetContentAsync"/> returns at once.</summary>
     public const int MaxContentLength = 100_000;
 
+    // The time of a command that writes the chunks of a large document or copies or deletes their vectors.
+    private const int LongCommandSeconds = 1800;
+
     private const string SummarySql = """
         SELECT d.document_id, d.source_id, s.name AS source, d.category, d.path, d.title, d.size_bytes, d.modified_at, d.indexed_at,
                length(d.content) AS content_length,
@@ -376,7 +379,7 @@ public sealed partial class DocumentStore(Database database)
                 PageEnds = chunks.Select(static item => item.Chunk.PageEnd).ToArray(),
                 Overlaps = chunks.Select(static item => item.Chunk.OverlapChars).ToArray(),
             },
-            transaction, cancellationToken: cancellationToken))).ToDictionary(static row => row.Ordinal, static row => row.ChunkId);
+            transaction, LongCommandSeconds, cancellationToken: cancellationToken))).ToDictionary(static row => row.Ordinal, static row => row.ChunkId);
 
         // A link belongs to each chunk whose range holds its start. An overlap gives a link to both chunks.
         List<(long ChunkId, int Ordinal, DocumentLink Link)> links = [];
@@ -405,24 +408,26 @@ public sealed partial class DocumentStore(Database database)
             },
             transaction, cancellationToken: cancellationToken));
 
+        // The identity gives the new chunks larger numbers than all chunks before them, so a smaller number marks an old chunk.
+        // A large document, such as the 14000 chunks of the Vulkan specification, copies its vectors into the HNSW index for minutes.
         long[] newIds = [.. chunkIds.Values];
         int reused = newIds.Length == 0 ? 0 : await connection.ExecuteAsync(new CommandDefinition(
             """
             INSERT INTO chunk_embedding (chunk_id, model_id, embedding)
             SELECT DISTINCT ON (n.chunk_id, e.model_id) n.chunk_id, e.model_id, e.embedding
             FROM chunk n
-            JOIN chunk o ON o.body_hash = n.body_hash AND o.chunk_id <> ALL (@NewIds)
+            JOIN chunk o ON o.body_hash = n.body_hash AND o.chunk_id < @FirstNewId
             JOIN chunk_embedding e ON e.chunk_id = o.chunk_id
             WHERE n.chunk_id = ANY (@NewIds)
             ORDER BY n.chunk_id, e.model_id
             ON CONFLICT DO NOTHING
             """,
-            new { NewIds = newIds }, transaction, cancellationToken: cancellationToken));
+            new { NewIds = newIds, FirstNewId = newIds.Min() }, transaction, LongCommandSeconds, cancellationToken: cancellationToken));
 
         if (oldIds.Length > 0)
         {
             await connection.ExecuteAsync(new CommandDefinition(
-                "DELETE FROM chunk WHERE chunk_id = ANY (@OldIds)", new { OldIds = oldIds }, transaction, cancellationToken: cancellationToken));
+                "DELETE FROM chunk WHERE chunk_id = ANY (@OldIds)", new { OldIds = oldIds }, transaction, LongCommandSeconds, cancellationToken: cancellationToken));
         }
 
         await transaction.CommitAsync(cancellationToken);
