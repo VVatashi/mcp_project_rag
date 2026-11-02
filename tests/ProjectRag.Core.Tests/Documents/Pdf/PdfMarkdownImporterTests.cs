@@ -176,7 +176,7 @@ public sealed class PdfMarkdownImporterTests
     [Fact]
     public void Convert_RemovesAFooterThatChangesItsOrderOnEvenPages()
     {
-        // Blank pages break the runs. The odd pages end with "Copyright … 7", the even pages start the footer with the number.
+        // Blank pages break the runs. The odd pages end with "Copyright … 7". The even pages start the footer with the number.
         List<PdfPageModel> pages = [];
         for (int number = 1; number <= 12; number++)
         {

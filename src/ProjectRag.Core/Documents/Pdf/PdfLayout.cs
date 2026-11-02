@@ -233,7 +233,7 @@ internal static class PdfLayout
     /// </summary>
     public static bool NeedsSpace(Item left, Item right)
     {
-        // A space that the file writes counts, also in a narrow gap. The glyphs of a font without its program may come out too wide.
+        // A space that the file writes counts, also in a narrow gap. The glyphs of a font that the file does not embed may come out too wide.
         if (right.SpaceBefore && right.Left > left.Left)
             return true;
 
@@ -263,6 +263,7 @@ internal static class PdfLayout
             Size = glyph.Size,
             Style = glyph.Style & ~GlyphStyle.Math,
             Font = glyph.Font,
+            SpaceBefore = glyph.SpaceBefore,
         } : item;
     }
 

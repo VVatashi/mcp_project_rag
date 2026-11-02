@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Reflection;
 using System.Text;
 
@@ -95,7 +96,7 @@ internal static class PdfPigSource
         ['\uF8FE'] = "}",
     };
 
-    // The font Symbol without its program reads in the encoding of Windows: "a" stands for α, "£" for ≤, "Ó" for ©.
+    // PdfPig decodes the font Symbol that a file does not embed in the encoding of Windows: "a" stands for α, "£" for ≤, "Ó" for ©.
     // The map restores the characters of the encoding of Symbol at these codes.
     private static readonly Dictionary<char, string> SymbolLetters = new()
     {
@@ -230,7 +231,7 @@ internal static class PdfPigSource
     };
 
     // PdfPig looks for a font that a file does not embed among the fonts of the system. One unreadable font file of the system then throws.
-    // The importer needs only the widths that the file holds, so it marks every font of the system as read once.
+    // The importer needs only the widths that the file holds, so it marks every font of the system as read once. A failure leaves the search as before.
     private static readonly Lazy<bool> SystemFontsOff = new(TurnOffSystemFonts);
 
     /// <summary>
@@ -300,6 +301,8 @@ internal static class PdfPigSource
         List<Glyph> glyphs = [];
         // A word processor writes the spaces between words as glyphs. The space marks the next glyph, also when the gap is too narrow to tell.
         PdfPoint? space = null;
+        // A font Symbol that PdfPig decodes well gives Greek letters and signs beyond Latin-1. Its "µ" or "×" then stays.
+        bool symbolDecoded = letters.Any(static letter => IsSymbolFont(FontName(letter.FontName ?? string.Empty)) && letter.Value.Any(static c => c > 'ÿ'));
         foreach (Letter letter in page.Letters)
         {
             if (string.IsNullOrWhiteSpace(letter.Value))
@@ -320,10 +323,11 @@ internal static class PdfPigSource
                 text = piece;
             else if ((style & GlyphStyle.Math) != 0 && IsCmsy(letter.FontName) && text.Length == 1 && text[0] is >= 'A' and <= 'Z')
                 text = $"\\mathcal{{{text}}}";
-            else if (IsSymbolFont(font) && text.Length == 1 && SymbolLetters.TryGetValue(text[0], out string? greek))
+            else if (!symbolDecoded && IsSymbolFont(font) && text.Length == 1 && SymbolLetters.TryGetValue(text[0], out string? greek))
                 text = greek;
-            else if (IsDingbatFont(font))
+            else if (IsDingbatFont(font) && text.Length == 1 && (text[0] <= 'ÿ' || char.GetUnicodeCategory(text[0]) == UnicodeCategory.PrivateUse))
             {
+                // A code of a font of pictures without its own character is a bullet. A check mark that PdfPig decodes, such as ✓, stays.
                 // "MonotypeSorts" holds "Mono" in its name, but its bullet is no code.
                 text = "•";
                 style = GlyphStyle.None;
@@ -375,24 +379,35 @@ internal static class PdfPigSource
         return ((int)Math.Round(degrees / 90) * 90 + 360) % 360;
     }
 
-    // PdfPig 0.1.16 has no option for it. The finder skips each file in its set "readFiles", and "AvailableFonts" lists the files.
-    // Another version of PdfPig may lack these fields. The finder then works as before.
-    private static bool TurnOffSystemFonts()
+    /// <summary>
+    /// Marks every font of the system as read for PdfPig, so it opens none of them.
+    /// </summary>
+    /// <returns><see langword="true"/> when PdfPig has the hidden fields. Another version of PdfPig may lack them, and the search then works as before.</returns>
+    /// <remarks>PdfPig 0.1.16 has no option for it. The finder skips each file in its set "readFiles", and "AvailableFonts" lists the files.</remarks>
+    internal static bool TurnOffSystemFonts()
     {
         const BindingFlags hidden = BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
         Type finder = typeof(SystemFontFinder);
-        if (finder.GetField("readFiles", hidden)?.GetValue(SystemFontFinder.Instance) is not ConcurrentDictionary<string, byte> readFiles
-            || finder.GetField("AvailableFonts", hidden)?.GetValue(null) is not { } available
-            || available.GetType().GetProperty("Value")?.GetValue(available) is not IEnumerable records)
-            return false;
-
-        foreach (object record in records)
+        try
         {
-            if (record.GetType().GetProperty("Path")?.GetValue(record) is string path)
-                readFiles.TryAdd(path, 0);
-        }
+            if (finder.GetField("readFiles", hidden)?.GetValue(SystemFontFinder.Instance) is not ConcurrentDictionary<string, byte> readFiles
+                || finder.GetField("AvailableFonts", hidden)?.GetValue(null) is not { } available
+                || available.GetType().GetProperty("Value")?.GetValue(available) is not IEnumerable records)
+                return false;
 
-        return true;
+            foreach (object record in records)
+            {
+                if (record.GetType().GetProperty("Path")?.GetValue(record) is string path)
+                    readFiles.TryAdd(path, 0);
+            }
+
+            return true;
+        }
+        catch (TargetInvocationException)
+        {
+            // The list of the fonts of the system may fail, such as for an account without access to the folder of the fonts.
+            return false;
+        }
     }
 
     /// <summary>

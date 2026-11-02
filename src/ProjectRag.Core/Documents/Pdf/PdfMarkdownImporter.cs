@@ -39,8 +39,8 @@ public static partial class PdfMarkdownImporter
     {
         using PdfDocument pdf = PdfPigSource.Open(bytes);
         string title = PdfPigSource.Normalize(pdf.Information.Title ?? string.Empty);
-        if (title.Length > 0 && !FileNameRegex().IsMatch(title))
-            return Convert(title, PdfPigSource.ReadPages(pdf), PdfPigSource.ReadBookmarks(pdf));
+        if (!FileNameRegex().IsMatch(title))
+            return Convert(title.Length == 0 ? fallbackTitle : title, PdfPigSource.ReadPages(pdf), PdfPigSource.ReadBookmarks(pdf));
 
         // A word processor may write the name of the file as the title, such as "GL3PGM.PDF". The first heading then names the document.
         DocumentText text = Convert(fallbackTitle, PdfPigSource.ReadPages(pdf), PdfPigSource.ReadBookmarks(pdf));
@@ -99,8 +99,9 @@ public static partial class PdfMarkdownImporter
             List<Line> page = lines[i];
             foreach (Line line in page.Where(line => IsEdge(pages[i], page, line)))
             {
+                // A small header stands at the top and holds no code. A line of code or a footnote in a small font is no header.
                 string key = LineKey(line.PlainText);
-                if (line.Size < bodySize * 0.9)
+                if (line.Size < bodySize * 0.9 && page.IndexOf(line) < 2 && !line.Items.Any(static item => (item.Style & GlyphStyle.Mono) != 0))
                     small.Add((key, i));
 
                 if (!places.TryGetValue(key, out List<int>? indexes))
@@ -172,7 +173,7 @@ public static partial class PdfMarkdownImporter
 
     // A page number in small Roman numerals, such as "iv" of the front matter, counts as a number too.
     // A footer may set its dash in the text font on one page and in the font Symbol on the next: "1995-1998" and "1995−1998".
-    // The words go in their sorted order: an even page may put the number or the parts of a footer in another order, such as "30 Copyright…" and "Copyright… 29".
+    // The words go in their sorted order. An even page may put the number or the parts of a footer in another order: "30 Copyright…" and "Copyright… 29".
     private static string LineKey(string text) =>
         string.Concat(text.Split(' ', StringSplitOptions.RemoveEmptyEntries)
             .Select(static word => DigitsRegex().Replace(RomanNumberRegex().Replace(word, "#"), "#").Replace('−', '-').Replace('–', '-').ToUpperInvariant())
@@ -894,7 +895,7 @@ public static partial class PdfMarkdownImporter
     private static partial Regex ArgumentRegex();
 
     // The name of a file as a title: "GL3PGM.PDF", "Microsoft Word - spec.doc".
-    [GeneratedRegex(@"^(?:Microsoft Word - )?[\w .-]+\.(?:pdf|docx?|rtf|fm|ps)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"^(?:Microsoft Word - )?[\w .()-]+\.(?:pdf|docx?|rtf|fm|ps)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex FileNameRegex();
 }
 
