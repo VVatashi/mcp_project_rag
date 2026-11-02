@@ -13,9 +13,10 @@ internal sealed class PageBuilder(int number, double width = 612, double height 
 
     /// <summary>
     /// Writes a text at a place. A space advances by a third of the size, a glyph by half the size.
+    /// With <paramref name="spaceBefore"/>, the first glyph carries a space that the file writes before it.
     /// </summary>
     /// <returns>The right edge of the text.</returns>
-    public double Text(string text, double x, double baseline, double size = 10, GlyphStyle style = GlyphStyle.None, string font = "Times-Roman")
+    public double Text(string text, double x, double baseline, double size = 10, GlyphStyle style = GlyphStyle.None, string font = "Times-Roman", bool spaceBefore = false)
     {
         foreach (char c in text)
         {
@@ -26,7 +27,8 @@ internal sealed class PageBuilder(int number, double width = 612, double height 
             }
 
             double advance = size * 0.5;
-            _glyphs.Add(new Glyph(c.ToString(), x, x + advance, baseline, size, style, font));
+            _glyphs.Add(new Glyph(c.ToString(), x, x + advance, baseline, size, style, font, SpaceBefore: spaceBefore));
+            spaceBefore = false;
             x += advance;
         }
 

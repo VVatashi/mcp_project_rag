@@ -50,6 +50,9 @@ internal sealed class Item
     /// <summary>Gets a value that tells whether the layout may put the item into the nearest line, whatever its baseline.</summary>
     public bool IsFloating { get; init; }
 
+    /// <summary>Gets a value that tells whether the file writes a space before the item.</summary>
+    public bool SpaceBefore { get; init; }
+
     public static Item From(Glyph glyph) => new()
     {
         Text = glyph.Text,
@@ -61,6 +64,7 @@ internal sealed class Item
         Size = glyph.Size,
         Style = glyph.Style,
         Font = glyph.Font,
+        SpaceBefore = glyph.SpaceBefore,
     };
 }
 
@@ -225,10 +229,14 @@ internal static class PdfLayout
 
     /// <summary>
     /// Tells whether a space separates two neighbor items. A word space is at least a sixth of the size of the font.
-    /// Monospace text keeps its spaces only through the gaps, so its threshold is half a character.
+    /// Monospace text without the spaces of the file keeps them only through the gaps, so its threshold is half a character.
     /// </summary>
     public static bool NeedsSpace(Item left, Item right)
     {
+        // A space that the file writes counts, also in a narrow gap. The glyphs of a font that the file does not embed may come out too wide.
+        if (right.SpaceBefore && right.Left > left.Left)
+            return true;
+
         double gap = right.Left - left.Right;
         if ((left.Style & right.Style & GlyphStyle.Mono) != 0)
             return gap > MonoWidth(left) * 0.5;
@@ -255,6 +263,7 @@ internal static class PdfLayout
             Size = glyph.Size,
             Style = glyph.Style & ~GlyphStyle.Math,
             Font = glyph.Font,
+            SpaceBefore = glyph.SpaceBefore,
         } : item;
     }
 

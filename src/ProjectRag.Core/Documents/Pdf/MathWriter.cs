@@ -239,7 +239,7 @@ internal static class MathWriter
         List<Item> run = [];
         foreach (Item item in items)
         {
-            run.Add(new Item { Text = item.Text, Left = item.Left, Right = item.Right, Baseline = item.Baseline, Top = item.Top, Bottom = item.Bottom, Size = item.Size, Style = item.Style, Font = item.Font });
+            run.Add(new Item { Text = item.Text, Left = item.Left, Right = item.Right, Baseline = item.Baseline, Top = item.Top, Bottom = item.Bottom, Size = item.Size, Style = item.Style, Font = item.Font, SpaceBefore = item.SpaceBefore });
             if (item.Sup.Count == 0 && item.Sub.Count == 0)
                 continue;
 

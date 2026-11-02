@@ -37,9 +37,14 @@ public static partial class PdfMarkdownImporter
     /// <returns>The document in Markdown.</returns>
     public static DocumentText Read(byte[] bytes, string fallbackTitle)
     {
-        using PdfDocument pdf = PdfDocument.Open(bytes);
+        using PdfDocument pdf = PdfPigSource.Open(bytes);
         string title = PdfPigSource.Normalize(pdf.Information.Title ?? string.Empty);
-        return Convert(title.Length == 0 ? fallbackTitle : title, PdfPigSource.ReadPages(pdf), PdfPigSource.ReadBookmarks(pdf));
+        if (!FileNameRegex().IsMatch(title))
+            return Convert(title.Length == 0 ? fallbackTitle : title, PdfPigSource.ReadPages(pdf), PdfPigSource.ReadBookmarks(pdf));
+
+        // A word processor may write the name of the file as the title, such as "GL3PGM.PDF". The first heading then names the document.
+        DocumentText text = Convert(fallbackTitle, PdfPigSource.ReadPages(pdf), PdfPigSource.ReadBookmarks(pdf));
+        return text with { Title = MarkdownStructureReader.FindTitle(text.Content) ?? fallbackTitle };
     }
 
     /// <summary>
@@ -50,7 +55,7 @@ public static partial class PdfMarkdownImporter
         Func<Glyph, bool> isMath = MathFonts(pages);
         double bodySize = BodySize(pages);
         List<List<Line>> lines = [.. pages.Select(page => PdfLayout.BuildLines(page, isMath))];
-        RemoveRunningLines(pages, lines);
+        RemoveRunningLines(pages, lines, bodySize);
         for (int i = 0; i < pages.Count; i++)
         {
             MarkTables(pages[i], lines[i]);
@@ -85,18 +90,25 @@ public static partial class PdfMarkdownImporter
         pages.SelectMany(static page => page.Glyphs).GroupBy(static glyph => Math.Round(glyph.Size * 2) / 2).MaxBy(static group => group.Count())?.Key ?? 10;
 
     // A line at the top or the bottom of a page that repeats on many pages is a running header or footer. A number counts as any number.
-    private static void RemoveRunningLines(IReadOnlyList<PdfPageModel> pages, List<List<Line>> lines)
+    private static void RemoveRunningLines(IReadOnlyList<PdfPageModel> pages, List<List<Line>> lines, double bodySize)
     {
         Dictionary<string, List<int>> places = new(StringComparer.Ordinal);
+        HashSet<(string Key, int Page)> small = [];
         for (int i = 0; i < pages.Count; i++)
         {
             List<Line> page = lines[i];
-            foreach (string key in page.Where(line => IsEdge(pages[i], page, line)).Select(static line => LineKey(line.PlainText)).Distinct(StringComparer.Ordinal))
+            foreach (Line line in page.Where(line => IsEdge(pages[i], page, line)))
             {
+                // A small header stands at the top and holds no code. A line of code or a footnote in a small font is no header.
+                string key = LineKey(line.PlainText);
+                if (line.Size < bodySize * 0.9 && page.IndexOf(line) < 2 && !line.Items.Any(static item => (item.Style & GlyphStyle.Mono) != 0))
+                    small.Add((key, i));
+
                 if (!places.TryGetValue(key, out List<int>? indexes))
                     places[key] = indexes = [];
 
-                indexes.Add(i);
+                if (indexes.Count == 0 || indexes[^1] != i)
+                    indexes.Add(i);
             }
         }
 
@@ -115,7 +127,10 @@ public static partial class PdfMarkdownImporter
                     continue;
 
                 // A run of four pages or more is a running line. A line of a word or less, such as the "}" at the end of a listing, is no header.
-                for (int j = everywhere ? start : start + 1; j < i && (everywhere || (i - start >= 4 && key.Count(char.IsLetter) >= 3)); j++)
+                // A header of a short chapter in a font smaller than the text, such as "7. Depth Buffering", needs two pages.
+                int smallPages = indexes[start..i].Count(page => small.Contains((key, page)));
+                bool run = i - start >= 4 || (smallPages >= 2 && i - start >= 2);
+                for (int j = everywhere ? start : start + 1; j < i && (everywhere || (run && key.Count(char.IsLetter) >= 3)); j++)
                     running.Add((key, indexes[j]));
 
                 start = i;
@@ -156,7 +171,13 @@ public static partial class PdfMarkdownImporter
     private static IEnumerable<string> EdgeWords(string text) =>
         text.Split(' ', StringSplitOptions.RemoveEmptyEntries).Where(static word => word.Count(char.IsLetter) >= 3).Select(static word => DigitsRegex().Replace(word, "#").ToUpperInvariant());
 
-    private static string LineKey(string text) => DigitsRegex().Replace(text.Replace(" ", string.Empty, StringComparison.Ordinal), "#").ToUpperInvariant();
+    // A page number in small Roman numerals, such as "iv" of the front matter, counts as a number too.
+    // A footer may set its dash in the text font on one page and in the font Symbol on the next: "1995-1998" and "1995−1998".
+    // The words go in their sorted order. An even page may put the number or the parts of a footer in another order: "30 Copyright…" and "Copyright… 29".
+    private static string LineKey(string text) =>
+        string.Concat(text.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Select(static word => DigitsRegex().Replace(RomanNumberRegex().Replace(word, "#"), "#").Replace('−', '-').Replace('–', '-').ToUpperInvariant())
+            .Order(StringComparer.Ordinal));
 
     // The lines between wide rules form a table when many of them have columns: gaps of more than a character.
     private static void MarkTables(PdfPageModel page, List<Line> lines)
@@ -825,6 +846,9 @@ public static partial class PdfMarkdownImporter
     [GeneratedRegex(@"\d+")]
     private static partial Regex DigitsRegex();
 
+    [GeneratedRegex(@"\b[ivxl]+\b")]
+    private static partial Regex RomanNumberRegex();
+
     [GeneratedRegex(@"^\s*(?:\d+|[A-Z])(?:\.\d+)*\.?\s+")]
     private static partial Regex LeadingNumberRegex();
 
@@ -869,6 +893,10 @@ public static partial class PdfMarkdownImporter
 
     [GeneratedRegex(@"(?:^|[\s,(])\p{L}[\p{L}\d]{3,}(?:[\s,)]|$)")]
     private static partial Regex ArgumentRegex();
+
+    // The name of a file as a title: "GL3PGM.PDF", "Microsoft Word - spec.doc".
+    [GeneratedRegex(@"^(?:Microsoft Word - )?[\w .()-]+\.(?:pdf|docx?|rtf|fm|ps)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex FileNameRegex();
 }
 
 /// <summary>

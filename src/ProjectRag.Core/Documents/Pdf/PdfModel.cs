@@ -37,7 +37,8 @@ internal enum GlyphStyle
 /// <param name="Font">The name of the font without the prefix of a subset, for example <c>CMMI10</c>.</param>
 /// <param name="BoxTop">The top of the outline of the glyph, or <see langword="null"/> to take it from the size.</param>
 /// <param name="BoxBottom">The bottom of the outline of the glyph, or <see langword="null"/> to take it from the size.</param>
-internal sealed record Glyph(string Text, double Left, double Right, double Baseline, double Size, GlyphStyle Style, string Font = "", double? BoxTop = null, double? BoxBottom = null)
+/// <param name="SpaceBefore">A value that tells whether the file writes a space between the glyph and the glyph before it.</param>
+internal sealed record Glyph(string Text, double Left, double Right, double Baseline, double Size, GlyphStyle Style, string Font = "", double? BoxTop = null, double? BoxBottom = null, bool SpaceBefore = false)
 {
     /// <summary>
     /// Gets the top of the glyph. A large delimiter of TeX and the sign of a root use their outlines: their baseline lies at the top, not at the bottom.

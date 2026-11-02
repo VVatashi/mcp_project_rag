@@ -150,6 +150,52 @@ public sealed class PdfMarkdownImporterTests
     }
 
     [Fact]
+    public void Convert_RemovesASmallHeaderOfAShortChapter()
+    {
+        // The first page of a chapter shows its title in a large font. The odd pages after it repeat the title in a font smaller than the text.
+        List<PdfPageModel> pages = [];
+        for (int number = 1; number <= 12; number++)
+        {
+            PageBuilder page = new(number);
+            if (number == 2)
+                page.Text("Depth Buffering", 300, 740, 24);
+            else if (number is 3 or 5)
+                page.Text("Depth Buffering", 400, 760, 8);
+
+            page.Text($"The text of page {number} goes on with the description of the library.", 72, 700);
+            page.Text($"Another line of page {number} describes the state of the hardware.", 72, 688);
+            pages.Add(page.Build());
+        }
+
+        string markdown = PdfMarkdownImporter.Convert("Spec", pages, []).Content;
+
+        // The title stays once.
+        Assert.Equal(2, markdown.Split("Depth Buffering").Length);
+    }
+
+    [Fact]
+    public void Convert_RemovesAFooterThatChangesItsOrderOnEvenPages()
+    {
+        // Blank pages break the runs. The odd pages end with "Copyright … 7". The even pages start the footer with the number.
+        List<PdfPageModel> pages = [];
+        for (int number = 1; number <= 12; number++)
+        {
+            PageBuilder page = new(number);
+            if (number % 4 is 1 or 2)
+            {
+                page.Text($"The text of page {number} goes on with the description of the library.", 72, 700);
+                page.Text(number % 2 == 1 ? $"Copyright 1998 Acme, Inc. {number}" : $"{number} Copyright 1998 Acme, Inc.", 72, 60);
+            }
+
+            pages.Add(page.Build());
+        }
+
+        string markdown = PdfMarkdownImporter.Convert("Spec", pages, []).Content;
+
+        Assert.DoesNotContain("Copyright", markdown, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Convert_KeepsAWrappedAddressOutOfTheCode()
     {
         PageBuilder page = new(2);
