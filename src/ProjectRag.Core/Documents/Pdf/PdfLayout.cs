@@ -452,8 +452,8 @@ internal static class PdfLayout
         return center >= rule.Left - 1 && center <= rule.Right + 1;
     }
 
-    // A monospace font of TeX sets the asterisk below the baseline, so "char *const *string" splits into two rows.
-    // A row of such asterisks joins the row just above it when the asterisks fall into the gaps of that row.
+    // The monospace font of TeX sets the asterisk below the baseline, so "char * const *string" splits into two rows.
+    // A row of such asterisks joins the nearest row just above it when the asterisks lie in the gaps of that row.
     private static void JoinLoweredAsterisks(List<(List<Item> Items, double Baseline, double Size)> rows)
     {
         for (int i = rows.Count - 1; i >= 0; i--)
@@ -462,10 +462,13 @@ internal static class PdfLayout
             if (!stars.All(static item => (item.Style & GlyphStyle.Mono) != 0 && item.Text.All(static c => c == '*')))
                 continue;
 
-            int host = rows.FindIndex(row => row.Baseline > baseline && row.Baseline - baseline <= size * 0.3 && Math.Abs(row.Size - size) <= 1
-                && !row.Items.Any(item => stars.Any(star => star.Left < item.Right - 0.5 && star.Right > item.Left + 0.5)));
-            if (host < 0)
+            List<int> hosts = [.. Enumerable.Range(0, rows.Count).Where(j => rows[j].Baseline > baseline && rows[j].Baseline - baseline <= size * 0.3 && Math.Abs(rows[j].Size - size) <= 1
+                && stars.All(star => star.Left >= rows[j].Items.Min(static item => item.Left) - (size * 2) && star.Right <= rows[j].Items.Max(static item => item.Right) + (size * 2))
+                && !rows[j].Items.Any(item => stars.Any(star => star.Left < item.Right - 0.5 && star.Right > item.Left + 0.5)))];
+            if (hosts.Count == 0)
                 continue;
+
+            int host = hosts.MinBy(j => rows[j].Baseline - baseline);
 
             rows[host].Items.AddRange(stars);
             rows.RemoveAt(i);

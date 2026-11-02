@@ -86,6 +86,21 @@ public sealed class PdfLayoutTests
         Assert.Equal("char * const", line.PlainText);
     }
 
+    [Fact]
+    public void BuildLines_JoinsALoweredAsteriskToTheNearestLine()
+    {
+        // A fragment of another column sits a little higher than the line of the asterisk.
+        PageBuilder page = new(1);
+        page.Text("label", 40, 701, 10, GlyphStyle.Mono, "Courier");
+        page.Text("char", 100, 700, 10, GlyphStyle.Mono, "Courier");
+        page.Text("*", 123, 698.1, 10, GlyphStyle.Mono, "Courier");
+        page.Text("p", 128, 700, 10, GlyphStyle.Mono, "Courier");
+
+        List<Line> lines = PdfLayout.BuildLines(page.Build(), static glyph => glyph.IsMath);
+
+        Assert.Equal(["label", "char *p"], lines.Select(static line => line.PlainText));
+    }
+
     [Theory]
     [InlineData(90, 100, 200, 200)]
     [InlineData(270, 100, 200, 592)]

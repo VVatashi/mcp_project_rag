@@ -553,7 +553,7 @@ public static partial class PdfMarkdownImporter
         foreach (Line line in lines.Where(static line => line.Kind == LineKind.Math && IsArgumentList(line)))
             line.Kind = LineKind.Text;
 
-        // A closing brace alone, such as the end of a function after a table at the top of the next page, is code, not a formula.
+        // A closing brace alone is code, not a formula. A table at the top of a page may split it from its listing.
         foreach (Line line in lines.Where(static line => line.Kind == LineKind.Math && !line.InTable && IsClosingBrace(line) && !line.Items.Any(static item => item.IsTall || item.IsLatex)))
             line.Kind = LineKind.Code;
     }
@@ -769,8 +769,10 @@ public static partial class PdfMarkdownImporter
             string end = previous.Lines[^1].PlainText.TrimEnd();
             string start = block.Lines[0].PlainText.TrimStart();
             bool indented = block.Lines.Count > 1 && block.Lines[0].Left - block.Lines[1].Left > block.Lines[0].Size * 0.8;
-            // A prototype of a command, such as "uint CreateShaderProgramv( enum type, sizei count, const char * const *strings );", ends with ");".
-            if (end.Length == 0 || start.Length == 0 || indented || end[^1] is '.' or ':' or '!' or '?' || end.EndsWith(");", StringComparison.Ordinal))
+            // A prototype starts with a type in monospace and ends with ");", such as "void PolygonOffset( float factor, float units );".
+            // The next prototype on the next page starts with a type too.
+            bool prototype = end.EndsWith(");", StringComparison.Ordinal) && (StartsWithMono(previous.Lines[0]) || StartsWithMono(block.Lines[0]));
+            if (end.Length == 0 || start.Length == 0 || indented || end[^1] is '.' or ':' or '!' or '?' || prototype)
                 continue;
 
             previous.Continuations.Add((previous.Lines.Count, block.Page));
@@ -780,6 +782,8 @@ public static partial class PdfMarkdownImporter
             blocks.RemoveAt(i);
         }
     }
+
+    private static bool StartsWithMono(Line line) => line.Items.Count > 0 && (line.Items[0].Style & GlyphStyle.Mono) != 0;
 
     // Each link points at the first block at or below its target. That block gets an anchor named after its page and its place.
     private static Dictionary<(int Page, int Index), string> AnchorLinkTargets(IReadOnlyList<PdfPageModel> pages, List<PdfBlock> blocks)
