@@ -19,7 +19,7 @@ public sealed partial class DocumentStore(Database database)
     /// <summary>The most characters that <see cref="GetContentAsync"/> returns at once.</summary>
     public const int MaxContentLength = 100_000;
 
-    // The time of a command that writes the chunks of a large document or copies or deletes their vectors.
+    // The most seconds that a command may run when it writes, copies or deletes the chunks and vectors of a large document.
     private const int LongCommandSeconds = 1800;
 
     private const string SummarySql = """
@@ -312,9 +312,10 @@ public sealed partial class DocumentStore(Database database)
 
         long[] oldIds = [.. await connection.QueryAsync<long>(new CommandDefinition(
             "SELECT chunk_id FROM chunk WHERE document_id = @DocumentId", new { DocumentId = documentId }, transaction, cancellationToken: cancellationToken))];
+        // The delete of the sections clears the section of each stored chunk, so it updates every chunk of the document.
         await connection.ExecuteAsync(new CommandDefinition(
             "DELETE FROM section WHERE document_id = @DocumentId; DELETE FROM anchor WHERE document_id = @DocumentId;",
-            new { DocumentId = documentId }, transaction, cancellationToken: cancellationToken));
+            new { DocumentId = documentId }, transaction, LongCommandSeconds, cancellationToken: cancellationToken));
 
         IReadOnlyList<DocumentSection> sections = structure.Sections;
         Dictionary<int, long> sectionIds = (await connection.QueryAsync<(int Ordinal, long SectionId)>(new CommandDefinition(
@@ -408,8 +409,8 @@ public sealed partial class DocumentStore(Database database)
             },
             transaction, cancellationToken: cancellationToken));
 
-        // The identity gives the new chunks larger numbers than all chunks before them, so a smaller number marks an old chunk.
-        // A large document, such as the 14000 chunks of the Vulkan specification, copies its vectors into the HNSW index for minutes.
+        // The identity gives the new chunks larger keys than the stored chunks, so a smaller key marks a stored chunk. A miss only costs a new embedding.
+        // The copy of the vectors of a large document, such as the 14000 chunks of the Vulkan specification, fills the HNSW index for minutes.
         long[] newIds = [.. chunkIds.Values];
         int reused = newIds.Length == 0 ? 0 : await connection.ExecuteAsync(new CommandDefinition(
             """
