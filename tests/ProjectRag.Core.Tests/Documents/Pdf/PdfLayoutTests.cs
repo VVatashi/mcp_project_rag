@@ -87,6 +87,21 @@ public sealed class PdfLayoutTests
     }
 
     [Fact]
+    public void BuildLines_KeepsTheSpacesThatTheFileWrites()
+    {
+        // A font without its program gives too wide glyphs: the gap of the space is narrower than a word space, in the text and in the code.
+        PageBuilder page = new(1);
+        double x = page.Text("of", 100, 700, 10, GlyphStyle.Italic, "TimesNewRoman,Italic");
+        page.Text("the", x + 0.8, 700, 10, GlyphStyle.Italic, "TimesNewRoman,Italic", spaceBefore: true);
+        x = page.Text("void", 100, 680, 10, GlyphStyle.Mono, "CourierNew");
+        page.Text("grFlush();", x + 2, 680, 10, GlyphStyle.Mono, "CourierNew", spaceBefore: true);
+
+        List<Line> lines = PdfLayout.BuildLines(page.Build(), static glyph => glyph.IsMath);
+
+        Assert.Equal(["of the", "void grFlush();"], lines.Select(static line => line.PlainText));
+    }
+
+    [Fact]
     public void BuildLines_JoinsALoweredAsteriskToTheNearestLine()
     {
         // A fragment of another column sits a little higher than the line of the asterisk.

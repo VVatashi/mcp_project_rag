@@ -1,3 +1,6 @@
+using System.Collections;
+using System.Collections.Concurrent;
+using System.Reflection;
 using System.Text;
 
 using UglyToad.PdfPig;
@@ -5,6 +8,7 @@ using UglyToad.PdfPig.Actions;
 using UglyToad.PdfPig.Annotations;
 using UglyToad.PdfPig.Content;
 using UglyToad.PdfPig.Core;
+using UglyToad.PdfPig.Fonts.SystemFonts;
 using UglyToad.PdfPig.Graphics;
 using UglyToad.PdfPig.Outline;
 
@@ -91,6 +95,155 @@ internal static class PdfPigSource
         ['\uF8FE'] = "}",
     };
 
+    // The font Symbol without its program reads in the encoding of Windows: "a" stands for α, "£" for ≤, "Ó" for ©.
+    // The map restores the characters of the encoding of Symbol at these codes.
+    private static readonly Dictionary<char, string> SymbolLetters = new()
+    {
+        ['a'] = "α",
+        ['b'] = "β",
+        ['c'] = "χ",
+        ['d'] = "δ",
+        ['e'] = "ε",
+        ['f'] = "φ",
+        ['g'] = "γ",
+        ['h'] = "η",
+        ['i'] = "ι",
+        ['j'] = "ϕ",
+        ['k'] = "κ",
+        ['l'] = "λ",
+        ['m'] = "μ",
+        ['n'] = "ν",
+        ['o'] = "ο",
+        ['p'] = "π",
+        ['q'] = "θ",
+        ['r'] = "ρ",
+        ['s'] = "σ",
+        ['t'] = "τ",
+        ['u'] = "υ",
+        ['v'] = "ϖ",
+        ['w'] = "ω",
+        ['x'] = "ξ",
+        ['y'] = "ψ",
+        ['z'] = "ζ",
+        ['A'] = "Α",
+        ['B'] = "Β",
+        ['C'] = "Χ",
+        ['D'] = "Δ",
+        ['E'] = "Ε",
+        ['F'] = "Φ",
+        ['G'] = "Γ",
+        ['H'] = "Η",
+        ['I'] = "Ι",
+        ['J'] = "ϑ",
+        ['K'] = "Κ",
+        ['L'] = "Λ",
+        ['M'] = "Μ",
+        ['N'] = "Ν",
+        ['O'] = "Ο",
+        ['P'] = "Π",
+        ['Q'] = "Θ",
+        ['R'] = "Ρ",
+        ['S'] = "Σ",
+        ['T'] = "Τ",
+        ['U'] = "Υ",
+        ['V'] = "ς",
+        ['W'] = "Ω",
+        ['X'] = "Ξ",
+        ['Y'] = "Ψ",
+        ['Z'] = "Ζ",
+        ['"'] = "∀",
+        ['$'] = "∃",
+        ['\''] = "∋",
+        ['*'] = "∗",
+        ['-'] = "−",
+        ['@'] = "≅",
+        ['\\'] = "∴",
+        ['^'] = "⊥",
+        ['`'] = "‾",
+        ['~'] = "∼",
+        ['¡'] = "ϒ",
+        ['¢'] = "′",
+        ['£'] = "≤",
+        ['¤'] = "⁄",
+        ['¥'] = "∞",
+        ['¦'] = "ƒ",
+        ['§'] = "♣",
+        ['¨'] = "♦",
+        ['©'] = "♥",
+        ['ª'] = "♠",
+        ['«'] = "↔",
+        ['¬'] = "←",
+        ['­'] = "↑",
+        ['®'] = "→",
+        ['¯'] = "↓",
+        ['²'] = "″",
+        ['³'] = "≥",
+        ['´'] = "×",
+        ['µ'] = "∝",
+        ['¶'] = "∂",
+        ['·'] = "•",
+        ['¸'] = "÷",
+        ['¹'] = "≠",
+        ['º'] = "≡",
+        ['»'] = "≈",
+        ['¼'] = "…",
+        ['À'] = "ℵ",
+        ['Á'] = "ℑ",
+        ['Â'] = "ℜ",
+        ['Ã'] = "℘",
+        ['Ä'] = "⊗",
+        ['Å'] = "⊕",
+        ['Æ'] = "∅",
+        ['Ç'] = "∩",
+        ['È'] = "∪",
+        ['É'] = "⊃",
+        ['Ê'] = "⊇",
+        ['Ë'] = "⊄",
+        ['Ì'] = "⊂",
+        ['Í'] = "⊆",
+        ['Î'] = "∈",
+        ['Ï'] = "∉",
+        ['Ð'] = "∠",
+        ['Ñ'] = "∇",
+        ['Ò'] = "®",
+        ['Ó'] = "©",
+        ['Ô'] = "™",
+        ['Õ'] = "∏",
+        ['Ö'] = "√",
+        ['×'] = "⋅",
+        ['Ø'] = "¬",
+        ['Ù'] = "∧",
+        ['Ú'] = "∨",
+        ['Û'] = "⇔",
+        ['Ü'] = "⇐",
+        ['Ý'] = "⇑",
+        ['Þ'] = "⇒",
+        ['ß'] = "⇓",
+        ['à'] = "◊",
+        ['á'] = "〈",
+        ['â'] = "®",
+        ['ã'] = "©",
+        ['ä'] = "™",
+        ['å'] = "∑",
+        ['ñ'] = "〉",
+        ['ò'] = "∫",
+    };
+
+    // PdfPig looks for a font that a file does not embed among the fonts of the system. One unreadable font file of the system then throws.
+    // The importer needs only the widths that the file holds, so it marks every font of the system as read once.
+    private static readonly Lazy<bool> SystemFontsOff = new(TurnOffSystemFonts);
+
+    /// <summary>
+    /// Opens a document without the fonts of the system, so the result does not depend on the machine.
+    /// </summary>
+    /// <param name="bytes">The bytes of the file.</param>
+    /// <returns>The document.</returns>
+    public static PdfDocument Open(byte[] bytes)
+    {
+        _ = SystemFontsOff.Value;
+        return PdfDocument.Open(bytes);
+    }
+
     /// <summary>
     /// Reads the pages of a document.
     /// </summary>
@@ -145,19 +298,36 @@ internal static class PdfPigSource
         int direction = letters.Select(Direction).OfType<int>().GroupBy(static value => value).OrderByDescending(static group => group.Count()).Select(static group => group.Key).FirstOrDefault();
         PageFrame frame = new(direction, page.Width, page.Height);
         List<Glyph> glyphs = [];
-        foreach (Letter letter in letters)
+        // A word processor writes the spaces between words as glyphs. The space marks the next glyph, also when the gap is too narrow to tell.
+        PdfPoint? space = null;
+        foreach (Letter letter in page.Letters)
         {
-            if (Direction(letter) is { } own && own != direction)
+            if (string.IsNullOrWhiteSpace(letter.Value))
+            {
+                space = frame.Turn(letter.StartBaseLine);
+                continue;
+            }
+
+            if (letter.PointSize <= 0 || (Direction(letter) is { } own && own != direction))
                 continue;
 
             GlyphStyle style = Classify(letter.FontName ?? string.Empty);
             string text = letter.Value;
+            string font = FontName(letter.FontName ?? string.Empty);
             if ((style & GlyphStyle.Math) != 0 && IsCmsy(letter.FontName) && text.Length == 1 && CmsyLetters.TryGetValue(text[0], out string? symbol))
                 text = symbol;
             else if ((style & GlyphStyle.MathExtension) != 0 && text.Length == 1 && CmexPieces.TryGetValue(text[0], out string? piece))
                 text = piece;
             else if ((style & GlyphStyle.Math) != 0 && IsCmsy(letter.FontName) && text.Length == 1 && text[0] is >= 'A' and <= 'Z')
                 text = $"\\mathcal{{{text}}}";
+            else if (IsSymbolFont(font) && text.Length == 1 && SymbolLetters.TryGetValue(text[0], out string? greek))
+                text = greek;
+            else if (IsDingbatFont(font))
+            {
+                // "MonotypeSorts" holds "Mono" in its name, but its bullet is no code.
+                text = "•";
+                style = GlyphStyle.None;
+            }
             else
                 text = TextCleanup.Clean(text.Normalize(NormalizationForm.FormKC));
 
@@ -167,7 +337,9 @@ internal static class PdfPigSource
             PdfRectangle box = frame.Turn(letter.BoundingBox);
             PdfPoint start = frame.Turn(letter.StartBaseLine);
             double right = Math.Max(start.X + 0.1, Math.Max(frame.Turn(letter.EndBaseLine).X, box.Right));
-            glyphs.Add(new Glyph(text, start.X, right, start.Y, letter.PointSize, style, FontName(letter.FontName ?? string.Empty), box.Top, box.Bottom));
+            bool spaceBefore = space is { } before && Math.Abs(before.Y - start.Y) < letter.PointSize * 0.3 && before.X <= start.X + 0.5 && start.X - before.X < letter.PointSize * 3;
+            space = null;
+            glyphs.Add(new Glyph(text, start.X, right, start.Y, letter.PointSize, style, font, box.Top, box.Bottom, spaceBefore));
         }
 
         List<Rule> rules = [];
@@ -203,12 +375,39 @@ internal static class PdfPigSource
         return ((int)Math.Round(degrees / 90) * 90 + 360) % 360;
     }
 
+    // PdfPig 0.1.16 has no option for it. The finder skips each file in its set "readFiles", and "AvailableFonts" lists the files.
+    // Another version of PdfPig may lack these fields. The finder then works as before.
+    private static bool TurnOffSystemFonts()
+    {
+        const BindingFlags hidden = BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
+        Type finder = typeof(SystemFontFinder);
+        if (finder.GetField("readFiles", hidden)?.GetValue(SystemFontFinder.Instance) is not ConcurrentDictionary<string, byte> readFiles
+            || finder.GetField("AvailableFonts", hidden)?.GetValue(null) is not { } available
+            || available.GetType().GetProperty("Value")?.GetValue(available) is not IEnumerable records)
+            return false;
+
+        foreach (object record in records)
+        {
+            if (record.GetType().GetProperty("Path")?.GetValue(record) is string path)
+                readFiles.TryAdd(path, 0);
+        }
+
+        return true;
+    }
+
     /// <summary>
     /// Gets the name of a font without the prefix of a subset: "ZBLUAG+NimbusMonL-Regu" becomes "NimbusMonL-Regu".
     /// </summary>
     /// <param name="font">The name of the font.</param>
     /// <returns>The name without the prefix.</returns>
     public static string FontName(string font) => font.Contains('+', StringComparison.Ordinal) ? font[(font.IndexOf('+', StringComparison.Ordinal) + 1)..] : font;
+
+    // "Symbol", "Symbol,Italic" or "Symbol-Bold". A font of TeX, such as "CMSY10", has another name.
+    private static bool IsSymbolFont(string font) => font == "Symbol" || font.StartsWith("Symbol,", StringComparison.Ordinal) || font.StartsWith("Symbol-", StringComparison.Ordinal);
+
+    // A font of pictures, such as "MonotypeSorts" or "ZapfDingbats", sets the bullets of a word processor.
+    private static bool IsDingbatFont(string font) =>
+        font.StartsWith("MonotypeSorts", StringComparison.Ordinal) || font.StartsWith("ZapfDingbats", StringComparison.Ordinal) || font.StartsWith("Wingdings", StringComparison.Ordinal);
 
     private static bool IsCmsy(string? font) => font is not null && (font.Contains("+CMSY", StringComparison.Ordinal) || font.Contains("+CMBSY", StringComparison.Ordinal));
 
