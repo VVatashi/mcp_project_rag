@@ -72,6 +72,20 @@ public sealed class PdfLayoutTests
         Assert.Equal("+", Assert.Single(z.Sup).Text);
     }
 
+    [Fact]
+    public void BuildLines_JoinsALoweredAsteriskToItsLine()
+    {
+        // The monospace font of the specification sets the asterisk 1.9 points below the baseline of its line.
+        PageBuilder page = new(1);
+        page.Text("char", 100, 700, 10, GlyphStyle.Mono, "Courier");
+        page.Text("*", 123, 698.1, 10, GlyphStyle.Mono, "Courier");
+        page.Text("const", 131, 700, 10, GlyphStyle.Mono, "Courier");
+
+        Line line = Assert.Single(PdfLayout.BuildLines(page.Build(), static glyph => glyph.IsMath));
+
+        Assert.Equal("char * const", line.PlainText);
+    }
+
     [Theory]
     [InlineData(90, 100, 200, 200)]
     [InlineData(270, 100, 200, 592)]

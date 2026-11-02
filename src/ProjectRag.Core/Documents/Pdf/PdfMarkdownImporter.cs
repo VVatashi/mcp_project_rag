@@ -552,6 +552,10 @@ public static partial class PdfMarkdownImporter
         // A call that wraps puts its arguments on the next line. Outside code such a line goes on with the sentence of the call.
         foreach (Line line in lines.Where(static line => line.Kind == LineKind.Math && IsArgumentList(line)))
             line.Kind = LineKind.Text;
+
+        // A closing brace alone, such as the end of a function after a table at the top of the next page, is code, not a formula.
+        foreach (Line line in lines.Where(static line => line.Kind == LineKind.Math && !line.InTable && IsClosingBrace(line) && !line.Items.Any(static item => item.IsTall || item.IsLatex)))
+            line.Kind = LineKind.Code;
     }
 
     // A tall inline formula, such as a fraction, widens the gap between two lines by the part that reaches out of its line.
@@ -765,7 +769,8 @@ public static partial class PdfMarkdownImporter
             string end = previous.Lines[^1].PlainText.TrimEnd();
             string start = block.Lines[0].PlainText.TrimStart();
             bool indented = block.Lines.Count > 1 && block.Lines[0].Left - block.Lines[1].Left > block.Lines[0].Size * 0.8;
-            if (end.Length == 0 || start.Length == 0 || indented || end[^1] is '.' or ':' or '!' or '?')
+            // A prototype of a command, such as "uint CreateShaderProgramv( enum type, sizei count, const char * const *strings );", ends with ");".
+            if (end.Length == 0 || start.Length == 0 || indented || end[^1] is '.' or ':' or '!' or '?' || end.EndsWith(");", StringComparison.Ordinal))
                 continue;
 
             previous.Continuations.Add((previous.Lines.Count, block.Page));

@@ -104,6 +104,36 @@ public sealed class PdfMarkdownImporterTests
     }
 
     [Fact]
+    public void Convert_WritesALoneClosingBraceAsCode()
+    {
+        // A table at the top of the page splits the end of a function from its listing on the page before.
+        PageBuilder page = new(2);
+        page.Text("}", 72, 700, 10, GlyphStyle.Math, "CMSY10");
+        page.Text("Advanced blending equations are supported only for one color buffer.", 72, 676);
+
+        string markdown = Convert(page);
+
+        Assert.Contains("```\n}\n```", markdown, StringComparison.Ordinal);
+        Assert.DoesNotContain("$$", markdown, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Convert_KeepsAPrototypeAtTheEndOfAPageApartFromTheNextPage()
+    {
+        PageBuilder first = new(1);
+        first.Text("1 Introduction", 72, 700, 14, GlyphStyle.Bold, "Times-Bold");
+        first.Text("The buffers are cleared with the command", 72, 670);
+        first.Text("void Clear( bitfield buf );", 90, 100);
+        PageBuilder second = new(2);
+        second.Text("is zero or the bitwise OR of the values that name the buffers.", 72, 720);
+        List<PdfBookmark> bookmarks = [new("1 Introduction", 0, 1, 718)];
+
+        string markdown = PdfMarkdownImporter.Convert("Spec", [first.Build(), second.Build()], bookmarks).Content;
+
+        Assert.Contains("\nis zero or the bitwise OR", markdown, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Convert_KeepsAWrappedAddressOutOfTheCode()
     {
         PageBuilder page = new(2);

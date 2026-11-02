@@ -174,6 +174,7 @@ internal static class PdfLayout
         }
 
         rows = [.. rows.Select(static row => (row.Items, row.Baseline, Size: Median(row.Items.Select(static item => item.Size))))];
+        JoinLoweredAsterisks(rows);
 
         // A fraction, a large delimiter or a sum goes into the nearest line of its size before the scripts move:
         // the scripts of a sum sit right of the sum, and the line must reach them.
@@ -449,6 +450,26 @@ internal static class PdfLayout
     {
         double center = (item.Left + item.Right) / 2;
         return center >= rule.Left - 1 && center <= rule.Right + 1;
+    }
+
+    // A monospace font of TeX sets the asterisk below the baseline, so "char *const *string" splits into two rows.
+    // A row of such asterisks joins the row just above it when the asterisks fall into the gaps of that row.
+    private static void JoinLoweredAsterisks(List<(List<Item> Items, double Baseline, double Size)> rows)
+    {
+        for (int i = rows.Count - 1; i >= 0; i--)
+        {
+            (List<Item> stars, double baseline, double size) = rows[i];
+            if (!stars.All(static item => (item.Style & GlyphStyle.Mono) != 0 && item.Text.All(static c => c == '*')))
+                continue;
+
+            int host = rows.FindIndex(row => row.Baseline > baseline && row.Baseline - baseline <= size * 0.3 && Math.Abs(row.Size - size) <= 1
+                && !row.Items.Any(item => stars.Any(star => star.Left < item.Right - 0.5 && star.Right > item.Left + 0.5)));
+            if (host < 0)
+                continue;
+
+            rows[host].Items.AddRange(stars);
+            rows.RemoveAt(i);
+        }
     }
 
     // A row of smaller items next to a row of normal items is a row of scripts: TeX shifts the baseline of a script.
