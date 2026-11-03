@@ -46,14 +46,26 @@ public sealed partial class DocumentChunkerTests
     }
 
     [Fact]
-    public void Split_CountsTheDigitsOfCodeTwice()
+    public void Split_CountsTheDigitsOfCodeThreeTimes()
     {
-        // 25 lines of 24 characters with 16 digits each make 600 characters, but 1000 with the digits counted twice.
+        // 25 lines with 16 digits each make about 600 characters, but about 1400 with each digit counted three times.
         string numbers = "```text\n" + string.Join('\n', Enumerable.Range(0, 25).Select(static i => $"{i:D2} 11 22 33 44 55 66 77")) + "\n```";
         string words = "```text\n" + string.Join('\n', Enumerable.Range(0, 25).Select(static _ => "ab cd ef gh ij kl mn op")) + "\n```";
 
-        Assert.True(Split(numbers, maxChars: 200, atomicMaxChars: 800, overlapChars: 0).Count > 1);
+        IReadOnlyList<TextChunk> chunks = Split(numbers, maxChars: 200, atomicMaxChars: 800, overlapChars: 0);
+        Assert.True(chunks.Count > 1);
+        Assert.All(chunks, static chunk => Assert.True(chunk.Body.Length + (2 * chunk.Body.Count(char.IsAsciiDigit)) <= 800));
         Assert.Single(Split(words, maxChars: 200, atomicMaxChars: 800, overlapChars: 0));
+    }
+
+    [Fact]
+    public void Split_CutsALongLineOfDigitsToAThirdOfTheLimit()
+    {
+        string table = "| Bit | Value |\n| --- | --- |\n| 0 | " + string.Join(' ', Enumerable.Repeat("1", 600)) + " |\n";
+        IReadOnlyList<TextChunk> chunks = Split(table, maxChars: 1000, atomicMaxChars: 1200, overlapChars: 0);
+
+        Assert.True(chunks.Count > 1);
+        Assert.All(chunks, static chunk => Assert.True(chunk.Body.Length + (2 * chunk.Body.Count(char.IsAsciiDigit)) <= 1200));
     }
 
     [Fact]

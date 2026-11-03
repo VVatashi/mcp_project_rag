@@ -24,7 +24,7 @@ public sealed class ChunkingOptions
     /// </summary>
     /// <remarks>
     /// Code and TeX hold about three characters per token, so 3000 characters stay below the 2048 tokens of a slot.
-    /// A digit counts as two characters, since a table of numbers holds almost one token per character. A change makes the indexer read every file again.
+    /// A digit counts as three characters, since a table of single digits holds one token per character. A change makes the indexer read every file again.
     /// </remarks>
     public int AtomicMaxChars { get; set; } = 3000;
 
