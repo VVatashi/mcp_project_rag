@@ -91,6 +91,20 @@ public sealed class HtmlMarkdownImporterTests
     }
 
     [Fact]
+    public void Read_EndsACellOverTwoRowsWithTheHeadAndKeepsTheLinkOfACard()
+    {
+        DocumentText text = Read("""
+            <table><thead><tr><th rowspan="2">A</th><th>B</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table>
+            <a href="/guide"><div>Guide</div><p>The setup.</p></a>
+            <a name="old"><h3>Old style</h3></a>
+            """);
+
+        Assert.Contains("| A | B |\n| --- | --- |\n| 1 | 2 |", text.Content, StringComparison.Ordinal);
+        Assert.Contains("[Guide The setup.](https://example.com/guide)", text.Content, StringComparison.Ordinal);
+        Assert.DoesNotContain("<!-- rag:anchor old -->", text.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Read_KeepsALineWithAnImageAndDropsTheLinksOfScripts()
     {
         DocumentText text = Read("""

@@ -51,7 +51,7 @@ PdfPig gives each glyph with its font, size and position, each thin vector line 
 | Element | How the importer finds it |
 | --- | --- |
 | Turned pages | The direction of most baselines. A page with its text turned by a quarter turns back, and the lines of other directions, such as a turned running header, go away. A bold line of a turned page is a label of a figure, not a heading |
-| Word spaces | Gaps between glyphs, a smaller gap at a change of the font. A space that the file writes as a glyph always counts. The glyphs of a font that the file does not embed come out too wide, so "of the" would become "ofthe". A gap after a letter of the text counts from the advance of the letter, not from its ink: the ink of "f" reaches into the gap |
+| Word spaces | Gaps between glyphs, a smaller gap at a change of the font. A space that the file writes as a glyph always counts. The glyphs of a font that the file does not embed come out too wide, so "of the" would become "ofthe". A gap after a letter of the text counts from the advance of the letter, not from its ink: the ink of "f" reaches into the gap. A letter in a font of formulas, such as the body text of TeX in Computer Modern, keeps its ink |
 | Running headers and footers | Lines at the top or the bottom that repeat on many pages, or capitals with a page number. A header of a chapter repeats on a run of pages. A first or last line with a word of the headers, such as "ECMA-334", is a header too. A header in a font smaller than the text at the top of a page needs a run of two pages, as in a short chapter. A line of code is no such header. A page number in small Roman numerals counts as a number. The words of a line count in their sorted order, so "30 Copyright…" of an even page and "Copyright… 29" of an odd page are one footer |
 | Headings | Bookmarks with their target height, matched to a line by its text. A chapter of LaTeX searches farther. A bookmark without a line becomes a heading of its own. Short bold lines become headings below the outline, such as "Errors", also with a section number, such as "4.1.10. Implicit Conversions" of an outline that stops at the second level. A numbered line must go on from the number of a heading before it, as a child of "4.1" or a sibling of "4.1.9", and takes its level from it |
 | Headings without an outline | The hidden bookmarks of a word processor, such as "OLE_LINK6", do not count, and an outline that reaches fewer than two pages does not count. Then a bold or a much larger line is a heading. The depth of its number, such as "II.22.2", gives the level. A page of contents and a line in a larger regular font give no headings |
@@ -77,11 +77,11 @@ An HTML file and a web page go through AngleSharp, a parser that follows the sta
 | --- | --- |
 | `h1` to `h6` | A heading of the same level. Its id becomes an anchor |
 | An element whose id a link of the page names | The mark `rag:anchor` before its block |
-| `a` | A link to an anchor of the page stays a link. A web page makes its relative links absolute, and a file keeps them relative, so they point at the files of its source |
+| `a` | A link to an anchor of the page stays a link. A web page makes its relative links absolute from its address after redirects or from its element `base`. A file keeps them relative, so they point at the files of its source. A link of another scheme than http, https, mailto and file stays text |
 | `pre` | A fenced block with the language of the class `language-c` or the attribute `data-lang` |
 | `ul`, `ol` | A list. The blocks of an item indent under its marker |
 | `dl` | A paragraph for each term. A list with a long definition, with lists, tables or code, makes each term a heading one level below the section. So the chunks of a format in a long appendix carry its name. The text after the list stays in the section of its last term |
-| `table` | A pipe table. A cell joins its blocks into one line, and a cell over several columns adds empty cells. A table without a head takes its first row |
+| `table` | A pipe table. A cell joins its blocks into one line. A cell over several columns adds empty cells, and a cell over several rows leaves empty cells below it. A table without a head takes its first row |
 | `\( … \)` of MathJax in the text, and `\[ … \]` in a stem block of Asciidoctor | `$ … $` and `$$ … $$` |
 | A table inside a cell | The text of the inner table |
 | `script`, `style`, `nav`, `#toc`, `#footer` | Nothing |

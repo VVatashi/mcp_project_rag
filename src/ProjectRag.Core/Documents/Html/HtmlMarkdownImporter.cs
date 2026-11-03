@@ -61,6 +61,11 @@ internal static partial class HtmlMarkdownImporter
 
     private static bool IsBlock(IElement element) => BlockTags.Contains(element.LocalName);
 
+    // A wrapper outside the known tags, such as a custom element, is a block when it holds blocks.
+    // A link around a card of text stays a link. Only a heading, a list, a table or code inside it makes it a block.
+    private static bool HoldsBlocks(IElement element) =>
+        element.QuerySelector(element.LocalName == "a" ? "h1, h2, h3, h4, h5, h6, ul, ol, dl, table, pre" : BlockSelector) is not null;
+
     // The navigation and the table of contents repeat the headings, and the footer holds the dates of the build.
     private static bool IsSkipped(IElement element) =>
         SkippedTags.Contains(element.LocalName) || element.Id is "toc" or "footer" || element.ClassList.Contains("toc") || element.ClassList.Contains("toc2");
@@ -72,7 +77,7 @@ internal static partial class HtmlMarkdownImporter
     [GeneratedRegex(@"\s+")]
     private static partial Regex WhitespaceRegex();
 
-    [GeneratedRegex(@"\\text(?:it|tt|bf|rm|sf|normal)?\{[^{}]*\}")]
+    [GeneratedRegex(@"\\(?:text(?:it|tt|bf|rm|sf|up|sl|sc|normal)?|mbox|emph)\{[^{}]*\}")]
     private static partial Regex TextCommandRegex();
 
     // The delimiters of MathJax: \( … \) inside a line and \[ … \] for a display formula.
@@ -193,7 +198,7 @@ internal static partial class HtmlMarkdownImporter
                 if (node is IElement skipped && IsSkipped(skipped) && !IsBlock(skipped))
                     continue;
 
-                if (node is IElement element && (IsBlock(element) || element.QuerySelector(BlockSelector) is not null))
+                if (node is IElement element && (IsBlock(element) || HoldsBlocks(element)))
                 {
                     Paragraph(run);
                     if (!IsSkipped(element))
@@ -218,6 +223,7 @@ internal static partial class HtmlMarkdownImporter
         private void Block(IElement element)
         {
             Anchor(element.Id);
+            Anchor(element.GetAttribute("name"));
             switch (element.LocalName)
             {
                 case "h1" or "h2" or "h3" or "h4" or "h5" or "h6":
@@ -305,7 +311,7 @@ internal static partial class HtmlMarkdownImporter
 
                 foreach (IElement term in terms)
                 {
-                    Anchor(term.Id);
+                    Anchor(term.Id, always: parts);
                     Add(parts ? HeadingLine(term, _level + 1) ?? string.Empty : MarkdownText.EscapeStart(Collapse(Inline(term))));
                 }
 
@@ -352,19 +358,27 @@ internal static partial class HtmlMarkdownImporter
             bool ordered = element.LocalName == "ol";
             int number = ordered && int.TryParse(element.GetAttribute("start"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int start) ? start : 1;
             // Generated HTML may set a nested list right inside a list, without its item. It belongs to the item before it.
-            List<List<string>> items = [];
+            // Any other element right inside the list is a block of its own, without a marker.
+            List<(bool Item, List<string> Blocks)> parts = [];
             foreach (IElement child in element.Children.Where(static child => !IsSkipped(child)))
             {
                 Anchor(child.Id);
-                List<string> blocks = child.LocalName == "li" ? Nested(child) : NestedBlock(child);
-                if (child.LocalName == "li" || items.Count == 0)
-                    items.Add(blocks);
+                if (child.LocalName == "li")
+                    parts.Add((true, Nested(child)));
+                else if (child.LocalName is "ul" or "ol" && parts.Count > 0 && parts[^1].Item)
+                    parts[^1].Blocks.AddRange(NestedBlock(child));
                 else
-                    items[^1].AddRange(blocks);
+                    parts.Add((false, NestedBlock(child)));
             }
 
-            foreach (List<string> blocks in items.Where(static blocks => blocks.Count > 0))
+            foreach ((bool item, List<string> blocks) in parts.Where(static part => part.Blocks.Count > 0))
             {
+                if (!item)
+                {
+                    blocks.ForEach(Add);
+                    continue;
+                }
+
                 // The blocks after the first one indent under the marker, so they stay inside the item.
                 string marker = ordered ? string.Create(CultureInfo.InvariantCulture, $"{number++}. ") : "- ";
                 string indent = new(' ', marker.Length);
@@ -390,8 +404,16 @@ internal static partial class HtmlMarkdownImporter
             List<List<string>> rows = [];
             // The rows that a cell above still covers, by column.
             List<int> covered = [];
+            IElement? group = null;
             foreach (IHtmlTableRowElement row in table.Rows)
             {
+                // A cell over several rows ends with its group of rows, such as the head.
+                if (row.ParentElement != group)
+                {
+                    covered.Clear();
+                    group = row.ParentElement;
+                }
+
                 List<string> cells = [];
                 foreach (IHtmlTableCellElement cell in row.Cells)
                 {
@@ -406,7 +428,8 @@ internal static partial class HtmlMarkdownImporter
                         while (covered.Count <= i)
                             covered.Add(0);
 
-                        covered[i] = Math.Max(0, cell.RowSpan - 1);
+                        // A row span of 0 reaches the end of the group.
+                        covered[i] = cell.RowSpan <= 0 ? int.MaxValue : cell.RowSpan - 1;
                     }
                 }
 
@@ -417,7 +440,8 @@ internal static partial class HtmlMarkdownImporter
                         covered[i]--;
                 }
 
-                if (cells.Count > 0)
+                // A row that the cells above cover fully adds nothing.
+                if (row.Cells.Length > 0)
                     rows.Add(cells);
             }
 

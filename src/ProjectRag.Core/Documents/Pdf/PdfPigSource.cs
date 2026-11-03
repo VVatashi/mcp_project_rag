@@ -346,10 +346,12 @@ internal static class PdfPigSource
 
             PdfRectangle box = frame.Turn(letter.BoundingBox);
             PdfPoint start = frame.Turn(letter.StartBaseLine);
-            // The ink of a letter of the text, such as "f", may reach past its advance into the gap before the next word: "of the" would become "ofthe".
-            // A letter of a formula keeps its ink, so its scripts sit right of it.
+            // The ink of a letter of the text, such as "f", may reach past its advance into the gap before the next word. "Of the" would become "ofthe".
+            // A letter in a font of formulas keeps its ink, so its scripts sit right of it. The body text of TeX in Computer Modern counts as such a font.
+            // The advance counts even when it is much shorter than the ink: the digits of the bit tables of Glide have such advances, and their ink would join them.
             double end = frame.Turn(letter.EndBaseLine).X;
-            double right = (style & (GlyphStyle.Math | GlyphStyle.MathExtension)) == 0 && end > start.X ? end : Math.Max(start.X + 0.1, Math.Max(end, box.Right));
+            bool advance = (style & (GlyphStyle.Math | GlyphStyle.MathExtension)) == 0 && end > start.X;
+            double right = advance ? end : Math.Max(start.X + 0.1, Math.Max(end, box.Right));
             bool spaceBefore = space is { } before && Math.Abs(before.Y - start.Y) < letter.PointSize * 0.3 && before.X <= start.X + 0.5 && start.X - before.X < letter.PointSize * 3;
             space = null;
             glyphs.Add(new Glyph(text, start.X, right, start.Y, letter.PointSize, style, font, box.Top, box.Bottom, spaceBefore));

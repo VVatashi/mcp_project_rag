@@ -52,17 +52,20 @@ public static partial class PdfMarkdownImporter
     /// Finds the title on the cover of a file without a title: the lines of the first page in its largest font, such as "Khronos Data Format Specification".
     /// </summary>
     /// <param name="pages">The pages of the file.</param>
-    /// <returns>The title, or <see langword="null"/> for an empty first page.</returns>
+    /// <returns>The title, or <see langword="null"/> for an empty first page, a first page without a larger font than the text or a title over 200 characters.</returns>
     internal static string? CoverTitle(IReadOnlyList<PdfPageModel> pages)
     {
         if (pages.Count == 0)
             return null;
 
-        List<Line> lines = PdfLayout.BuildLines(pages[0], static glyph => glyph.IsMath);
+        List<Line> lines = PdfLayout.BuildLines(pages[0], MathFonts(pages));
         if (lines.Count == 0)
             return null;
 
         double size = lines.Max(static line => line.Size);
+        if (size < BodySize(pages) * 1.2)
+            return null;
+
         string title = PdfPigSource.Normalize(string.Join(' ', lines.Where(line => line.Size >= size - 0.5).Select(static line => line.PlainText)));
         return title.Length is > 0 and <= 200 ? title : null;
     }

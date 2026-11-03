@@ -31,7 +31,8 @@ export function ChunkPage({ chunkId }: { chunkId: number }) {
     return data ? anchorAddress(data.documentId, anchor) : '#';
   };
 
-  const isPdf = data?.path.toLowerCase().endsWith('.pdf') ?? false;
+  // A web page has no file on the server, also when its address ends with ".pdf".
+  const isPdf = data !== undefined && data !== null && !/^https?:\/\//.test(data.path) && data.path.toLowerCase().endsWith('.pdf');
   const shownPage = page ?? data?.pageStart ?? null;
 
   return (

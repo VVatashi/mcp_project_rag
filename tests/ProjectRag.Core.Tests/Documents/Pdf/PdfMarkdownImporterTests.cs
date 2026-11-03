@@ -323,8 +323,12 @@ public sealed class PdfMarkdownImporterTests
         cover.Text("Metal Shading Language", 72, 684, 38);
         cover.Text("Specification", 72, 638, 38);
         cover.Text("Version 4.1", 72, 606, 24);
+        PageBuilder text = new(2);
+        text.Text("The language describes the shaders of the graphics and compute pipelines.", 72, 700);
 
-        Assert.Equal("Metal Shading Language Specification", PdfMarkdownImporter.CoverTitle([cover.Build()]));
+        Assert.Equal("Metal Shading Language Specification", PdfMarkdownImporter.CoverTitle([cover.Build(), text.Build()]));
+        // A first page without a larger font names nothing.
+        Assert.Null(PdfMarkdownImporter.CoverTitle([text.Build()]));
         Assert.Null(PdfMarkdownImporter.CoverTitle([]));
     }
 

@@ -37,7 +37,7 @@ public static class DocumentReader
         string extension = Path.GetExtension(localPath);
         string name = Path.GetFileNameWithoutExtension(localPath) is { Length: > 0 } fileName ? fileName : address?.Host ?? path;
         // A web page without an extension may send a PDF file, so its first bytes count too.
-        if (extension.Equals(".pdf", StringComparison.OrdinalIgnoreCase) || bytes.AsSpan().StartsWith("%PDF-"u8))
+        if (extension.Equals(".pdf", StringComparison.OrdinalIgnoreCase) || (address is not null && bytes.AsSpan().StartsWith("%PDF-"u8)))
             return PdfMarkdownImporter.Read(bytes, name);
 
         if (extension.Equals(".html", StringComparison.OrdinalIgnoreCase) || extension.Equals(".htm", StringComparison.OrdinalIgnoreCase)
