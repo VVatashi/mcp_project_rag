@@ -1,22 +1,22 @@
-// Connects an MCP client that starts a local command to the HTTP endpoint of the knowledge base.
+// The bridge connects an MCP client that starts a local command to the HTTP endpoint of the knowledge base.
 //
 // Some clients, such as Claude Desktop, start an MCP server as a command and talk to it over stdin and stdout.
-// This script reads the messages of the client from stdin, posts them to /mcp and writes the answers to stdout.
+// The bridge reads the messages of the client from stdin, posts them to /mcp and writes the answers to stdout.
 // It needs Node.js 22 or later and no packages.
 //
 //   node tools/mcp-stdio.mjs [url]
 //
 // The url comes from the argument, then from PROJECT_RAG_URL, then http://127.0.0.1:5180/mcp.
-// PROJECT_RAG_TOKEN gives the bearer token of the server. The script writes its own messages to stderr only.
-// The server keeps no sessions, so the script works on after a restart of the server.
+// PROJECT_RAG_TOKEN gives the bearer token of the server. The bridge writes its own messages to stderr only.
+// The bridge needs a server without sessions, such as ProjectRag. Each message then stands alone, and the bridge works on after a restart of the server.
 
 import { createInterface } from 'node:readline';
 
 const url = process.argv[2] || process.env.PROJECT_RAG_URL || 'http://127.0.0.1:5180/mcp';
 const token = process.env.PROJECT_RAG_TOKEN || '';
+// The most time that the bridge waits for the open calls after the client closes stdin.
+const closeMilliseconds = 5000;
 
-// A server with sessions gives the session in the answer to initialize. The script sends it back with each message.
-let sessionId = '';
 let protocolVersion = '';
 
 function log(text) {
@@ -29,7 +29,6 @@ function write(message) {
 
 function headers() {
   const result = { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' };
-  if (sessionId) result['Mcp-Session-Id'] = sessionId;
   if (protocolVersion) result['MCP-Protocol-Version'] = protocolVersion;
   if (token) result.Authorization = `Bearer ${token}`;
   return result;
@@ -65,7 +64,7 @@ async function* readAnswer(response) {
   }
 }
 
-// Posts one message and writes the messages of the answer to stdout.
+// Posts one message and writes the messages of the answer to stdout. It returns true when the answer to the message itself came back.
 async function send(message) {
   const response = await fetch(url, { method: 'POST', headers: headers(), body: JSON.stringify(message) });
   if (!response.ok) {
@@ -73,11 +72,20 @@ async function send(message) {
     throw new Error(`the server answered ${response.status} ${response.statusText}${text ? `: ${text}` : ''}`);
   }
 
-  if (message.method === 'initialize') sessionId = response.headers.get('mcp-session-id') || '';
-  for await (const answer of readAnswer(response)) {
-    if (message.method === 'initialize' && answer.result?.protocolVersion) protocolVersion = answer.result.protocolVersion;
-    write(answer);
+  let answered = false;
+  try {
+    for await (const answer of readAnswer(response)) {
+      if (message.method === 'initialize' && answer.result?.protocolVersion) protocolVersion = answer.result.protocolVersion;
+      if (answer.id === message.id && !answer.method) answered = true;
+      write(answer);
+    }
+  } catch (error) {
+    // The client has its answer, so a broken rest of the stream is only a note.
+    if (!answered) throw error;
+    log(`the rest of the answer broke: ${error.message}`);
   }
+
+  return answered;
 }
 
 async function handle(line) {
@@ -91,13 +99,19 @@ async function handle(line) {
     return;
   }
 
+  // A request waits for its answer. A notification and an answer of the client to the server get none.
+  const isRequest = message.id !== undefined && Boolean(message.method);
+  let reason = '';
   try {
-    await send(message);
+    if (!(await send(message)) && isRequest) reason = `ProjectRag on ${url} closed the answer without a result.`;
   } catch (error) {
-    const reason = error.cause?.code === 'ECONNREFUSED' ? `ProjectRag does not answer on ${url}. Start the server with "dotnet run --project src/ProjectRag.Server".` : `ProjectRag on ${url} failed: ${error.message}`;
+    reason = error.cause?.code === 'ECONNREFUSED' ? `ProjectRag does not answer on ${url}. Start the server with "dotnet run --project src/ProjectRag.Server".` : `ProjectRag on ${url} failed: ${error.message}`;
+  }
+
+  if (reason) {
     log(reason);
-    // A request waits for its answer, so the client gets an error instead of silence. A notification gets no answer.
-    if (message.id !== undefined && message.method) write({ jsonrpc: '2.0', id: message.id, error: { code: -32603, message: reason } });
+    // The client gets an error instead of silence.
+    if (isRequest) write({ jsonrpc: '2.0', id: message.id, error: { code: -32603, message: reason } });
   }
 }
 
@@ -108,8 +122,6 @@ input.on('line', (line) => {
   pending.add(task);
 });
 input.on('close', async () => {
-  await Promise.allSettled(pending);
-  // The end of the session frees it on the server at once.
-  if (sessionId) await fetch(url, { method: 'DELETE', headers: headers() }).catch(() => {});
+  await Promise.race([Promise.allSettled(pending), new Promise((resolve) => setTimeout(resolve, closeMilliseconds))]);
   process.exit(0);
 });
