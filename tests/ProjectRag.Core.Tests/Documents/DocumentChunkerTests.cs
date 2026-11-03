@@ -46,6 +46,17 @@ public sealed partial class DocumentChunkerTests
     }
 
     [Fact]
+    public void Split_CountsTheDigitsOfCodeTwice()
+    {
+        // 25 lines of 24 characters with 16 digits each make 600 characters, but 1000 with the digits counted twice.
+        string numbers = "```text\n" + string.Join('\n', Enumerable.Range(0, 25).Select(static i => $"{i:D2} 11 22 33 44 55 66 77")) + "\n```";
+        string words = "```text\n" + string.Join('\n', Enumerable.Range(0, 25).Select(static _ => "ab cd ef gh ij kl mn op")) + "\n```";
+
+        Assert.True(Split(numbers, maxChars: 200, atomicMaxChars: 800, overlapChars: 0).Count > 1);
+        Assert.Single(Split(words, maxChars: 200, atomicMaxChars: 800, overlapChars: 0));
+    }
+
+    [Fact]
     public void Split_RepeatsTheHeaderOfALongTable()
     {
         string table = "| Name | Value |\n| --- | --- |\n" + string.Join('\n', Enumerable.Range(0, 40).Select(static i => $"| name{i:D2} | value {i:D2} |"));

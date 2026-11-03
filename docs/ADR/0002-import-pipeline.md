@@ -117,7 +117,7 @@ The chunker reads the blocks of Markdig, not lines:
    A section of 400 characters or more starts a chunk of its own, so its heading names its chunks and the hits of the search.
    The headings of these sections stay in its text. The chunk keeps the section of its start, and a section counts the chunks that overlap its text.
    The Vulkan specification has thousands of sections such as "Revision" or "Contact" with one line each, and a chunk of one line gives the search no context.
-2. A chunk with code, a formula or a table may grow to 3000 characters, so such a block stays whole. Code and TeX hold about three characters per token, so 3000 characters fit the slot of 2048 tokens.
+2. A chunk with code, a formula or a table may grow to 3000 characters, so such a block stays whole. Code and TeX hold about three characters per token, so 3000 characters fit the slot of 2048 tokens. A digit counts as two characters. The tokenizer of Qwen3 gives each digit a token of its own, so a table of numbers holds almost one token per character.
 3. A caption "Table 8.20:" stays with its table. A lead-in that ends with a colon stays with the formula or the code after it.
 4. A paragraph over the limit splits after a sentence. The split skips abbreviations such as "e.g." and never falls inside a code span, a formula or a link. The next chunk repeats the last sentence.
    Without the end of a sentence in reach, the split falls at the last space, and the next chunk repeats the words before it. Only a text without spaces, such as Chinese, splits at the limit, and the split keeps a surrogate pair whole.

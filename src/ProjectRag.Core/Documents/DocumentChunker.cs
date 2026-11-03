@@ -12,6 +12,7 @@ namespace ProjectRag.Core.Documents;
 /// A chunk shorter than <see cref="ChunkingOptions.MinChars"/> at the end of a section takes in the next small section when that section lies inside the section of the chunk
 /// or shares its parent. The heading of that section then stays in the text of the chunk.
 /// A chunk with code, a formula or a table may grow to <see cref="ChunkingOptions.AtomicMaxChars"/>, so such a block stays whole.
+/// A digit in such a chunk counts as two characters.
 /// A caption stays with its table or figure, and a short lead-in that ends with a colon stays with the block after it.
 /// </para>
 /// <para>
@@ -76,10 +77,11 @@ public sealed partial class DocumentChunker
             foreach (List<DocumentBlock> unit in Units(structure.Content, [.. section]))
             {
                 bool unitAtomic = unit.Any(static block => block.IsAtomic);
-                int unitLength = unit[^1].End - unit[0].Start;
-                int limit = currentAtomic || unitAtomic ? _atomicMaxChars : _maxChars;
+                int unitLength = Size(structure.Content, unit[0].Start, unit[^1].End, unitAtomic);
+                bool atomic = currentAtomic || unitAtomic;
+                int limit = atomic ? _atomicMaxChars : _maxChars;
                 // The repeated header of a table or fence of code counts toward the size of the chunk.
-                if (current.Count > 0 && unit[^1].End - current[0].Start + (current[0].Prefix?.Length ?? 0) <= limit)
+                if (current.Count > 0 && Size(structure.Content, current[0].Start, unit[^1].End, atomic) + (current[0].Prefix?.Length ?? 0) <= limit)
                 {
                     current.Add(new Piece(unit[0].Start, unit[^1].End));
                     currentAtomic |= unitAtomic;
@@ -159,7 +161,7 @@ public sealed partial class DocumentChunker
         foreach (DocumentBlock block in unit)
         {
             int limit = block.IsAtomic ? _atomicMaxChars : _maxChars;
-            if (current is { } open && block.End - open.Start + (open.Prefix?.Length ?? 0) <= limit)
+            if (current is { } open && Size(content, open.Start, block.End, block.IsAtomic) + (open.Prefix?.Length ?? 0) <= limit)
             {
                 current = open with { End = block.End };
                 continue;
@@ -168,7 +170,7 @@ public sealed partial class DocumentChunker
             if (current is { } done)
                 pieces.Add(done);
 
-            List<Piece> parts = block.End - block.Start <= limit
+            List<Piece> parts = Size(content, block.Start, block.End, block.IsAtomic) <= limit
                 ? [new Piece(block.Start, block.End)]
                 : block.IsAtomic ? SplitLines(content, block) : SplitText(content, block.Start, block.End);
             pieces.AddRange(parts.Take(parts.Count - 1));
@@ -249,10 +251,10 @@ public sealed partial class DocumentChunker
             body = 1;
         }
 
-        int Length(int line) => lines[line].End - lines[line].Start;
+        int Length(int line) => Size(content, lines[line].Start, lines[line].End, atomic: true);
 
         List<Piece> pieces = [];
-        int overhead = (prefix?.Length ?? 0) + (suffix?.Length ?? 0) + 1;
+        int overhead = (prefix is null ? 0 : Size(prefix, 0, prefix.Length, atomic: true)) + (suffix?.Length ?? 0) + 1;
         int next = body;
         int overlapFrom = body;
         while (next < lines.Count)
@@ -273,7 +275,7 @@ public sealed partial class DocumentChunker
             }
 
             // A piece holds the overlap and at least one new line.
-            int length = pieces.Count == 0 ? lines[next].Start - block.Start : overhead + lines[next].Start - lines[overlapFrom].Start;
+            int length = pieces.Count == 0 ? Size(content, block.Start, lines[next].Start, atomic: true) : overhead + Size(content, lines[overlapFrom].Start, lines[next].Start, atomic: true);
             int end = next;
             do
             {
@@ -308,6 +310,23 @@ public sealed partial class DocumentChunker
         }
 
         return pieces;
+    }
+
+    // Measures a range against the limits. A digit of code, a formula or a table counts twice.
+    // A tokenizer such as that of Qwen3 gives each digit a token of its own, so a table of numbers holds almost one token per character.
+    private static int Size(string content, int start, int end, bool atomic)
+    {
+        int size = end - start;
+        if (atomic)
+        {
+            for (int i = start; i < end; i++)
+            {
+                if (char.IsAsciiDigit(content[i]))
+                    size++;
+            }
+        }
+
+        return size;
     }
 
     // Returns the index of the space after the last end of a sentence in the range, or -1 when there is none.

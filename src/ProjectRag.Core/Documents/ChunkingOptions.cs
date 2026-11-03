@@ -23,7 +23,8 @@ public sealed class ChunkingOptions
     /// Gets or sets the most characters in the body of a chunk with code, a formula or a table. Such a block splits only beyond this size.
     /// </summary>
     /// <remarks>
-    /// Code and TeX hold about three characters per token, so 3000 characters stay below the 2048 tokens of a slot. A change makes the indexer read every file again.
+    /// Code and TeX hold about three characters per token, so 3000 characters stay below the 2048 tokens of a slot.
+    /// A digit counts as two characters, since a table of numbers holds almost one token per character. A change makes the indexer read every file again.
     /// </remarks>
     public int AtomicMaxChars { get; set; } = 3000;
 
