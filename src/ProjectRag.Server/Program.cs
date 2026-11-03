@@ -28,7 +28,8 @@ builder.Services
         options.ServerInfo = new Implementation { Name = "project-rag", Title = "ProjectRag knowledge base", Version = version };
         options.ServerInstructions = KnowledgeTools.Instructions;
     })
-    .WithHttpTransport()
+    // The tools need no state between the calls. Without sessions, a client works on after a restart of the server.
+    .WithHttpTransport(static options => options.Stateless = true)
     .WithTools<KnowledgeTools>();
 
 WebApplication app = builder.Build();
