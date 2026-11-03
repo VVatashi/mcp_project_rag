@@ -72,13 +72,13 @@ internal sealed partial class PdfMarkdownWriter(HashSet<string> vocabulary, Dict
 
     private string WriteBlock(PdfBlock block, HashSet<string> footnotes) => block.Kind switch
     {
-        PdfBlockKind.Heading => $"{new string('#', block.HeadingLevel)} {EscapeHeading(block.HeadingTitle ?? string.Join(' ', block.Lines.Select(static line => line.PlainText)))}",
+        PdfBlockKind.Heading => $"{new string('#', block.HeadingLevel)} {MarkdownText.EscapeHeading(block.HeadingTitle ?? string.Join(' ', block.Lines.Select(static line => line.PlainText)))}",
         PdfBlockKind.Code => WriteCode(block.Lines),
         PdfBlockKind.Math => WriteMath(block),
         PdfBlockKind.Table => WriteTable(block, footnotes),
         PdfBlockKind.Footnote => WriteFootnote(block, footnotes),
         PdfBlockKind.ListItem => WriteListItem(block, footnotes),
-        _ => EscapeStart(WriteInline(block, footnotes)),
+        _ => MarkdownText.EscapeStart(WriteInline(block, footnotes)),
     };
 
     private string WriteListItem(PdfBlock block, HashSet<string> footnotes)
@@ -86,7 +86,7 @@ internal sealed partial class PdfMarkdownWriter(HashSet<string> vocabulary, Dict
         string text = WriteInline(block, footnotes);
         // A bullet becomes the bullet of Markdown. A number or a letter keeps its text.
         Match bullet = BulletRegex().Match(text);
-        return bullet.Success ? $"- {text[bullet.Length..]}" : EscapeStart(text);
+        return bullet.Success ? $"- {text[bullet.Length..]}" : MarkdownText.EscapeStart(text);
     }
 
     private string WriteFootnote(PdfBlock block, HashSet<string> footnotes)
@@ -94,7 +94,7 @@ internal sealed partial class PdfMarkdownWriter(HashSet<string> vocabulary, Dict
         string text = WriteInline(block, footnotes);
         return FootnoteId(block) is { } id && FootnoteNumberRegex().Match(text) is { Success: true } match
             ? $"[^{id}]: {text[match.Length..].TrimStart()}"
-            : EscapeStart(text);
+            : MarkdownText.EscapeStart(text);
     }
 
     // The inline text of a block: the lines joined with spaces, a hyphen at a line end resolved, and the page marks of a block over a page break.
@@ -135,13 +135,13 @@ internal sealed partial class PdfMarkdownWriter(HashSet<string> vocabulary, Dict
             builder.Append(kind switch
             {
                 // A cell of a pipe table ends at a pipe, also inside a code span or a formula. The text escapes its pipes itself.
-                SegmentKind.Code => inTable ? CodeSpan(text).Replace("|", "\\|", StringComparison.Ordinal) : CodeSpan(text),
+                SegmentKind.Code => inTable ? MarkdownText.CodeSpan(text).Replace("|", "\\|", StringComparison.Ordinal) : MarkdownText.CodeSpan(text),
                 // An empty formula would write "$$", the fence of a display formula.
                 SegmentKind.Math when IsEmptyMath(text) => " ",
                 SegmentKind.Math => inTable ? $"${text.Trim().Replace("|", "\\|", StringComparison.Ordinal)}$" : $"${text.Trim()}$",
                 SegmentKind.Footnote => $"[^{text}]",
                 SegmentKind.Mark => text,
-                _ => EscapeText(text),
+                _ => MarkdownText.Escape(text),
             });
         }
 
@@ -565,56 +565,6 @@ internal sealed partial class PdfMarkdownWriter(HashSet<string> vocabulary, Dict
         return edges.Length - 2;
     }
 
-    private static string CodeSpan(string text)
-    {
-        string trimmed = text.Trim();
-        if (trimmed.Length == 0)
-            return string.Empty;
-
-        string fence = trimmed.Contains('`', StringComparison.Ordinal) ? "``" : "`";
-        string pad = trimmed.StartsWith('`') || trimmed.EndsWith('`') ? " " : string.Empty;
-        string lead = text.StartsWith(' ') ? " " : string.Empty;
-        string tail = text.EndsWith(' ') ? " " : string.Empty;
-        return $"{lead}{fence}{pad}{trimmed}{pad}{fence}{tail}";
-    }
-
-    // The text of a PDF file holds no Markdown, so the characters with a meaning in Markdown get a backslash.
-    // An underscore inside a word has no meaning, so a name such as gl_Position keeps it without a backslash.
-    private static string EscapeText(string text)
-    {
-        StringBuilder builder = new(text.Length + 8);
-        for (int i = 0; i < text.Length; i++)
-        {
-            char c = text[i];
-            bool inWord = i > 0 && i < text.Length - 1 && char.IsLetterOrDigit(text[i - 1]) && char.IsLetterOrDigit(text[i + 1]);
-            if (c is '\\' or '`' or '*' or '[' or ']' or '<' or '>' or '$' or '|' || (c == '_' && !inWord))
-                builder.Append('\\');
-
-            builder.Append(c);
-        }
-
-        return builder.ToString();
-    }
-
-    // A "#" at the end of a heading would close it, so "C#" keeps its sign escaped.
-    private static string EscapeHeading(string text)
-    {
-        string escaped = EscapeText(text).Trim();
-        return escaped.EndsWith('#') ? $"{escaped[..^1]}\\#" : escaped;
-    }
-
-    // A paragraph that starts like a heading, a quote, a list or a rule would change its kind.
-    // Markdown escapes only punctuation, so a number of a list keeps its digits and escapes its dot: "1\. Text".
-    private static string EscapeStart(string text)
-    {
-        Match match = BlockStartRegex().Match(text);
-        if (!match.Success)
-            return text;
-
-        int digits = match.Groups["digits"].Length;
-        return digits > 0 ? $"{text[..digits]}\\{text[digits..]}" : $"\\{text}";
-    }
-
     [GeneratedRegex(@"^(?<number>\d+|[*†‡§])\s*")]
     private static partial Regex FootnoteNumberRegex();
 
@@ -632,9 +582,6 @@ internal sealed partial class PdfMarkdownWriter(HashSet<string> vocabulary, Dict
 
     [GeneratedRegex(@"^\p{Ll}+")]
     private static partial Regex WordStartRegex();
-
-    [GeneratedRegex(@"^(?:#|>|[-+=]\s|(?<digits>\d+)[.)]\s)")]
-    private static partial Regex BlockStartRegex();
 
     [GeneratedRegex(@"[ \t]{2,}")]
     private static partial Regex MultiSpaceRegex();

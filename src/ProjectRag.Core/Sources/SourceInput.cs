@@ -10,7 +10,7 @@ public sealed partial class SourceInput
     /// <summary>
     /// The patterns of the files that a new source reads when the input names none.
     /// </summary>
-    public static IReadOnlyList<string> DefaultIncludeGlobs { get; } = ["**/*.md", "**/*.markdown", "**/*.txt", "**/*.rst", "**/*.adoc", "**/*.pdf"];
+    public static IReadOnlyList<string> DefaultIncludeGlobs { get; } = ["**/*.md", "**/*.markdown", "**/*.txt", "**/*.rst", "**/*.adoc", "**/*.pdf", "**/*.html", "**/*.htm"];
 
     /// <summary>
     /// The patterns of the files that a new source skips when the input names none: build output, dependencies and version control.
@@ -28,9 +28,14 @@ public sealed partial class SourceInput
     public string? Description { get; set; }
 
     /// <summary>
-    /// Gets or sets the absolute path of the folder.
+    /// Gets or sets the absolute path of the folder. An empty text gives a source of web pages only.
     /// </summary>
     public string RootPath { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the addresses of the web pages: absolute addresses of http or https. <see langword="null"/> gives no pages.
+    /// </summary>
+    public IReadOnlyList<string>? Urls { get; set; }
 
     /// <summary>
     /// Gets or sets the patterns of the files to read. <see langword="null"/> or an empty list gives <see cref="DefaultIncludeGlobs"/>.
@@ -62,10 +67,15 @@ public sealed partial class SourceInput
         if (!NameRegex().IsMatch(Name))
             errors[nameof(Name)] = ["The name holds 1 to 64 characters: lowercase Latin letters, digits, '.', '_' and '-'. It starts with a letter or a digit."];
 
-        if (!Path.IsPathFullyQualified(RootPath))
-            errors[nameof(RootPath)] = ["The path of the folder must be absolute."];
-        else if (!Directory.Exists(RootPath))
+        // A source of web pages needs no folder.
+        bool pagesOnly = string.IsNullOrEmpty(RootPath) && Pages().Count > 0;
+        if (!pagesOnly && !Path.IsPathFullyQualified(RootPath))
+            errors[nameof(RootPath)] = ["The path of the folder must be absolute. A source of web pages only leaves it empty."];
+        else if (!pagesOnly && !Directory.Exists(RootPath))
             errors[nameof(RootPath)] = [$"The folder {RootPath} does not exist."];
+
+        if (Pages().FirstOrDefault(static url => !IsPageUrl(url)) is { } wrong)
+            errors[nameof(Urls)] = [$"The address {wrong} is not an absolute address of http or https."];
 
         if (Includes().Any(string.IsNullOrWhiteSpace) || Excludes().Any(string.IsNullOrWhiteSpace))
             errors[nameof(IncludeGlobs)] = ["A pattern must not be empty."];
@@ -90,6 +100,20 @@ public sealed partial class SourceInput
     /// </summary>
     /// <returns>The patterns.</returns>
     public IReadOnlyList<string> Excludes() => ExcludeGlobs ?? DefaultExcludeGlobs;
+
+    /// <summary>
+    /// Gets the addresses of the web pages without empty lines and repeats.
+    /// </summary>
+    /// <returns>The addresses in their order.</returns>
+    public IReadOnlyList<string> Pages() => [.. (Urls ?? []).Select(static url => url?.Trim() ?? string.Empty).Where(static url => url.Length > 0).Distinct(StringComparer.Ordinal)];
+
+    /// <summary>
+    /// Checks whether a text is an absolute address of http or https.
+    /// </summary>
+    /// <param name="url">The text.</param>
+    /// <returns><see langword="true"/> for an address of a web page.</returns>
+    public static bool IsPageUrl(string url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out Uri? uri) && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
 
     /// <summary>
     /// Gets the rules of the categories, or an empty list.

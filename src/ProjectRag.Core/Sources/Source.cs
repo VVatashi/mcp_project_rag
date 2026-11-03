@@ -1,7 +1,7 @@
 namespace ProjectRag.Core.Sources;
 
 /// <summary>
-/// A source of documents: a folder on the host with the documentation of one project.
+/// A source of documents: a folder on the host with the documentation of one project, and web pages.
 /// </summary>
 public sealed class Source
 {
@@ -21,9 +21,14 @@ public sealed class Source
     public string Description { get; init; } = string.Empty;
 
     /// <summary>
-    /// Gets the absolute path of the folder.
+    /// Gets the absolute path of the folder, or an empty text for a source of web pages only.
     /// </summary>
     public string RootPath { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Gets the addresses of the web pages that the source reads next to its files. The address of a page is the path of its document.
+    /// </summary>
+    public IReadOnlyList<string> Urls { get; init; } = [];
 
     /// <summary>
     /// Gets the patterns of the files to read, for example <c>**/*.md</c>.
@@ -59,6 +64,11 @@ public sealed class Source
     /// Gets the number of documents.
     /// </summary>
     public long DocumentCount { get; init; }
+
+    /// <summary>
+    /// Gets the categories of the documents of the source, in ordinal order. They tell what the source holds, also when its description is old.
+    /// </summary>
+    public IReadOnlyList<string> Categories { get; init; } = [];
 
     /// <summary>
     /// Gets the number of chunks.

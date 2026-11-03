@@ -100,7 +100,15 @@ export function DocumentPage({ documentId, tab: tabName }: { documentId: number;
             <dt>Source</dt>
             <dd>{info.source}</dd>
             <dt>Path</dt>
-            <dd className="mono">{info.path}</dd>
+            <dd className="mono">
+              {/^https?:\/\//.test(info.path) ? (
+                <a className="link" href={info.path} target="_blank" rel="noreferrer">
+                  {info.path}
+                </a>
+              ) : (
+                info.path
+              )}
+            </dd>
             <dt>Size</dt>
             <dd>
               {formatBytes(info.sizeBytes)} · {formatNumber(info.contentLength)} characters of Markdown

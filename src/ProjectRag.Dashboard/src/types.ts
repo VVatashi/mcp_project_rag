@@ -13,6 +13,7 @@ export interface Source {
   name: string;
   description: string;
   rootPath: string;
+  urls: string[];
   includeGlobs: string[];
   excludeGlobs: string[];
   categoryRules: CategoryRule[];
@@ -28,6 +29,7 @@ export interface SourceInput {
   name: string;
   description: string;
   rootPath: string;
+  urls: string[] | null;
   includeGlobs: string[] | null;
   excludeGlobs: string[] | null;
   categoryRules: CategoryRule[] | null;

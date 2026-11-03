@@ -8,7 +8,7 @@ namespace ProjectRag.Core.Sources;
 public static class SourceScanner
 {
     /// <summary>
-    /// Lists the files under the folder of a source that match its patterns.
+    /// Lists the files under the folder of a source that match its patterns. A source of web pages only has none.
     /// </summary>
     /// <param name="source">The source.</param>
     /// <returns>The paths relative to the folder, with forward slashes, in ordinal order.</returns>
@@ -16,6 +16,9 @@ public static class SourceScanner
     public static IReadOnlyList<string> Scan(Source source)
     {
         ArgumentNullException.ThrowIfNull(source);
+        if (source.RootPath.Length == 0)
+            return [];
+
         if (!Directory.Exists(source.RootPath))
             throw new DirectoryNotFoundException($"The folder {source.RootPath} of the source {source.Name} does not exist.");
 

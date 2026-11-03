@@ -30,6 +30,8 @@ public sealed class KnowledgeBaseTests : IAsyncLifetime
     private const string VariableName = "PROJECTRAG_TEST_DATABASE";
 
     private readonly string _root = Directory.CreateTempSubdirectory("project-rag-").FullName;
+    private readonly FakePageClient _pages = new();
+    private readonly ManualTime _time = new();
     private ServiceProvider? _services;
 
     public async ValueTask InitializeAsync()
@@ -61,7 +63,9 @@ public sealed class KnowledgeBaseTests : IAsyncLifetime
 
         ServiceCollection services = new();
         services.AddLogging();
+        services.AddSingleton<TimeProvider>(_time);
         services.AddKnowledgeBase(configuration);
+        services.AddSingleton<IPageClient>(_pages);
         services.AddSingleton<IEmbeddingClient>(new FakeEmbeddingClient(0));
         services.AddSingleton<IRerankClient, FakeRerankClient>();
         _services = services.BuildServiceProvider();
@@ -227,6 +231,56 @@ public sealed class KnowledgeBaseTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Indexer_ReadsTheWebPagesOnceInTheIntervalOfTheRefresh()
+    {
+        ServiceProvider services = RequireDatabase();
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        const string url = "https://example.com/specs/format.html";
+        _pages.Pages[url] = "<title>Format</title><h2 id=\"_header\">1. Header</h2><p>The header holds the size of the texture. See <a href=\"#_levels\">the levels</a>.</p>"
+            + "<h2 id=\"_levels\">2. Levels</h2><p>The levels follow the header.</p>";
+        SourceStore store = services.GetRequiredService<SourceStore>();
+        SourceInput input = new() { Name = "web", Urls = [url], CategoryRules = [new CategoryRule { Pattern = "**/format.html", Category = "format" }] };
+        int sourceId = await store.AddAsync(input, cancellationToken);
+        Indexer indexer = services.GetRequiredService<Indexer>();
+
+        IndexRun first = (await indexer.RunAsync(sourceId, null, cancellationToken))!;
+        Assert.Equal(IndexRun.Succeeded, first.Status);
+        Assert.Equal(1, first.DocumentsAdded);
+        Assert.Equal(1, _pages.Requests);
+        Source source = (await store.GetAsync(sourceId, null, cancellationToken))!;
+        Assert.Equal(["format"], source.Categories);
+        SearchResult result = await services.GetRequiredService<SearchService>().SearchAsync(new SearchRequest { Query = "size of the texture" }, cancellationToken);
+        Assert.Equal(url, result.Hits[0].Path);
+
+        // Within a day the page stays as it is, without a request.
+        IndexRun second = (await indexer.RunAsync(sourceId, null, cancellationToken))!;
+        Assert.Equal(1, second.DocumentsUnchanged);
+        Assert.Equal(1, _pages.Requests);
+
+        // After a day the same page only gets its new time.
+        _time.Advance(TimeSpan.FromHours(25));
+        IndexRun third = (await indexer.RunAsync(sourceId, null, cancellationToken))!;
+        Assert.Equal(1, third.DocumentsUnchanged);
+        Assert.Equal(2, _pages.Requests);
+
+        // A page that does not load keeps its document.
+        _pages.Pages.Remove(url);
+        _time.Advance(TimeSpan.FromHours(25));
+        IndexRun fourth = (await indexer.RunAsync(sourceId, null, cancellationToken))!;
+        Assert.Equal(IndexRun.Succeeded, fourth.Status);
+        Assert.Equal(1, fourth.DocumentsFailed);
+        Assert.Contains("did not load", fourth.Warning, StringComparison.Ordinal);
+        Assert.Equal(1, (await store.GetAsync(sourceId, null, cancellationToken))!.DocumentCount);
+
+        // A page that leaves the source leaves the search.
+        input.Urls = [];
+        input.RootPath = _root;
+        await store.UpdateAsync(sourceId, input, cancellationToken);
+        IndexRun fifth = (await indexer.RunAsync(sourceId, null, cancellationToken))!;
+        Assert.Equal(1, fifth.DocumentsRemoved);
+    }
+
+    [Fact]
     public async Task Structure_ResolvesLinksMentionsAndBacklinks()
     {
         ServiceProvider services = RequireDatabase();
@@ -294,6 +348,32 @@ public sealed class KnowledgeBaseTests : IAsyncLifetime
         string full = Path.Combine(_root, path);
         Directory.CreateDirectory(Path.GetDirectoryName(full)!);
         File.WriteAllText(full, text);
+    }
+
+    // The pages by their addresses. A missing page fails like a server that answers 404.
+    private sealed class FakePageClient : IPageClient
+    {
+        public Dictionary<string, string> Pages { get; } = new(StringComparer.Ordinal);
+
+        public int Requests { get; private set; }
+
+        public Task<byte[]> GetAsync(Uri address, long maxBytes, CancellationToken cancellationToken)
+        {
+            Requests++;
+            return Pages.TryGetValue(address.AbsoluteUri, out string? page)
+                ? Task.FromResult(System.Text.Encoding.UTF8.GetBytes(page))
+                : throw new HttpRequestException("The server answered 404 Not Found.", null, System.Net.HttpStatusCode.NotFound);
+        }
+    }
+
+    // A clock that moves only when the test moves it.
+    private sealed class ManualTime : TimeProvider
+    {
+        private DateTimeOffset _now = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+        public override DateTimeOffset GetUtcNow() => _now;
+
+        public void Advance(TimeSpan time) => _now += time;
     }
 
     // A bag of words: each word adds 1 to a dimension from its hash. A salt gives another "model".

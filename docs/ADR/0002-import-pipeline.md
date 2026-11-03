@@ -63,9 +63,29 @@ PdfPig gives each glyph with its font, size and position, each thin vector line 
 | Hyphens | A hyphen at a line end goes when the document uses the joined word elsewhere: "compo-nent" becomes "component", "two-dimensional" stays |
 | Code | Lines in a monospace font. A prototype with italic parameters still counts as code. The monospace font of TeX sets the asterisk below the baseline. The asterisk joins the nearest line above it, so "char * const *string" stays one line. A closing brace alone is code, not a formula. Pseudocode sets its variables in math italics and its braces as math symbols. A run of code takes in the lines next to it with some monospace and one word of the text font at most. It also takes in the lines of braces and the comments such as "/* or */" or "// text", but no wrapped address such as "//www.khronos.org". A loop without a monospace line is code from the line that opens a brace to the line of the closing brace. A short script of a variable stays in the code: "s_c". A raised number or a sign such as "†" marks a footnote and stays out. An empty line inside a listing and a listing that goes on at the top of the next page keep one block |
 | Wrapped calls | A line of arguments in math italics, such as "index, count, name);", goes on with the call above it instead of becoming a formula |
-| Tables | Lines between wide rules with columns, and the rows right after the last rule that keep the columns |
+| Tables | Lines between wide rules with columns, and the rows right after the last rule that keep the columns. The rules of the cells of one row join into one wide rule |
+| Tables with a grid | Asciidoctor draws a border around each cell. Two or more rows with the same cells and the vertical borders between them form a table. A cell takes the glyphs between its borders from all lines of its row, so a cell over several lines stays one cell. The head of the table that repeats on the next page goes away. The text between two tables with the same columns has no vertical borders and stays text |
+| Trademarks | The form NFKC turns "™" into "TM", and a raised "TM" sticks to the name before it: "glTFTM". The importer keeps the sign, and a raised "TM" becomes "™" |
 | Footnotes | Smaller lines at the bottom of a page that start with a number |
 | Links | Link annotations with a target page and height. The target block gets an anchor |
+
+### HTML: the elements of the page
+
+An HTML file and a web page go through AngleSharp, a parser that follows the standard of HTML. The parser takes the encoding from the byte order mark or the meta tag. The importer walks the elements:
+
+| Element | Markdown |
+| --- | --- |
+| `h1` to `h6` | A heading of the same level. Its id becomes an anchor |
+| An element whose id a link of the page names | The mark `rag:anchor` before its block |
+| `a` | A link to an anchor of the page stays a link. A web page makes its relative links absolute, and a file keeps them relative, so they point at the files of its source |
+| `pre` | A fenced block with the language of the class `language-c` or the attribute `data-lang` |
+| `ul`, `ol` | A list. The blocks of an item indent under its marker |
+| `dl` | A paragraph for each term. A term with a long definition, with lists, tables or code, becomes a heading one level below the section, so the chunks of a format in a long appendix carry its name |
+| `table` | A pipe table. A cell joins its blocks into one line, and a cell over several columns adds empty cells. A table without a head takes its first row |
+| `\( … \)` and `\[ … \]` of MathJax | `$ … $` and `$$ … $$` |
+| `script`, `style`, `nav`, `#toc`, `#footer` | Nothing |
+
+Asciidoctor sets a note as a table of an icon and the text, so the note keeps its text only, as in a PDF file. The numbers of the callouts of a listing become "(1) The text".
 
 ### Formulas: from the fonts of TeX to LaTeX
 
@@ -126,7 +146,7 @@ The dashboard shows a chunk next to its page of the original PDF file, drawn wit
 
 1. Markdown with the service marks `rag:page` and `rag:anchor` is the intermediate form of every document.
 2. Markdig reads the Markdown into sections, blocks, anchors, pages, links and mentions.
-3. The PDF importer analyzes the layout of the glyphs and writes formulas as LaTeX.
+3. The PDF importer analyzes the layout of the glyphs and writes formulas as LaTeX. The HTML importer walks the elements of the page.
 4. The chunker keeps atomic blocks whole, splits text between sentences and overlaps split blocks.
 5. The database stores sections, anchors and links. The web API and MCP give a chunk with its links, its backlinks and its neighbors (`read_chunk`).
 6. KaTeX checks the formulas, in the dashboard and in the script `check-math`.

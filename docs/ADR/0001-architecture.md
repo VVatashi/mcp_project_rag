@@ -90,7 +90,8 @@ The package Pgvector is not needed. pgvector casts `real[]` to `vector`, so a ve
 ## Decision
 
 1. **The solution** has three .NET projects: `ProjectRag.Core`, `ProjectRag.Server` and `ProjectRag.Core.Tests`. The dashboard is a Vite project in `src/ProjectRag.Dashboard`. The build settings and the style come from Axion.
-2. **A source** is a folder on the host with patterns of files. Each document is a file. The indexer reads Markdown, plain text, reStructuredText, AsciiDoc and PDF.
+2. **A source** is a folder on the host with patterns of files, and a list of web pages. Each document is a file or a page. The indexer reads Markdown, plain text, reStructuredText, AsciiDoc, PDF and HTML.
+   A page goes to its server once a day at most, and a page that does not load keeps its last version.
 3. **A chunk** is a part of one section, at most 1800 characters. It keeps the path of its section, for example `Guide > Install > Linux`. The embedding model and the reranker see the path and the text.
 4. **The indexer** runs in the background, one source at a time. It skips a file with the stored size and time. It reuses the vector of a chunk with the same text, so an edit of a long file embeds only the changed chunks. It scans all sources every 10 minutes.
 5. **The model identity** follows the project rag. The table `embedding_model` stores the name, the dimensions, the templates, the probe text and its vector. A server that gives another vector for the stored probe text stops the vector search instead of mixing two models.
