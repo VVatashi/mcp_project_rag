@@ -29,6 +29,8 @@ The decisions and their reasons are in [docs/ADR/0001-architecture.md](docs/ADR/
 | `tests/ProjectRag.Core.Tests` | xUnit v3 | Tests of the chunker, the readers, the clients, the indexer and the search |
 | `compose.yaml`, `db/` | Docker Compose | PostgreSQL 18.6 on Alpine with pgvector 0.8.7 and pg_trgm |
 | `tools/start-llama.ps1` | PowerShell | Starts a llama.cpp server for the embeddings or the reranker |
+| `tools/connect-mcp.ps1` | PowerShell | Adds the MCP server to a client, such as Claude Code, Codex or Cursor |
+| `tools/mcp-stdio.mjs` | Node.js | Connects a client that starts only local commands, such as Claude Desktop, to the MCP endpoint |
 
 ## Requirements
 
@@ -120,15 +122,37 @@ A file that the indexer cannot read counts as failed, and the run goes on. The s
 
 A Pascal data center GPU embeds about 1200 tokens per second. The three OpenGL specifications in `data/` give about 3000 chunks and took about 18 minutes the first time.
 
-## Connect an agent
+## Connect a client
 
-The MCP endpoint is `http://127.0.0.1:5180/mcp`. It uses the transport Streamable HTTP. For Claude Code, run this command:
+The MCP endpoint is `http://127.0.0.1:5180/mcp`. It uses the transport Streamable HTTP and keeps no sessions, so a client works on after a restart of the server.
+The best search needs both llama.cpp servers. The embedding server turns the query into a vector, and the reranker orders the hits.
+
+The file `.mcp.json` connects Claude Code in this repository. The script `tools/connect-mcp.ps1` adds the server to a client for all its projects:
 
 ```bash
-claude mcp add --transport http project-rag http://127.0.0.1:5180/mcp
+pwsh tools/connect-mcp.ps1 -Client claude-code
 ```
 
-Other clients take a JSON entry:
+| Client | What the script does |
+| --- | --- |
+| `claude-code` | Runs `claude mcp add --scope user` |
+| `codex` | Runs `codex mcp add` |
+| `gemini` | Runs `gemini mcp add --scope user` |
+| `claude-desktop` | Writes `claude_desktop_config.json` with the bridge `tools/mcp-stdio.mjs` |
+| `cursor` | Writes `~/.cursor/mcp.json` |
+| `vscode` | Writes the file `mcp.json` of the user profile |
+| `windsurf` | Writes `~/.codeium/windsurf/mcp_config.json` |
+| `json` | Prints the entries for any other client and changes nothing |
+
+`-DryRun` prints the command or the new entry and changes nothing. The script keeps an old JSON settings file with the extension `.bak`. Restart the client after the change.
+
+A client that starts only local commands, such as Claude Desktop, needs the bridge `tools/mcp-stdio.mjs`. The bridge reads MCP messages from stdin and sends them to the endpoint. It needs Node.js and no packages:
+
+```json
+{ "mcpServers": { "project-rag": { "command": "node", "args": ["<repository>/tools/mcp-stdio.mjs"], "env": { "PROJECT_RAG_URL": "http://127.0.0.1:5180/mcp" } } } }
+```
+
+A client with Streamable HTTP takes this entry:
 
 ```json
 { "mcpServers": { "project-rag": { "type": "http", "url": "http://127.0.0.1:5180/mcp" } } }
@@ -144,7 +168,8 @@ Other clients take a JSON entry:
 | `read_chunk` | Reads a chunk by its `chunkId`: its section, its pages, the previous and the next chunk, its links with their targets and the chunks that link to it |
 | `index_source` | Puts a source into the queue of the indexer |
 
-When `Server:Token` holds a token, the client sends the header `Authorization: Bearer <token>`. For Claude Code, add `--header "Authorization: Bearer <token>"`.
+When `Server:Token` holds a token, the client sends the header `Authorization: Bearer <token>`. The script takes the token from `-Token` or from the variable `PROJECT_RAG_TOKEN`.
+The bridge and Codex read the token from `PROJECT_RAG_TOKEN` of their environment. The other clients keep the token as plain text in their settings.
 
 The token is empty by default. The server listens on 127.0.0.1 and rejects a foreign Host header, so web pages cannot reach it.
 Any local program can still call it, also a program of another user of this machine. Such a program can add any folder that the server can read as a source and read its files.
