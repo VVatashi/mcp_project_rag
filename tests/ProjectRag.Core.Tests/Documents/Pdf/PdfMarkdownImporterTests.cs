@@ -317,6 +317,18 @@ public sealed class PdfMarkdownImporterTests
     }
 
     [Fact]
+    public void CoverTitle_TakesTheLinesInTheLargestFontOfTheFirstPage()
+    {
+        PageBuilder cover = new(1);
+        cover.Text("Metal Shading Language", 72, 684, 38);
+        cover.Text("Specification", 72, 638, 38);
+        cover.Text("Version 4.1", 72, 606, 24);
+
+        Assert.Equal("Metal Shading Language Specification", PdfMarkdownImporter.CoverTitle([cover.Build()]));
+        Assert.Null(PdfMarkdownImporter.CoverTitle([]));
+    }
+
+    [Fact]
     public void Convert_ReadsATableWithABorderAroundEachCell()
     {
         // Each cell draws its own border, and the text of a cell wraps over two lines. Asciidoctor sets the tables of Khronos so.

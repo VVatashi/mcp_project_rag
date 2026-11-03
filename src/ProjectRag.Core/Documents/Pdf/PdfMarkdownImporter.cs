@@ -39,12 +39,32 @@ public static partial class PdfMarkdownImporter
     {
         using PdfDocument pdf = PdfPigSource.Open(bytes);
         string title = PdfPigSource.Normalize(pdf.Information.Title ?? string.Empty);
+        IReadOnlyList<PdfPageModel> pages = PdfPigSource.ReadPages(pdf);
         if (!FileNameRegex().IsMatch(title))
-            return Convert(title.Length == 0 ? fallbackTitle : title, PdfPigSource.ReadPages(pdf), PdfPigSource.ReadBookmarks(pdf));
+            return Convert(title.Length == 0 ? CoverTitle(pages) ?? fallbackTitle : title, pages, PdfPigSource.ReadBookmarks(pdf));
 
         // A word processor may write the name of the file as the title, such as "GL3PGM.PDF". The first heading then names the document.
-        DocumentText text = Convert(fallbackTitle, PdfPigSource.ReadPages(pdf), PdfPigSource.ReadBookmarks(pdf));
+        DocumentText text = Convert(fallbackTitle, pages, PdfPigSource.ReadBookmarks(pdf));
         return text with { Title = MarkdownStructureReader.FindTitle(text.Content) ?? fallbackTitle };
+    }
+
+    /// <summary>
+    /// Finds the title on the cover of a file without a title: the lines of the first page in its largest font, such as "Khronos Data Format Specification".
+    /// </summary>
+    /// <param name="pages">The pages of the file.</param>
+    /// <returns>The title, or <see langword="null"/> for an empty first page.</returns>
+    internal static string? CoverTitle(IReadOnlyList<PdfPageModel> pages)
+    {
+        if (pages.Count == 0)
+            return null;
+
+        List<Line> lines = PdfLayout.BuildLines(pages[0], static glyph => glyph.IsMath);
+        if (lines.Count == 0)
+            return null;
+
+        double size = lines.Max(static line => line.Size);
+        string title = PdfPigSource.Normalize(string.Join(' ', lines.Where(line => line.Size >= size - 0.5).Select(static line => line.PlainText)));
+        return title.Length is > 0 and <= 200 ? title : null;
     }
 
     /// <summary>
