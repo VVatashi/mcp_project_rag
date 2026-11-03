@@ -523,8 +523,11 @@ internal sealed partial class PdfMarkdownWriter(HashSet<string> vocabulary, Dict
     {
         double[] edges = block.Lines.Select(static line => line.CellEdges!).MaxBy(static cells => cells.Length)!;
         List<string[]> rows = [];
+        int page = block.Lines[0].Page;
         foreach (IGrouping<(int Page, int Row), Line> row in block.Lines.GroupBy(static line => (line.Page, line.CellRow)))
         {
+            bool newPage = row.Key.Page != page;
+            page = row.Key.Page;
             string[] values = new string[edges.Length - 1];
             for (int column = 0; column < values.Length; column++)
             {
@@ -539,7 +542,8 @@ internal sealed partial class PdfMarkdownWriter(HashSet<string> vocabulary, Dict
                 values[column] = parts.Count == 0 ? string.Empty : WriteInline(new PdfBlock { Kind = PdfBlockKind.Paragraph, Page = row.Key.Page, Lines = parts }, footnotes, inTable: true);
             }
 
-            if (rows.Count > 0 && values.SequenceEqual(rows[0]))
+            // Only the first row of a later page may be the copy of the head. A row of the body may equal the head by chance.
+            if (newPage && rows.Count > 0 && values.SequenceEqual(rows[0]))
                 continue;
 
             rows.Add(values);

@@ -357,11 +357,11 @@ public sealed class KnowledgeBaseTests : IAsyncLifetime
 
         public int Requests { get; private set; }
 
-        public Task<byte[]> GetAsync(Uri address, long maxBytes, CancellationToken cancellationToken)
+        public Task<WebPage> GetAsync(Uri address, long maxBytes, CancellationToken cancellationToken)
         {
             Requests++;
             return Pages.TryGetValue(address.AbsoluteUri, out string? page)
-                ? Task.FromResult(System.Text.Encoding.UTF8.GetBytes(page))
+                ? Task.FromResult(new WebPage(System.Text.Encoding.UTF8.GetBytes(page), address))
                 : throw new HttpRequestException("The server answered 404 Not Found.", null, System.Net.HttpStatusCode.NotFound);
         }
     }

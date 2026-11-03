@@ -14,11 +14,12 @@ namespace ProjectRag.Core.Documents.Html;
 /// <remarks>
 /// <list type="bullet">
 /// <item>The headings, the paragraphs, the lists, the tables, the code and the quotes keep their kind.</item>
-/// <item>A term of a definition list is a paragraph. A term with a long definition, such as a format with its lists of mappings, is a heading one level below the section.</item>
+/// <item>A term of a definition list is a paragraph. A list with a long definition, such as a list of formats with their mappings, makes each term a heading one level below the section.
+/// The text after such a list stays in the section of its last term.</item>
 /// <item>The scripts, the styles, the navigation, the table of contents and the footer of the page go away.</item>
 /// <item>An element whose id a link of the page names gets the mark <c>&lt;!-- rag:anchor id --&gt;</c>, and so does each heading with an id.
 /// A link to an anchor of the page stays a link, so the chunks link to each other as in a PDF file.</item>
-/// <item>The formulas of LaTeX for MathJax, <c>\( … \)</c> and <c>\[ … \]</c>, become <c>$ … $</c> and <c>$$ … $$</c>.</item>
+/// <item>The formulas of LaTeX for MathJax, <c>\( … \)</c> in the text and <c>\[ … \]</c> in a stem block of Asciidoctor, become <c>$ … $</c> and <c>$$ … $$</c>.</item>
 /// </list>
 /// </remarks>
 internal static partial class HtmlMarkdownImporter
@@ -26,8 +27,10 @@ internal static partial class HtmlMarkdownImporter
     private static readonly HashSet<string> BlockTags = new(StringComparer.OrdinalIgnoreCase)
     {
         "address", "article", "aside", "blockquote", "caption", "dd", "details", "dialog", "div", "dl", "dt", "fieldset", "figcaption", "figure",
-        "footer", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hgroup", "hr", "li", "main", "nav", "ol", "p", "pre", "section", "summary", "table", "ul",
+        "footer", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hgroup", "hr", "li", "main", "nav", "ol", "p", "pre", "section", "summary", "table", "td", "th", "tr", "ul",
     };
+
+    private static readonly string BlockSelector = string.Join(", ", BlockTags);
 
     private static readonly HashSet<string> SkippedTags = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -39,7 +42,7 @@ internal static partial class HtmlMarkdownImporter
     /// </summary>
     /// <param name="bytes">The bytes of the page.</param>
     /// <param name="fallbackTitle">The title when the page has none.</param>
-    /// <param name="address">The address of a web page, which turns its relative links into absolute ones. <see langword="null"/> for a file.</param>
+    /// <param name="address">The address of a web page after its redirects, which turns its relative links into absolute ones. <see langword="null"/> for a file.</param>
     /// <returns>The text of the document in Markdown.</returns>
     public static DocumentText Read(byte[] bytes, string fallbackTitle, Uri? address)
     {
@@ -86,6 +89,7 @@ internal static partial class HtmlMarkdownImporter
         private readonly HashSet<string> _written;
         private readonly List<string> _pending;
         private readonly Uri? _address;
+        private readonly Uri? _linkBase;
         private readonly bool _nested;
         private readonly bool _inTable;
         private readonly IHtmlDocument _document;
@@ -95,6 +99,8 @@ internal static partial class HtmlMarkdownImporter
         {
             _document = document;
             _address = address;
+            // The element base may move the relative links of a web page to another folder.
+            _linkBase = address is not null && document.QuerySelector("base[href]")?.GetAttribute("href") is { } baseHref && Uri.TryCreate(address, baseHref, out Uri? moved) ? moved : address;
             _targets = new(StringComparer.Ordinal);
             _written = new(StringComparer.Ordinal);
             _pending = [];
@@ -109,6 +115,7 @@ internal static partial class HtmlMarkdownImporter
         {
             _document = parent._document;
             _address = parent._address;
+            _linkBase = parent._linkBase;
             _targets = parent._targets;
             _written = parent._written;
             _pending = parent._pending;
@@ -127,6 +134,14 @@ internal static partial class HtmlMarkdownImporter
         {
             Writer writer = new(this, inTable || _inTable);
             writer.Blocks(element);
+            return writer._blocks;
+        }
+
+        // The element itself, not only its children, becomes the blocks: a list keeps its markers.
+        private List<string> NestedBlock(IElement element)
+        {
+            Writer writer = new(this, _inTable);
+            writer.Block(element);
             return writer._blocks;
         }
 
@@ -167,7 +182,11 @@ internal static partial class HtmlMarkdownImporter
             List<INode> run = [];
             foreach (INode node in parent.ChildNodes)
             {
-                if (node is IElement element && (IsBlock(element) || IsSkipped(element)))
+                // A skipped element inside a line, such as an image, leaves the line whole.
+                if (node is IElement skipped && IsSkipped(skipped) && !IsBlock(skipped))
+                    continue;
+
+                if (node is IElement element && (IsBlock(element) || element.QuerySelector(BlockSelector) is not null))
                 {
                     Paragraph(run);
                     if (!IsSkipped(element))
@@ -239,23 +258,34 @@ internal static partial class HtmlMarkdownImporter
         private void Heading(IElement element)
         {
             Anchor(element.Id, always: true);
-            // The marker of the heading comes first, so a number such as "1." needs no escape.
+            if (HeadingLine(element, element.LocalName[1] - '0') is { } line)
+            {
+                _level = element.LocalName[1] - '0';
+                Add(line);
+            }
+        }
+
+        // The marker of the heading comes first, so a number such as "1." needs no escape. A "#" at the end of a heading would close it.
+        private string? HeadingLine(IElement element, int level)
+        {
             string text = Collapse(Inline(element));
             if (text.Length == 0)
-                return;
+                return null;
 
-            // A "#" at the end of a heading would close it.
             if (text.EndsWith('#'))
                 text = $"{text[..^1]}\\#";
 
-            _level = element.LocalName[1] - '0';
-            Add($"{new string('#', _level)} {text}");
+            return $"{new string('#', level)} {text}";
         }
 
         private void Definitions(IElement list)
         {
+            // HTML allows a div around a term and its definition.
+            List<IElement> children = [.. list.Children.SelectMany(static child => child.LocalName == "div" ? (IEnumerable<IElement>)child.Children : [child])];
+            // A long definition holds lists, tables or code. Its term names a part of the section, so the chunks of the part carry it in their heading.
+            bool parts = !_nested && _level < 6 && children.Any(static child => child.LocalName == "dd" && child.QuerySelector("ul, ol, dl, table, pre") is not null);
             List<IElement> terms = [];
-            foreach (IElement child in list.Children)
+            foreach (IElement child in children)
             {
                 if (child.LocalName == "dt")
                 {
@@ -266,21 +296,18 @@ internal static partial class HtmlMarkdownImporter
                 if (child.LocalName != "dd")
                     continue;
 
-                // A long definition holds lists, tables or code. Its term names a part of the section, so the chunks of the part carry it in their heading.
-                bool part = !_nested && _level < 6 && child.QuerySelector("ul, ol, dl, table, pre") is not null;
                 foreach (IElement term in terms)
                 {
                     Anchor(term.Id);
-                    string text = Collapse(Inline(term));
-                    Add(part ? $"{new string('#', _level + 1)} {text}" : MarkdownText.EscapeStart(text));
+                    Add(parts ? HeadingLine(term, _level + 1) ?? string.Empty : MarkdownText.EscapeStart(Collapse(Inline(term))));
                 }
 
                 terms.Clear();
-                if (part)
+                if (parts)
                     _level++;
 
                 Blocks(child);
-                if (part)
+                if (parts)
                     _level--;
             }
 
@@ -317,15 +344,22 @@ internal static partial class HtmlMarkdownImporter
         {
             bool ordered = element.LocalName == "ol";
             int number = ordered && int.TryParse(element.GetAttribute("start"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int start) ? start : 1;
-            foreach (IElement item in element.Children.Where(static child => child.LocalName == "li"))
+            // Generated HTML may set a nested list right inside a list, without its item. It belongs to the item before it.
+            List<List<string>> items = [];
+            foreach (IElement child in element.Children.Where(static child => !IsSkipped(child)))
             {
-                Anchor(item.Id);
-                string marker = ordered ? string.Create(CultureInfo.InvariantCulture, $"{number++}. ") : "- ";
-                List<string> blocks = Nested(item);
-                if (blocks.Count == 0)
-                    continue;
+                Anchor(child.Id);
+                List<string> blocks = child.LocalName == "li" ? Nested(child) : NestedBlock(child);
+                if (child.LocalName == "li" || items.Count == 0)
+                    items.Add(blocks);
+                else
+                    items[^1].AddRange(blocks);
+            }
 
+            foreach (List<string> blocks in items.Where(static blocks => blocks.Count > 0))
+            {
                 // The blocks after the first one indent under the marker, so they stay inside the item.
+                string marker = ordered ? string.Create(CultureInfo.InvariantCulture, $"{number++}. ") : "- ";
                 string indent = new(' ', marker.Length);
                 Add(marker + string.Join("\n\n", blocks).Replace("\n", "\n" + indent, StringComparison.Ordinal).Replace("\n" + indent + "\n", "\n\n", StringComparison.Ordinal));
             }
@@ -333,6 +367,13 @@ internal static partial class HtmlMarkdownImporter
 
         private void Table(IHtmlTableElement table)
         {
+            // A pipe table holds one line in a cell, so a table inside a cell becomes its text.
+            if (_inTable)
+            {
+                Add(Collapse(Inline(table)));
+                return;
+            }
+
             if (table.Caption is { } caption)
             {
                 Anchor(caption.Id);
@@ -340,15 +381,33 @@ internal static partial class HtmlMarkdownImporter
             }
 
             List<List<string>> rows = [];
+            // The rows that a cell above still covers, by column.
+            List<int> covered = [];
             foreach (IHtmlTableRowElement row in table.Rows)
             {
                 List<string> cells = [];
                 foreach (IHtmlTableCellElement cell in row.Cells)
                 {
+                    SkipCovered(cells, covered);
                     // A cell holds one line: its blocks join with spaces.
                     cells.Add(Collapse(string.Join(' ', Nested(cell, inTable: true))));
-                    for (int i = 1; i < cell.ColumnSpan; i++)
+                    for (int i = 1; i < Math.Max(1, cell.ColumnSpan); i++)
                         cells.Add(string.Empty);
+
+                    for (int i = cells.Count - Math.Max(1, cell.ColumnSpan); i < cells.Count; i++)
+                    {
+                        while (covered.Count <= i)
+                            covered.Add(0);
+
+                        covered[i] = Math.Max(0, cell.RowSpan - 1);
+                    }
+                }
+
+                SkipCovered(cells, covered);
+                for (int i = cells.Count; i < covered.Count; i++)
+                {
+                    if (covered[i] > 0)
+                        covered[i]--;
                 }
 
                 if (cells.Count > 0)
@@ -369,6 +428,16 @@ internal static partial class HtmlMarkdownImporter
             }
 
             Add(builder.ToString().TrimEnd());
+        }
+
+        // A column that a cell of a row above covers gets an empty cell, so the next cell keeps its column.
+        private static void SkipCovered(List<string> cells, List<int> covered)
+        {
+            while (cells.Count < covered.Count && covered[cells.Count] > 0)
+            {
+                covered[cells.Count]--;
+                cells.Add(string.Empty);
+            }
         }
 
         private string Inline(INode node)
@@ -430,12 +499,14 @@ internal static partial class HtmlMarkdownImporter
             if (LocalAnchor(href) is { } anchor)
                 return $"[{text}](#{Uri.EscapeDataString(anchor)})";
 
+            // A link that runs a script or names another scheme stays text.
+            if (Uri.TryCreate(href, UriKind.Absolute, out Uri? own) && own.Scheme is not ("http" or "https" or "mailto" or "file"))
+                return text;
+
             // A web page links to absolute addresses. A file keeps its relative links, so they point at the files of its source.
             string target = href;
-            if (_address is not null && Uri.TryCreate(_address, href, out Uri? absolute))
+            if (_linkBase is not null && Uri.TryCreate(_linkBase, href, out Uri? absolute))
                 target = absolute.AbsoluteUri;
-            else if (href.StartsWith("javascript:", StringComparison.OrdinalIgnoreCase))
-                return text;
 
             return target.Any(static c => c is ' ' or '(' or ')' or '<' or '>') ? $"{text} ({target})" : $"[{text}]({target})";
         }
@@ -447,7 +518,7 @@ internal static partial class HtmlMarkdownImporter
             if (hash < 0 || hash == href.Length - 1)
                 return null;
 
-            if (hash > 0 && !(_address is not null && Uri.TryCreate(_address, href, out Uri? absolute)
+            if (hash > 0 && !(_address is not null && Uri.TryCreate(_linkBase, href, out Uri? absolute)
                 && absolute.GetLeftPart(UriPartial.Query) == _address.GetLeftPart(UriPartial.Query)))
                 return null;
 

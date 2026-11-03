@@ -54,7 +54,7 @@ public static class KnowledgeBaseServiceCollectionExtensions
         // A page of documentation has no reason to take long. The name in User-Agent lets the owner of a site see who reads it.
         services.AddHttpClient(HttpPageClient.HttpClientName, static http =>
         {
-            http.Timeout = TimeSpan.FromSeconds(60);
+            http.Timeout = HttpPageClient.Timeout;
             http.DefaultRequestHeaders.UserAgent.ParseAdd("ProjectRag/1.0");
         });
         services.AddSingleton<IEmbeddingClient, LlamaEmbeddingClient>();

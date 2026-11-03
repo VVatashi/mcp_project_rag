@@ -66,14 +66,40 @@ public sealed class HtmlMarkdownImporterTests
             <h2 id="formats">Appendix B: Formats</h2>
             <dl>
             <dt>VK_FORMAT_R8_UNORM</dt><dd><dl><dt>OpenGL</dt><dd><ul><li>GL_R8</li></ul></dd></dl></dd>
-            <dt>Premultiplied Alpha</dt><dd><p>The colors carry the alpha.</p></dd>
+            <div><dt>VK_FORMAT_R8_SNORM</dt><dd><p>No mapping.</p></dd></div>
             </dl>
+            <dl><dt>Premultiplied Alpha</dt><dd><p>The colors carry the alpha.</p></dd></dl>
             <div class="admonitionblock note"><table><tr><td class="icon"><i class="fa icon-note" title="Note"></i></td><td class="content">A note.</td></tr></table></div>
             </body>
             """);
 
-        Assert.Contains("## Appendix B: Formats\n\n### VK_FORMAT_R8_UNORM\n\n#### OpenGL\n\n- GL_R8", text.Content, StringComparison.Ordinal);
+        Assert.Contains("## Appendix B: Formats\n\n### VK_FORMAT_R8_UNORM\n\n#### OpenGL\n\n- GL_R8\n\n### VK_FORMAT_R8_SNORM\n\nNo mapping.", text.Content, StringComparison.Ordinal);
         Assert.Contains("\n\nPremultiplied Alpha\n\nThe colors carry the alpha.\n\nA note.\n", text.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Read_KeepsTheColumnsOfACellOverTwoRowsAndATableInACell()
+    {
+        DocumentText text = Read("""
+            <table><tr><th>Format</th><th>Size</th><th>Type</th></tr>
+            <tr><td rowspan="2">R8</td><td>1</td><td>UNORM</td></tr>
+            <tr><td>1</td><td>SNORM</td></tr>
+            <tr><td>RG8</td><td><table><tr><td>a|b</td><td>c</td></tr></table></td><td>UINT</td></tr></table>
+            """);
+
+        Assert.Contains("| R8 | 1 | UNORM |\n|  | 1 | SNORM |\n| RG8 | a\\|b c | UINT |", text.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Read_KeepsALineWithAnImageAndDropsTheLinksOfScripts()
+    {
+        DocumentText text = Read("""
+            <head><base href="https://example.com/docs/"></head>
+            <ul><li>Press <kbd>Ctrl</kbd> <img src="key.png"> to <a href="javascript:save()">save</a> the <a href="guide.html">guide</a>.</li>
+            <ul><li>A nested item</li></ul></ul>
+            """);
+
+        Assert.Contains("- Press `Ctrl` to save the [guide](https://example.com/docs/guide.html).\n\n  - A nested item", text.Content, StringComparison.Ordinal);
     }
 
     [Fact]

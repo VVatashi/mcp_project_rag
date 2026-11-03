@@ -54,10 +54,10 @@ public sealed class SourceTests : IDisposable
         SourceInput pages = new() { Name = "ktx", Urls = ["https://registry.khronos.org/KTX/specs/2.0/ktxspec.v2.html", " ", "https://registry.khronos.org/KTX/specs/2.0/ktxspec.v2.html"] };
 
         Assert.Empty(pages.Validate());
-        Assert.Equal(["https://registry.khronos.org/KTX/specs/2.0/ktxspec.v2.html"], pages.Pages());
+        Assert.Equal(["https://registry.khronos.org/KTX/specs/2.0/ktxspec.v2.html"], pages.CleanUrls());
         Assert.Contains(nameof(SourceInput.Urls), new SourceInput { Name = "a", Urls = ["ftp://example.com/a.html"] }.Validate().Keys);
         Assert.Contains(nameof(SourceInput.RootPath), new SourceInput { Name = "a" }.Validate().Keys);
-        Assert.Empty(SourceScanner.Scan(new Source { Name = "ktx", Urls = pages.Pages() }));
+        Assert.Empty(SourceScanner.Scan(new Source { Name = "ktx", Urls = pages.CleanUrls() }));
     }
 
     [Fact]

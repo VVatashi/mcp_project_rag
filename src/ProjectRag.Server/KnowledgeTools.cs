@@ -40,7 +40,7 @@ internal sealed class KnowledgeTools(SearchService search, SourceStore sources, 
     private const int DefaultReadLength = 20_000;
 
     [McpServerTool(Name = "list_sources", Title = "List the sources", ReadOnly = true, Idempotent = true, OpenWorld = false)]
-    [Description("Lists the sources of the knowledge base: a folder or a set of web pages, with its description, the categories of its documents, its pages and the numbers of documents and chunks.")]
+    [Description("Lists the sources of the knowledge base: folders and web pages. A source gives its description, the categories of its documents, its urls and its counts.")]
     public async Task<IReadOnlyList<SourceInfo>> ListSourcesAsync(CancellationToken cancellationToken)
     {
         short? modelId = (await models.GetStatusAsync(cancellationToken)).Model?.ModelId;
@@ -144,12 +144,12 @@ internal sealed class KnowledgeTools(SearchService search, SourceStore sources, 
     /// <param name="Name">The name for the other tools.</param>
     /// <param name="Description">What the documents are about.</param>
     /// <param name="Categories">The categories of the documents of the source. A search narrows to them with its categories.</param>
-    /// <param name="Pages">The addresses of the web pages of the source. The address of a page is the path of its document.</param>
+    /// <param name="Urls">The addresses of the web pages of the source. The address of a page is the path of its document.</param>
     /// <param name="Documents">The number of documents.</param>
     /// <param name="Chunks">The number of chunks.</param>
     /// <param name="EmbeddedChunks">The number of chunks with a vector. Fewer than <paramref name="Chunks"/> means the indexer is not done.</param>
     /// <param name="IndexedAt">The end of the last successful run of the indexer.</param>
-    internal sealed record SourceInfo(string Name, string Description, IReadOnlyList<string> Categories, IReadOnlyList<string> Pages, long Documents, long Chunks, long EmbeddedChunks, DateTime? IndexedAt);
+    internal sealed record SourceInfo(string Name, string Description, IReadOnlyList<string> Categories, IReadOnlyList<string> Urls, long Documents, long Chunks, long EmbeddedChunks, DateTime? IndexedAt);
 
     /// <summary>
     /// A part of a document.

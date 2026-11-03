@@ -193,7 +193,7 @@ export function DocumentPage({ documentId, tab: tabName }: { documentId: number;
         </Panel>
       )}
 
-      {tab === 'formulas' && info && <Formulas documentId={documentId} isPdf={info.path.toLowerCase().endsWith('.pdf')} from={from} onPage={goTo} />}
+      {tab === 'formulas' && info && <Formulas documentId={documentId} isPdf={!/^https?:\/\//.test(info.path) && info.path.toLowerCase().endsWith('.pdf')} from={from} onPage={goTo} />}
     </div>
   );
 }

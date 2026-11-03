@@ -195,7 +195,7 @@ public sealed class Indexer(
         }
     }
 
-    // A page goes to its server at most once in the interval of the refresh, and the time of the document is the time of the last request.
+    // A page goes to its server at most once in the interval of the refresh. The time of the document is the time of the last request.
     // A new version of the parser or of the replacements requests the page at once. A page that fails keeps its old document.
     private async Task SyncPagesAsync(Reader reader, IndexRun run, List<string> warnings, List<string> seen, Action<IndexRun>? progress, CancellationToken cancellationToken)
     {
@@ -212,10 +212,10 @@ public sealed class Indexer(
                 continue;
             }
 
-            byte[] bytes;
+            WebPage page;
             try
             {
-                bytes = await pages.GetAsync(new Uri(url), chunking.CurrentValue.MaxFileBytes, cancellationToken);
+                page = await pages.GetAsync(new Uri(url), chunking.CurrentValue.MaxFileBytes, cancellationToken);
             }
             catch (Exception exception) when (exception is HttpRequestException or InvalidDataException || (exception is TaskCanceledException && !cancellationToken.IsCancellationRequested))
             {
@@ -225,13 +225,13 @@ public sealed class Indexer(
                 continue;
             }
 
-            await StoreAsync(reader, url, bytes, now, run, warnings, cancellationToken);
+            await StoreAsync(reader, url, page.Bytes, now, run, warnings, cancellationToken, page.Address);
             progress?.Invoke(run);
         }
     }
 
     // Reads a file or a page into chunks and writes them. Bytes with the stored hash only get their new time.
-    private async Task StoreAsync(Reader reader, string path, byte[] bytes, DateTime modifiedAt, IndexRun run, List<string> warnings, CancellationToken cancellationToken)
+    private async Task StoreAsync(Reader reader, string path, byte[] bytes, DateTime modifiedAt, IndexRun run, List<string> warnings, CancellationToken cancellationToken, Uri? address = null)
     {
         (DocumentFileState? state, string fileVersion) = reader.State(path);
         IReadOnlyList<TextReplacement> replacements = SourceScanner.Replacements(reader.Source, path);
@@ -247,7 +247,7 @@ public sealed class Indexer(
         try
         {
             // Every format becomes Markdown first. The structure and the chunks come from the Markdown.
-            DocumentText text = DocumentReader.Read(path, bytes);
+            DocumentText text = DocumentReader.Read(path, bytes, address);
             structure = MarkdownStructureReader.Read(text with { Content = TextReplacement.ApplyAll(text.Content, replacements) }, path);
             chunks = reader.Chunker.Split(structure);
         }

@@ -91,6 +91,7 @@ The default patterns read `**/*.md`, `**/*.markdown`, `**/*.txt`, `**/*.rst`, `*
 The field `urls` of a source lists web pages by their addresses. The address of a page is the path of its document, so the rules of the categories match it too.
 A source of web pages only leaves `rootPath` empty. The indexer requests a page again after `Indexing:PageRefreshHours`, 24 hours by default.
 A page that does not load keeps its last version in the search, and the run gives a warning.
+A web page links to other pages by their full addresses, and these links stay out of the links between chunks.
 
 ```json
 "urls": ["https://registry.khronos.org/KTX/specs/2.0/ktxspec.v2.html"],

@@ -346,7 +346,10 @@ internal static class PdfPigSource
 
             PdfRectangle box = frame.Turn(letter.BoundingBox);
             PdfPoint start = frame.Turn(letter.StartBaseLine);
-            double right = Math.Max(start.X + 0.1, Math.Max(frame.Turn(letter.EndBaseLine).X, box.Right));
+            // The ink of a letter of the text, such as "f", may reach past its advance into the gap before the next word: "of the" would become "ofthe".
+            // A letter of a formula keeps its ink, so its scripts sit right of it.
+            double end = frame.Turn(letter.EndBaseLine).X;
+            double right = (style & (GlyphStyle.Math | GlyphStyle.MathExtension)) == 0 && end > start.X ? end : Math.Max(start.X + 0.1, Math.Max(end, box.Right));
             bool spaceBefore = space is { } before && Math.Abs(before.Y - start.Y) < letter.PointSize * 0.3 && before.X <= start.X + 0.5 && start.X - before.X < letter.PointSize * 3;
             space = null;
             glyphs.Add(new Glyph(text, start.X, right, start.Y, letter.PointSize, style, font, box.Top, box.Bottom, spaceBefore));

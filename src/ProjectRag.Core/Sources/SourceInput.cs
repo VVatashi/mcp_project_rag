@@ -68,13 +68,13 @@ public sealed partial class SourceInput
             errors[nameof(Name)] = ["The name holds 1 to 64 characters: lowercase Latin letters, digits, '.', '_' and '-'. It starts with a letter or a digit."];
 
         // A source of web pages needs no folder.
-        bool pagesOnly = string.IsNullOrEmpty(RootPath) && Pages().Count > 0;
+        bool pagesOnly = string.IsNullOrEmpty(RootPath) && CleanUrls().Count > 0;
         if (!pagesOnly && !Path.IsPathFullyQualified(RootPath))
             errors[nameof(RootPath)] = ["The path of the folder must be absolute. A source of web pages only leaves it empty."];
         else if (!pagesOnly && !Directory.Exists(RootPath))
             errors[nameof(RootPath)] = [$"The folder {RootPath} does not exist."];
 
-        if (Pages().FirstOrDefault(static url => !IsPageUrl(url)) is { } wrong)
+        if (CleanUrls().FirstOrDefault(static url => !IsPageUrl(url)) is { } wrong)
             errors[nameof(Urls)] = [$"The address {wrong} is not an absolute address of http or https."];
 
         if (Includes().Any(string.IsNullOrWhiteSpace) || Excludes().Any(string.IsNullOrWhiteSpace))
@@ -105,7 +105,7 @@ public sealed partial class SourceInput
     /// Gets the addresses of the web pages without empty lines and repeats.
     /// </summary>
     /// <returns>The addresses in their order.</returns>
-    public IReadOnlyList<string> Pages() => [.. (Urls ?? []).Select(static url => url?.Trim() ?? string.Empty).Where(static url => url.Length > 0).Distinct(StringComparer.Ordinal)];
+    public IReadOnlyList<string> CleanUrls() => [.. (Urls ?? []).Select(static url => url?.Trim() ?? string.Empty).Where(static url => url.Length > 0).Distinct(StringComparer.Ordinal)];
 
     /// <summary>
     /// Checks whether a text is an absolute address of http or https.

@@ -195,7 +195,7 @@ public static partial class PdfMarkdownImporter
         while (start < rules.Count - 1)
         {
             // Two or more rows with a border around each cell and the same columns form a table with a grid.
-            // A block of another layout may also draw cells, such as an instruction of SPIR-V with its text in one wide cell, so one such row is not enough.
+            // A block of another layout may also draw cells, such as an instruction of SPIR-V with its text in one wide cell. So one such row is not enough.
             // The vertical borders of the cells tell a row from the text between two tables with the same columns.
             int end = start;
             while (end + 1 < rules.Count && rules[start].Edges.Length >= 3 && SameEdges(rules[start].Edges, rules[end + 1].Edges)
@@ -238,30 +238,50 @@ public static partial class PdfMarkdownImporter
     // Some tables draw a border for each cell. The borders of one row touch each other at one height and together make one wide rule.
     private static List<(Rule Rule, double[] Edges)> JoinRules(IReadOnlyList<Rule> rules)
     {
-        List<(Rule Rule, List<double> Edges)> joined = [];
-        foreach (Rule rule in rules.OrderBy(static rule => Math.Round(rule.Y * 2)).ThenBy(static rule => rule.Left))
+        // The rules of one height, in the order from left to right. A file may draw them in any order.
+        List<List<Rule>> heights = [];
+        foreach (Rule rule in rules.OrderBy(static rule => rule.Y))
         {
-            if (joined.Count > 0 && joined[^1] is var (last, edges) && Math.Abs(last.Y - rule.Y) < 0.5 && rule.Left <= last.Right + 1)
-            {
-                // A border that starts where the one before it ends starts a new cell. An overlapping border only makes the last cell longer.
-                // A border that repeats the one before it or lies inside it adds nothing.
-                if (rule.Right > last.Right + 1)
-                {
-                    if (Math.Abs(rule.Left - last.Right) <= 1)
-                        edges.Add(rule.Right);
-                    else
-                        edges[^1] = rule.Right;
-                }
-
-                joined[^1] = (last with { Right = Math.Max(last.Right, rule.Right) }, edges);
-            }
+            if (heights.Count > 0 && rule.Y - heights[^1][0].Y < 0.5)
+                heights[^1].Add(rule);
             else
-            {
-                joined.Add((rule, [rule.Left, rule.Right]));
-            }
+                heights.Add([rule]);
         }
 
-        return [.. joined.Select(static rule => (rule.Rule, rule.Edges.ToArray()))];
+        List<(Rule Rule, double[] Edges)> joined = [];
+        foreach (List<Rule> height in heights)
+        {
+            List<Rule> span = [];
+            foreach (Rule rule in height.OrderBy(static rule => rule.Left))
+            {
+                // A rule that touches or overlaps the rules before it goes on with them.
+                if (span.Count > 0 && rule.Left > span.Max(static part => part.Right) + 1)
+                {
+                    joined.Add(Join(span));
+                    span = [];
+                }
+
+                span.Add(rule);
+            }
+
+            if (span.Count > 0)
+                joined.Add(Join(span));
+        }
+
+        return joined;
+    }
+
+    // The ends of the rules of a span are the edges of its cells. A repeated border or an outer frame adds no edge of its own.
+    private static (Rule Rule, double[] Edges) Join(List<Rule> span)
+    {
+        List<double> edges = [];
+        foreach (double x in span.SelectMany(static rule => new[] { rule.Left, rule.Right }).Order())
+        {
+            if (edges.Count == 0 || x - edges[^1] > 1)
+                edges.Add(x);
+        }
+
+        return (new Rule(span.Min(static rule => rule.Left), span.Max(static rule => rule.Right), span[0].Y), [.. edges]);
     }
 
     // A row past the last rule still belongs to the table when its cells start at the columns of the table and it follows closely.

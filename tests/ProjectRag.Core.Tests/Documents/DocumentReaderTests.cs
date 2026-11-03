@@ -50,6 +50,14 @@ public sealed class DocumentReaderTests
     }
 
     [Fact]
+    public void Read_ResolvesTheLinksOfAWebPageFromItsAddressAfterTheRedirects()
+    {
+        DocumentText text = DocumentReader.Read("https://example.com/docs", Encoding.UTF8.GetBytes("<p><a href=\"setup\">Setup</a></p>"), new Uri("https://example.com/docs/"));
+
+        Assert.Equal("[Setup](https://example.com/docs/setup)\n", text.Content);
+    }
+
+    [Fact]
     public void Clean_DropsCharactersThatPostgresRejects()
     {
         Assert.Equal("a\nb\tc�d\ne", TextCleanup.Clean("a\r\nb\tc\uD800d\fe\0"));

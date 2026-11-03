@@ -164,7 +164,7 @@ export function SourcesPage() {
                 onChange={(event) => setForm({ ...form, urls: event.target.value })}
                 placeholder="https://registry.khronos.org/KTX/specs/2.0/ktxspec.v2.html"
               />
-              <small>One address per line. The indexer reads each page next to the files and requests it again once a day.</small>
+              <small>One address per line. The indexer reads each page next to the files and requests it again after Indexing:PageRefreshHours, 24 hours by default.</small>
             </label>
             <label>
               Description

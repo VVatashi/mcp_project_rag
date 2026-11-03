@@ -16,7 +16,7 @@ public static class DocumentReader
     /// <summary>
     /// The version of the importers, the structure reader and the chunker. A new version makes the indexer read every file again.
     /// </summary>
-    public const int Version = 14;
+    public const int Version = 15;
 
     private static readonly HashSet<string> TextExtensions = new(StringComparer.OrdinalIgnoreCase) { ".md", ".markdown", ".txt", ".rst", ".adoc" };
 
@@ -26,16 +26,18 @@ public static class DocumentReader
     /// <param name="path">The path of the file, or the address of a web page. Its extension selects the importer, and its name is the title when the document has none.
     /// A web page without the extension of another format is HTML.</param>
     /// <param name="bytes">The bytes of the file.</param>
+    /// <param name="address">The address of a web page after its redirects. <see langword="null"/> takes the path.</param>
     /// <returns>The text of the document in Markdown.</returns>
-    public static DocumentText Read(string path, byte[] bytes)
+    public static DocumentText Read(string path, byte[] bytes, Uri? address = null)
     {
         ArgumentNullException.ThrowIfNull(path);
         ArgumentNullException.ThrowIfNull(bytes);
-        Uri? address = IsWebPage(path) ? new Uri(path) : null;
+        address = IsWebPage(path) ? address ?? new Uri(path) : null;
         string localPath = address is null ? path : Uri.UnescapeDataString(address.AbsolutePath);
         string extension = Path.GetExtension(localPath);
         string name = Path.GetFileNameWithoutExtension(localPath) is { Length: > 0 } fileName ? fileName : address?.Host ?? path;
-        if (extension.Equals(".pdf", StringComparison.OrdinalIgnoreCase))
+        // A web page without an extension may send a PDF file, so its first bytes count too.
+        if (extension.Equals(".pdf", StringComparison.OrdinalIgnoreCase) || bytes.AsSpan().StartsWith("%PDF-"u8))
             return PdfMarkdownImporter.Read(bytes, name);
 
         if (extension.Equals(".html", StringComparison.OrdinalIgnoreCase) || extension.Equals(".htm", StringComparison.OrdinalIgnoreCase)
