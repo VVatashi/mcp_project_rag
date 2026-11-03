@@ -45,7 +45,7 @@ public sealed class HtmlMarkdownImporterTests
             <ul><li><p>First item</p><ul><li>Inner item</li></ul></li><li>Second | item</li></ul>
             <table><caption>Table 1. Schemes</caption><thead><tr><th>Id</th><th>Name</th></tr></thead>
             <tbody><tr><td><p>0</p></td><td><code>a|b</code></td></tr><tr><td colspan="2">Reserved</td></tr></tbody></table>
-            <p>The level \(p\) has \(2^{-p}\) of the size.</p>
+            <p>The level \(p\) has \(2^{-p}\) of the size, and \(\textit{num_levels}\) counts them.</p>
             <div class="stemblock"><div class="content">\[M = \lfloor\log_2 w\rfloor\]</div></div>
             </body>
             """);
@@ -54,7 +54,7 @@ public sealed class HtmlMarkdownImporterTests
         Assert.Contains("- First item\n\n  - Inner item", text.Content, StringComparison.Ordinal);
         Assert.Contains("- Second \\| item", text.Content, StringComparison.Ordinal);
         Assert.Contains("Table 1. Schemes\n\n| Id | Name |\n| --- | --- |\n| 0 | `a\\|b` |\n| Reserved |  |", text.Content, StringComparison.Ordinal);
-        Assert.Contains("The level $p$ has $2^{-p}$ of the size.", text.Content, StringComparison.Ordinal);
+        Assert.Contains("The level $p$ has $2^{-p}$ of the size, and $\\textit{num\\_levels}$ counts them.", text.Content, StringComparison.Ordinal);
         Assert.Contains("$$\nM = \\lfloor\\log_2 w\\rfloor\n$$", text.Content, StringComparison.Ordinal);
     }
 

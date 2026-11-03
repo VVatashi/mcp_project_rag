@@ -65,8 +65,15 @@ internal static partial class HtmlMarkdownImporter
     private static bool IsSkipped(IElement element) =>
         SkippedTags.Contains(element.LocalName) || element.Id is "toc" or "footer" || element.ClassList.Contains("toc") || element.ClassList.Contains("toc2");
 
+    // MathJax takes "_" inside \textit{num_levels}, but KaTeX wants "\_" in its text mode.
+    private static string TextUnderscores(string latex) =>
+        TextCommandRegex().Replace(latex, static match => match.Value.Replace(@"\_", "_", StringComparison.Ordinal).Replace("_", @"\_", StringComparison.Ordinal));
+
     [GeneratedRegex(@"\s+")]
     private static partial Regex WhitespaceRegex();
+
+    [GeneratedRegex(@"\\text(?:it|tt|bf|rm|sf|normal)?\{[^{}]*\}")]
+    private static partial Regex TextCommandRegex();
 
     // The delimiters of MathJax: \( … \) inside a line and \[ … \] for a display formula.
     [GeneratedRegex(@"\\\((?<math>.+?)\\\)", RegexOptions.Singleline)]
@@ -337,7 +344,7 @@ internal static partial class HtmlMarkdownImporter
         {
             string text = element.TextContent.Trim();
             Match display = DisplayMathRegex().Match(text);
-            Add(display.Success ? $"$$\n{display.Groups["math"].Value.Trim()}\n$$" : MarkdownText.EscapeStart(Collapse(Inline(element))));
+            Add(display.Success ? $"$$\n{TextUnderscores(display.Groups["math"].Value.Trim())}\n$$" : MarkdownText.EscapeStart(Collapse(Inline(element))));
         }
 
         private void List(IElement element)
@@ -480,7 +487,7 @@ internal static partial class HtmlMarkdownImporter
             foreach (Match match in InlineMathRegex().Matches(text))
             {
                 builder.Append(MarkdownText.Escape(text[last..match.Index]));
-                string math = match.Groups["math"].Value.Trim();
+                string math = TextUnderscores(match.Groups["math"].Value.Trim());
                 builder.Append('$').Append(_inTable ? math.Replace("|", "\\|", StringComparison.Ordinal) : math).Append('$');
                 last = match.Index + match.Length;
             }
