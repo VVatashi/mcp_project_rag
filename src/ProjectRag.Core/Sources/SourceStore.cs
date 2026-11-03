@@ -16,8 +16,9 @@ public sealed class SourceStore(Database database)
 {
     // The counts come from subqueries. A join of documents and chunks would multiply the rows.
     private const string SelectSql = """
-        SELECT s.source_id, s.name, s.description, s.root_path, s.include_globs, s.exclude_globs, s.category_rules::text AS category_rules, s.replacements::text AS replacements, s.created_at, s.indexed_at,
+        SELECT s.source_id, s.name, s.description, s.root_path, s.urls, s.include_globs, s.exclude_globs, s.category_rules::text AS category_rules, s.replacements::text AS replacements, s.created_at, s.indexed_at,
                (SELECT count(*) FROM document d WHERE d.source_id = s.source_id) AS document_count,
+               ARRAY(SELECT DISTINCT d.category COLLATE "C" FROM document d WHERE d.source_id = s.source_id ORDER BY 1) AS categories,
                (SELECT count(*) FROM chunk c JOIN document d USING (document_id) WHERE d.source_id = s.source_id) AS chunk_count,
                (SELECT count(*) FROM chunk_embedding e JOIN chunk c USING (chunk_id) JOIN document d USING (document_id)
                 WHERE d.source_id = s.source_id AND e.model_id = @ModelId) AS embedded_count
@@ -91,8 +92,8 @@ public sealed class SourceStore(Database database)
         await using NpgsqlConnection connection = await database.OpenAsync(cancellationToken);
         return await connection.ExecuteScalarAsync<int>(new CommandDefinition(
             """
-            INSERT INTO source (name, description, root_path, include_globs, exclude_globs, category_rules, replacements)
-            VALUES (@Name, @Description, @RootPath, @IncludeGlobs, @ExcludeGlobs, CAST(@CategoryRules AS jsonb), CAST(@Replacements AS jsonb))
+            INSERT INTO source (name, description, root_path, urls, include_globs, exclude_globs, category_rules, replacements)
+            VALUES (@Name, @Description, @RootPath, @Urls, @IncludeGlobs, @ExcludeGlobs, CAST(@CategoryRules AS jsonb), CAST(@Replacements AS jsonb))
             RETURNING source_id
             """,
             Parameters(input, 0), cancellationToken: cancellationToken));
@@ -113,7 +114,7 @@ public sealed class SourceStore(Database database)
         int count = await connection.ExecuteAsync(new CommandDefinition(
             """
             UPDATE source
-            SET name = @Name, description = @Description, root_path = @RootPath, include_globs = @IncludeGlobs, exclude_globs = @ExcludeGlobs,
+            SET name = @Name, description = @Description, root_path = @RootPath, urls = @Urls, include_globs = @IncludeGlobs, exclude_globs = @ExcludeGlobs,
                 category_rules = CAST(@CategoryRules AS jsonb), replacements = CAST(@Replacements AS jsonb)
             WHERE source_id = @SourceId
             """,
@@ -150,7 +151,8 @@ public sealed class SourceStore(Database database)
         SourceId = sourceId,
         input.Name,
         Description = input.Description ?? string.Empty,
-        input.RootPath,
+        RootPath = input.RootPath ?? string.Empty,
+        Urls = input.CleanUrls().ToArray(),
         IncludeGlobs = input.Includes().ToArray(),
         ExcludeGlobs = input.Excludes().ToArray(),
         CategoryRules = JsonSerializer.Serialize(input.Rules().Select(static rule => new CategoryRule { Pattern = rule.Pattern.Trim(), Category = rule.Category.Trim() }), JsonOptions),
@@ -172,6 +174,8 @@ public sealed class SourceStore(Database database)
 
         public string RootPath { get; init; } = string.Empty;
 
+        public string[] Urls { get; init; } = [];
+
         public string[] IncludeGlobs { get; init; } = [];
 
         public string[] ExcludeGlobs { get; init; } = [];
@@ -186,6 +190,8 @@ public sealed class SourceStore(Database database)
 
         public long DocumentCount { get; init; }
 
+        public string[] Categories { get; init; } = [];
+
         public long ChunkCount { get; init; }
 
         public long EmbeddedCount { get; init; }
@@ -196,6 +202,7 @@ public sealed class SourceStore(Database database)
             Name = Name,
             Description = Description,
             RootPath = RootPath,
+            Urls = Urls,
             IncludeGlobs = IncludeGlobs,
             ExcludeGlobs = ExcludeGlobs,
             CategoryRules = JsonSerializer.Deserialize<List<CategoryRule>>(CategoryRules, JsonOptions) ?? [],
@@ -203,6 +210,7 @@ public sealed class SourceStore(Database database)
             CreatedAt = CreatedAt,
             IndexedAt = IndexedAt,
             DocumentCount = DocumentCount,
+            Categories = Categories,
             ChunkCount = ChunkCount,
             EmbeddedCount = EmbeddedCount,
         };

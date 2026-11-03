@@ -19,4 +19,9 @@ public sealed class IndexingOptions
     /// Gets or sets the number of chunks that the indexer reads for one round of embeddings.
     /// </summary>
     public int EmbeddingRoundSize { get; set; } = 128;
+
+    /// <summary>
+    /// Gets or sets the hours between two requests of a web page. A scan within the interval keeps the stored page.
+    /// </summary>
+    public int PageRefreshHours { get; set; } = 24;
 }

@@ -39,12 +39,35 @@ public static partial class PdfMarkdownImporter
     {
         using PdfDocument pdf = PdfPigSource.Open(bytes);
         string title = PdfPigSource.Normalize(pdf.Information.Title ?? string.Empty);
+        IReadOnlyList<PdfPageModel> pages = PdfPigSource.ReadPages(pdf);
         if (!FileNameRegex().IsMatch(title))
-            return Convert(title.Length == 0 ? fallbackTitle : title, PdfPigSource.ReadPages(pdf), PdfPigSource.ReadBookmarks(pdf));
+            return Convert(title.Length == 0 ? CoverTitle(pages) ?? fallbackTitle : title, pages, PdfPigSource.ReadBookmarks(pdf));
 
         // A word processor may write the name of the file as the title, such as "GL3PGM.PDF". The first heading then names the document.
-        DocumentText text = Convert(fallbackTitle, PdfPigSource.ReadPages(pdf), PdfPigSource.ReadBookmarks(pdf));
+        DocumentText text = Convert(fallbackTitle, pages, PdfPigSource.ReadBookmarks(pdf));
         return text with { Title = MarkdownStructureReader.FindTitle(text.Content) ?? fallbackTitle };
+    }
+
+    /// <summary>
+    /// Finds the title on the cover of a file without a title: the lines of the first page in its largest font, such as "Khronos Data Format Specification".
+    /// </summary>
+    /// <param name="pages">The pages of the file.</param>
+    /// <returns>The title, or <see langword="null"/> for an empty first page, a first page without a larger font than the text or a title over 200 characters.</returns>
+    internal static string? CoverTitle(IReadOnlyList<PdfPageModel> pages)
+    {
+        if (pages.Count == 0)
+            return null;
+
+        List<Line> lines = PdfLayout.BuildLines(pages[0], MathFonts(pages));
+        if (lines.Count == 0)
+            return null;
+
+        double size = lines.Max(static line => line.Size);
+        if (size < BodySize(pages) * 1.2)
+            return null;
+
+        string title = PdfPigSource.Normalize(string.Join(' ', lines.Where(line => line.Size >= size - 0.5).Select(static line => line.PlainText)));
+        return title.Length is > 0 and <= 200 ? title : null;
     }
 
     /// <summary>
@@ -186,17 +209,42 @@ public static partial class PdfMarkdownImporter
             return;
 
         double textWidth = lines.Max(static line => line.Right) - lines.Min(static line => line.Left);
-        List<double> rules = [.. page.Rules.Where(rule => rule.Width >= textWidth * 0.3).Select(static rule => rule.Y).Distinct().OrderByDescending(static y => y)];
+        // The widest rule at each height. The edges of its cells tell the columns of a table with a border around each cell.
+        List<(double Y, double[] Edges)> rules = [.. JoinRules(page.Rules).Where(rule => rule.Rule.Width >= textWidth * 0.3)
+            .GroupBy(static rule => rule.Rule.Y).Select(static group => group.MaxBy(static rule => rule.Rule.Width))
+            .OrderByDescending(static rule => rule.Rule.Y).Select(static rule => (rule.Rule.Y, rule.Edges))];
+        IReadOnlyList<Bar> bars = page.Bars ?? [];
         int start = 0;
         while (start < rules.Count - 1)
         {
+            // Two or more rows with a border around each cell and the same columns form a table with a grid.
+            // A block of another layout may also draw cells, such as an instruction of SPIR-V with its text in one wide cell. So one such row is not enough.
+            // The vertical borders of the cells tell a row from the text between two tables with the same columns.
             int end = start;
-            while (end + 1 < rules.Count && IsTabular(lines.Where(line => line.Baseline < rules[end] && line.Baseline > rules[end + 1]).ToList()))
+            while (end + 1 < rules.Count && rules[start].Edges.Length >= 3 && SameEdges(rules[start].Edges, rules[end + 1].Edges)
+                && lines.Any(line => line.Baseline < rules[end].Y && line.Baseline > rules[end + 1].Y)
+                && rules[start].Edges.All(x => bars.Any(bar => Math.Abs(bar.X - x) < 1.5 && bar.Top >= rules[end].Y - 2 && bar.Bottom <= rules[end + 1].Y + 2)))
+                end++;
+
+            if (end - start >= 2)
+            {
+                for (int row = start; row < end; row++)
+                {
+                    foreach (Line line in lines.Where(line => line.Baseline < rules[row].Y && line.Baseline > rules[row + 1].Y))
+                        (line.InTable, line.CellEdges, line.CellRow) = (true, rules[start].Edges, row);
+                }
+
+                start = end;
+                continue;
+            }
+
+            end = start;
+            while (end + 1 < rules.Count && IsTabular(lines.Where(line => line.Baseline < rules[end].Y && line.Baseline > rules[end + 1].Y).ToList()))
                 end++;
 
             if (end > start)
             {
-                List<Line> table = [.. lines.Where(line => line.Baseline < rules[start] && line.Baseline > rules[end])];
+                List<Line> table = [.. lines.Where(line => line.Baseline < rules[start].Y && line.Baseline > rules[end].Y)];
                 foreach (Line line in table)
                     line.InTable = true;
 
@@ -205,6 +253,58 @@ public static partial class PdfMarkdownImporter
 
             start = end + 1;
         }
+    }
+
+    private static bool SameEdges(double[] first, double[] second) =>
+        first.Length == second.Length && first.Zip(second).All(static pair => Math.Abs(pair.First - pair.Second) < 1);
+
+    // Some tables draw a border for each cell. The borders of one row touch each other at one height and together make one wide rule.
+    private static List<(Rule Rule, double[] Edges)> JoinRules(IReadOnlyList<Rule> rules)
+    {
+        // The rules of one height, in the order from left to right. A file may draw them in any order.
+        List<List<Rule>> heights = [];
+        foreach (Rule rule in rules.OrderBy(static rule => rule.Y))
+        {
+            if (heights.Count > 0 && rule.Y - heights[^1][0].Y < 0.5)
+                heights[^1].Add(rule);
+            else
+                heights.Add([rule]);
+        }
+
+        List<(Rule Rule, double[] Edges)> joined = [];
+        foreach (List<Rule> height in heights)
+        {
+            List<Rule> span = [];
+            foreach (Rule rule in height.OrderBy(static rule => rule.Left))
+            {
+                // A rule that touches or overlaps the rules before it goes on with them.
+                if (span.Count > 0 && rule.Left > span.Max(static part => part.Right) + 1)
+                {
+                    joined.Add(Join(span));
+                    span = [];
+                }
+
+                span.Add(rule);
+            }
+
+            if (span.Count > 0)
+                joined.Add(Join(span));
+        }
+
+        return joined;
+    }
+
+    // The ends of the rules of a span are the edges of its cells. A repeated border or an outer frame adds no edge of its own.
+    private static (Rule Rule, double[] Edges) Join(List<Rule> span)
+    {
+        List<double> edges = [];
+        foreach (double x in span.SelectMany(static rule => new[] { rule.Left, rule.Right }).Order())
+        {
+            if (edges.Count == 0 || x - edges[^1] > 1)
+                edges.Add(x);
+        }
+
+        return (new Rule(span.Min(static rule => rule.Left), span.Max(static rule => rule.Right), span[0].Y), [.. edges]);
     }
 
     // A row past the last rule still belongs to the table when its cells start at the columns of the table and it follows closely.

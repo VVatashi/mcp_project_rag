@@ -29,7 +29,7 @@ internal sealed class KnowledgeTools(SearchService search, SourceStore sources, 
     public const string Instructions = """
         This server is a local knowledge base of the technical and project documentation of the user.
         Call list_categories first to learn the topics, such as csharp, vulkan or opengl. Call search with a question or keywords in English or Russian,
-        and narrow it with categories when the question names a topic. list_sources gives the folders that hold the documents.
+        and narrow it with categories when the question names a topic. list_sources gives the folders and the web pages that hold the documents, with their categories.
         A hit gives the source, the path of the document, the path of its section and the text.
         To follow a hit, call read_chunk with its chunkId: it gives the section, the pages, the previous and the next chunk, the links of the chunk with their target chunks, and the chunks that link to it.
         To read more of a document, call read_document with the source, the path and an offset a little before charStart.
@@ -40,12 +40,12 @@ internal sealed class KnowledgeTools(SearchService search, SourceStore sources, 
     private const int DefaultReadLength = 20_000;
 
     [McpServerTool(Name = "list_sources", Title = "List the sources", ReadOnly = true, Idempotent = true, OpenWorld = false)]
-    [Description("Lists the sources of the knowledge base: one source per project, with its description and the numbers of documents and chunks.")]
+    [Description("Lists the sources of the knowledge base: folders and web pages. A source gives its description, the categories of its documents, its urls and its counts.")]
     public async Task<IReadOnlyList<SourceInfo>> ListSourcesAsync(CancellationToken cancellationToken)
     {
         short? modelId = (await models.GetStatusAsync(cancellationToken)).Model?.ModelId;
         IReadOnlyList<Source> list = await sources.ListAsync(modelId, cancellationToken);
-        return [.. list.Select(static source => new SourceInfo(source.Name, source.Description, source.DocumentCount, source.ChunkCount, source.EmbeddedCount, source.IndexedAt))];
+        return [.. list.Select(static source => new SourceInfo(source.Name, source.Description, source.Categories, source.Urls, source.DocumentCount, source.ChunkCount, source.EmbeddedCount, source.IndexedAt))];
     }
 
     [McpServerTool(Name = "list_categories", Title = "List the categories", ReadOnly = true, Idempotent = true, OpenWorld = false)]
@@ -143,11 +143,13 @@ internal sealed class KnowledgeTools(SearchService search, SourceStore sources, 
     /// </summary>
     /// <param name="Name">The name for the other tools.</param>
     /// <param name="Description">What the documents are about.</param>
+    /// <param name="Categories">The categories of the documents of the source. A search narrows to them with its categories.</param>
+    /// <param name="Urls">The addresses of the web pages of the source. The address of a page is the path of its document.</param>
     /// <param name="Documents">The number of documents.</param>
     /// <param name="Chunks">The number of chunks.</param>
     /// <param name="EmbeddedChunks">The number of chunks with a vector. Fewer than <paramref name="Chunks"/> means the indexer is not done.</param>
     /// <param name="IndexedAt">The end of the last successful run of the indexer.</param>
-    internal sealed record SourceInfo(string Name, string Description, long Documents, long Chunks, long EmbeddedChunks, DateTime? IndexedAt);
+    internal sealed record SourceInfo(string Name, string Description, IReadOnlyList<string> Categories, IReadOnlyList<string> Urls, long Documents, long Chunks, long EmbeddedChunks, DateTime? IndexedAt);
 
     /// <summary>
     /// A part of a document.

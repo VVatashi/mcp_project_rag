@@ -84,7 +84,7 @@ public sealed partial class DocumentStore(Database database)
             FROM document d
             LEFT JOIN chunk c USING (document_id)
             GROUP BY d.category
-            ORDER BY d.category
+            ORDER BY d.category COLLATE "C"
             """,
             new { ModelId = modelId ?? 0 }, cancellationToken: cancellationToken));
         return [.. rows];

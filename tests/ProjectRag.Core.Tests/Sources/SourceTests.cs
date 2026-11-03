@@ -49,6 +49,27 @@ public sealed class SourceTests : IDisposable
     }
 
     [Fact]
+    public void Validate_TakesASourceOfWebPagesWithoutAFolder()
+    {
+        SourceInput pages = new() { Name = "ktx", Urls = ["https://registry.khronos.org/KTX/specs/2.0/ktxspec.v2.html", " ", "https://registry.khronos.org/KTX/specs/2.0/ktxspec.v2.html"] };
+
+        Assert.Empty(pages.Validate());
+        Assert.Equal(["https://registry.khronos.org/KTX/specs/2.0/ktxspec.v2.html"], pages.CleanUrls());
+        Assert.Contains(nameof(SourceInput.Urls), new SourceInput { Name = "a", Urls = ["ftp://example.com/a.html"] }.Validate().Keys);
+        Assert.Contains(nameof(SourceInput.RootPath), new SourceInput { Name = "a" }.Validate().Keys);
+        Assert.Empty(SourceScanner.Scan(new Source { Name = "ktx", Urls = pages.CleanUrls() }));
+    }
+
+    [Fact]
+    public void Category_MatchesTheAddressOfAPage()
+    {
+        Source source = new() { Name = "specs", CategoryRules = [new CategoryRule { Pattern = "**/ktxspec.*.html", Category = "ktx" }] };
+
+        Assert.Equal("ktx", SourceScanner.Category(source, "https://registry.khronos.org/KTX/specs/2.0/ktxspec.v2.html"));
+        Assert.Equal("specs", SourceScanner.Category(source, "https://registry.khronos.org/KTX/specs/2.0/other.html"));
+    }
+
+    [Fact]
     public void Includes_FallsBackToTheDefaults()
     {
         SourceInput input = new() { IncludeGlobs = [] };

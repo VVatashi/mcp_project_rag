@@ -10,6 +10,7 @@ internal sealed class PageBuilder(int number, double width = 612, double height 
     private readonly List<Glyph> _glyphs = [];
     private readonly List<Rule> _rules = [];
     private readonly List<PageLink> _links = [];
+    private readonly List<Bar> _bars = [];
 
     /// <summary>
     /// Writes a text at a place. A space advances by a third of the size, a glyph by half the size.
@@ -50,11 +51,17 @@ internal sealed class PageBuilder(int number, double width = 612, double height 
         return this;
     }
 
+    public PageBuilder Bar(double x, double bottom, double top)
+    {
+        _bars.Add(new Bar(x, bottom, top));
+        return this;
+    }
+
     public PageBuilder Link(double left, double bottom, double right, double top, int page, double? targetTop)
     {
         _links.Add(new PageLink(left, bottom, right, top, page, targetTop));
         return this;
     }
 
-    public PdfPageModel Build(bool turned = false) => new(number, width, height, _glyphs, _rules, _links, turned);
+    public PdfPageModel Build(bool turned = false) => new(number, width, height, _glyphs, _rules, _links, turned, _bars);
 }

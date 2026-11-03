@@ -89,7 +89,16 @@ internal sealed record PageLink(double Left, double Bottom, double Right, double
 /// <param name="Rules">The thin horizontal lines.</param>
 /// <param name="Links">The links to places of the document.</param>
 /// <param name="Turned">A value that tells whether the text of the page runs in another direction than the page, as in a turned figure.</param>
-internal sealed record PdfPageModel(int Number, double Width, double Height, IReadOnlyList<Glyph> Glyphs, IReadOnlyList<Rule> Rules, IReadOnlyList<PageLink> Links, bool Turned = false);
+/// <param name="Bars">The thin vertical lines, such as the borders between the cells of a table. <see langword="null"/> means none.</param>
+internal sealed record PdfPageModel(int Number, double Width, double Height, IReadOnlyList<Glyph> Glyphs, IReadOnlyList<Rule> Rules, IReadOnlyList<PageLink> Links, bool Turned = false, IReadOnlyList<Bar>? Bars = null);
+
+/// <summary>
+/// A thin vertical line of a page, such as a border between two cells of a table.
+/// </summary>
+/// <param name="X">The place from the left.</param>
+/// <param name="Bottom">The lower end.</param>
+/// <param name="Top">The upper end.</param>
+internal sealed record Bar(double X, double Bottom, double Top);
 
 /// <summary>
 /// A bookmark of the outline of a PDF file.

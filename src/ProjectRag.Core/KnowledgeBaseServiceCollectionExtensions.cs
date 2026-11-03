@@ -51,7 +51,14 @@ public static class KnowledgeBaseServiceCollectionExtensions
             http.Timeout = TimeSpan.FromSeconds(Math.Max(1, provider.GetRequiredService<IOptions<EmbeddingOptions>>().Value.TimeoutSeconds)));
         services.AddHttpClient(LlamaRerankClient.HttpClientName, static (provider, http) =>
             http.Timeout = TimeSpan.FromSeconds(Math.Max(1, provider.GetRequiredService<IOptions<RerankOptions>>().Value.TimeoutSeconds)));
+        // A page of documentation has no reason to take long. The name in User-Agent lets the owner of a site see who reads it.
+        services.AddHttpClient(HttpPageClient.HttpClientName, static http =>
+        {
+            http.Timeout = HttpPageClient.Timeout;
+            http.DefaultRequestHeaders.UserAgent.ParseAdd("ProjectRag/1.0");
+        });
         services.AddSingleton<IEmbeddingClient, LlamaEmbeddingClient>();
+        services.AddSingleton<IPageClient, HttpPageClient>();
         services.AddSingleton<IRerankClient, LlamaRerankClient>();
 
         services.AddSingleton<SourceStore>();

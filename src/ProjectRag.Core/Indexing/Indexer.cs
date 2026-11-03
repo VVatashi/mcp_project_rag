@@ -14,13 +14,13 @@ using ProjectRag.Core.Sources;
 namespace ProjectRag.Core.Indexing;
 
 /// <summary>
-/// Brings the documents, the chunks and the vectors of a source up to date with its folder.
+/// Brings the documents, the chunks and the vectors of a source up to date with its folder and its web pages.
 /// </summary>
 /// <remarks>
 /// <para>
 /// A run has two steps. The first step reads the files. A file with the stored size and time is skipped without a read.
 /// A file with the stored hash only gets its new time. Any other file is read, split into chunks and written in one transaction.
-/// The documents of the files that are gone are deleted.
+/// The documents of the files that are gone are deleted. A web page goes to its server again after the interval of the refresh.
 /// </para>
 /// <para>
 /// The second step embeds the chunks without a vector of the current model in rounds, and each round commits.
@@ -34,6 +34,8 @@ namespace ProjectRag.Core.Indexing;
 /// <param name="runs">The store of the runs.</param>
 /// <param name="models">The registry of the embedding model.</param>
 /// <param name="client">The client of the embedding server.</param>
+/// <param name="pages">The client of the web pages.</param>
+/// <param name="time">The clock, for the refresh of the web pages.</param>
 /// <param name="chunking">The options of the chunker.</param>
 /// <param name="indexing">The options of the indexer.</param>
 /// <param name="logger">The logger.</param>
@@ -44,6 +46,8 @@ public sealed class Indexer(
     IndexRunStore runs,
     EmbeddingModelRegistry models,
     IEmbeddingClient client,
+    IPageClient pages,
+    TimeProvider time,
     IOptionsMonitor<ChunkingOptions> chunking,
     IOptionsMonitor<IndexingOptions> indexing,
     ILogger<Indexer> logger)
@@ -124,11 +128,9 @@ public sealed class Indexer(
     private async Task SyncFilesAsync(Source source, IndexRun run, List<string> warnings, Action<IndexRun>? progress, CancellationToken cancellationToken)
     {
         ChunkingOptions options = chunking.CurrentValue;
-        DocumentChunker chunker = new(options);
-        string parserVersion = ParserVersion(options);
-        Dictionary<string, DocumentFileState> known = await documents.GetFileStatesAsync(source.SourceId, cancellationToken);
+        Reader reader = new(source, new DocumentChunker(options), ParserVersion(options), await documents.GetFileStatesAsync(source.SourceId, cancellationToken));
         IReadOnlyList<string> paths = SourceScanner.Scan(source);
-        run.FilesSeen = paths.Count;
+        run.FilesSeen = paths.Count + source.Urls.Count;
         List<string> skipped = [];
         List<string> seen = [];
         foreach (string path in paths)
@@ -147,10 +149,8 @@ public sealed class Indexer(
 
             seen.Add(path);
             // PostgreSQL keeps microseconds, so the time of the file loses its last digit before the comparison.
-            DateTime modifiedAt = new(info.LastWriteTimeUtc.Ticks - (info.LastWriteTimeUtc.Ticks % 10), DateTimeKind.Utc);
-            DocumentFileState? state = known.GetValueOrDefault(path);
-            IReadOnlyList<TextReplacement> replacements = SourceScanner.Replacements(source, path);
-            string fileVersion = FileVersion(parserVersion, replacements);
+            DateTime modifiedAt = Microseconds(info.LastWriteTimeUtc);
+            (DocumentFileState? state, string fileVersion) = reader.State(path);
             if (state is not null && state.SizeBytes == info.Length && state.ModifiedAt == modifiedAt && state.ParserVersion == fileVersion)
             {
                 run.DocumentsUnchanged++;
@@ -158,53 +158,23 @@ public sealed class Indexer(
             }
 
             byte[] bytes;
-            DocumentStructure structure;
-            IReadOnlyList<TextChunk> chunks;
             try
             {
                 bytes = await File.ReadAllBytesAsync(info.FullName, cancellationToken);
-                if (state is not null && state.ContentHash == Hash(bytes) && state.ParserVersion == fileVersion)
-                {
-                    await documents.TouchAsync(state.DocumentId, bytes.LongLength, modifiedAt, cancellationToken);
-                    run.DocumentsUnchanged++;
-                    continue;
-                }
-
-                // Every format becomes Markdown first. The structure and the chunks come from the Markdown.
-                DocumentText text = DocumentReader.Read(path, bytes);
-                structure = MarkdownStructureReader.Read(text with { Content = TextReplacement.ApplyAll(text.Content, replacements) }, path);
-                chunks = chunker.Split(structure);
             }
-            // A replacement that runs too long or breaks a mark fails its file with a warning that names the replacement.
-            catch (Exception exception) when (exception is RegexMatchTimeoutException or InvalidOperationException && replacements.Count > 0)
-            {
-                logger.LogWarning(exception, "A replacement of the source {Source} failed on the file {Path}.", source.Name, path);
-                warnings.Add($"A replacement failed on {path}: {exception.Message} Fix the replacements of the source.");
-                run.DocumentsFailed++;
-                continue;
-            }
-            // A locked, unreadable or broken file must not stop the run. PdfPig throws many kinds of exceptions on a damaged PDF.
-#pragma warning disable CA1031
-            catch (Exception exception) when (exception is not (OperationCanceledException or Npgsql.NpgsqlException))
-#pragma warning restore CA1031
+            // A locked or unreadable file must not stop the run.
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
                 logger.LogWarning(exception, "The indexer cannot read the file {Path} of the source {Source}.", path, source.Name);
                 run.DocumentsFailed++;
                 continue;
             }
 
-            DocumentFile file = new(Hash(bytes), fileVersion, bytes.LongLength, modifiedAt, SourceScanner.Category(source, path));
-
-            List<(TextChunk Chunk, string Hash)> hashed = [.. chunks.Select(static chunk => (chunk, Hash(Encoding.UTF8.GetBytes(chunk.EmbeddingText))))];
-            run.ChunksReused += await documents.SaveAsync(source.SourceId, path, structure, file, hashed, cancellationToken);
-            if (state is null)
-                run.DocumentsAdded++;
-            else
-                run.DocumentsUpdated++;
-
-            logger.LogDebug("The indexer read {Path}: {Chunks} chunks.", path, chunks.Count);
+            await StoreAsync(reader, path, bytes, modifiedAt, run, warnings, cancellationToken);
             progress?.Invoke(run);
         }
+
+        await SyncPagesAsync(reader, run, warnings, seen, progress, cancellationToken);
 
         // The rules of the categories may change without a change of the files, so each run gives every document its category again.
         // The rules may change while the run reads the files, so the run takes the current rules.
@@ -212,8 +182,9 @@ public sealed class Indexer(
 
         // An empty folder is more often a moment of a branch switch or an unplugged drive than a real deletion.
         // The vectors of a source take minutes to rebuild, so the indexer keeps the documents and warns.
-        if (paths.Count == 0 && known.Count > 0)
-            warnings.Add($"The folder {source.RootPath} holds no matching files. The indexer kept the {known.Count} stored documents. Delete the source to remove them.");
+        int storedFiles = reader.Known.Keys.Count(static path => !DocumentReader.IsWebPage(path));
+        if (source.RootPath.Length > 0 && paths.Count == 0 && storedFiles > 0)
+            warnings.Add($"The folder {source.RootPath} holds no matching files. The indexer kept the {storedFiles} stored documents. Delete the source to remove them.");
         else
             run.DocumentsRemoved = await documents.DeleteMissingAsync(source.SourceId, seen, cancellationToken);
 
@@ -223,6 +194,93 @@ public sealed class Indexer(
                 $"{skipped.Count} files are larger than {options.MaxFileBytes} bytes. The indexer skipped them and removed their old documents, for example {skipped[0]}."));
         }
     }
+
+    // A page goes to its server at most once in the interval of the refresh. The time of the document is the time of the last request.
+    // A new version of the parser or of the replacements requests the page at once. A page that fails keeps its old document.
+    private async Task SyncPagesAsync(Reader reader, IndexRun run, List<string> warnings, List<string> seen, Action<IndexRun>? progress, CancellationToken cancellationToken)
+    {
+        TimeSpan refresh = TimeSpan.FromHours(Math.Max(0, indexing.CurrentValue.PageRefreshHours));
+        foreach (string url in reader.Source.Urls)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            seen.Add(url);
+            DateTime now = Microseconds(time.GetUtcNow().UtcDateTime);
+            (DocumentFileState? state, string fileVersion) = reader.State(url);
+            if (state is not null && state.ParserVersion == fileVersion && now - state.ModifiedAt < refresh)
+            {
+                run.DocumentsUnchanged++;
+                continue;
+            }
+
+            WebPage page;
+            try
+            {
+                page = await pages.GetAsync(new Uri(url), chunking.CurrentValue.MaxFileBytes, cancellationToken);
+            }
+            catch (Exception exception) when (exception is HttpRequestException or InvalidDataException || (exception is TaskCanceledException && !cancellationToken.IsCancellationRequested))
+            {
+                logger.LogWarning("The indexer cannot get the page {Url} of the source {Source}: {Reason}", url, reader.Source.Name, exception.Message);
+                warnings.Add($"The page {url} did not load: {exception.Message} The search keeps its last version.");
+                run.DocumentsFailed++;
+                continue;
+            }
+
+            await StoreAsync(reader, url, page.Bytes, now, run, warnings, cancellationToken, page.Address);
+            progress?.Invoke(run);
+        }
+    }
+
+    // Reads a file or a page into chunks and writes them. Bytes with the stored hash only get their new time.
+    private async Task StoreAsync(Reader reader, string path, byte[] bytes, DateTime modifiedAt, IndexRun run, List<string> warnings, CancellationToken cancellationToken, Uri? address = null)
+    {
+        (DocumentFileState? state, string fileVersion) = reader.State(path);
+        IReadOnlyList<TextReplacement> replacements = SourceScanner.Replacements(reader.Source, path);
+        if (state is not null && state.ContentHash == Hash(bytes) && state.ParserVersion == fileVersion)
+        {
+            await documents.TouchAsync(state.DocumentId, bytes.LongLength, modifiedAt, cancellationToken);
+            run.DocumentsUnchanged++;
+            return;
+        }
+
+        DocumentStructure structure;
+        IReadOnlyList<TextChunk> chunks;
+        try
+        {
+            // Every format becomes Markdown first. The structure and the chunks come from the Markdown.
+            DocumentText text = DocumentReader.Read(path, bytes, address);
+            structure = MarkdownStructureReader.Read(text with { Content = TextReplacement.ApplyAll(text.Content, replacements) }, path);
+            chunks = reader.Chunker.Split(structure);
+        }
+        // A replacement that runs too long or breaks a mark fails its file with a warning that names the replacement.
+        catch (Exception exception) when (exception is RegexMatchTimeoutException or InvalidOperationException && replacements.Count > 0)
+        {
+            logger.LogWarning(exception, "A replacement of the source {Source} failed on the file {Path}.", reader.Source.Name, path);
+            warnings.Add($"A replacement failed on {path}: {exception.Message} Fix the replacements of the source.");
+            run.DocumentsFailed++;
+            return;
+        }
+        // A broken file must not stop the run. PdfPig throws many kinds of exceptions on a damaged PDF.
+#pragma warning disable CA1031
+        catch (Exception exception) when (exception is not (OperationCanceledException or Npgsql.NpgsqlException))
+#pragma warning restore CA1031
+        {
+            logger.LogWarning(exception, "The indexer cannot read the file {Path} of the source {Source}.", path, reader.Source.Name);
+            run.DocumentsFailed++;
+            return;
+        }
+
+        DocumentFile file = new(Hash(bytes), fileVersion, bytes.LongLength, modifiedAt, SourceScanner.Category(reader.Source, path));
+        List<(TextChunk Chunk, string Hash)> hashed = [.. chunks.Select(static chunk => (chunk, Hash(Encoding.UTF8.GetBytes(chunk.EmbeddingText))))];
+        run.ChunksReused += await documents.SaveAsync(reader.Source.SourceId, path, structure, file, hashed, cancellationToken);
+        if (state is null)
+            run.DocumentsAdded++;
+        else
+            run.DocumentsUpdated++;
+
+        logger.LogDebug("The indexer read {Path}: {Chunks} chunks.", path, chunks.Count);
+    }
+
+    private static DateTime Microseconds(DateTime time) => new(time.Ticks - (time.Ticks % 10), DateTimeKind.Utc);
 
     private async Task EmbedAsync(Source source, IndexRun run, List<string> warnings, Action<IndexRun>? progress, CancellationToken cancellationToken)
     {
@@ -304,5 +362,12 @@ public sealed class Indexer(
             : "all";
         warnings.Add($"The chunks got no vectors: {reason} {count} chunks wait for the next run.");
         logger.LogWarning("The run {RunId} over {Source} wrote no vectors: {Reason}", run.RunId, source.Name, reason);
+    }
+
+    // The state of one run: the source, the chunker and the stored documents with their versions.
+    private sealed record Reader(Source Source, DocumentChunker Chunker, string ParserVersion, Dictionary<string, DocumentFileState> Known)
+    {
+        public (DocumentFileState? State, string FileVersion) State(string path) =>
+            (Known.GetValueOrDefault(path), FileVersion(ParserVersion, SourceScanner.Replacements(Source, path)));
     }
 }

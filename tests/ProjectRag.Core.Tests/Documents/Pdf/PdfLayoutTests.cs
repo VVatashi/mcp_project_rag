@@ -116,6 +116,19 @@ public sealed class PdfLayoutTests
         Assert.Equal(["label", "char *p"], lines.Select(static line => line.PlainText));
     }
 
+    [Fact]
+    public void BuildLines_WritesARaisedTmAsTheSignOfATrademark()
+    {
+        PageBuilder page = new(1);
+        double x = page.Text("glTF", 100, 700, 20);
+        x = page.Text("TM", x, 709, 8);
+        page.Text("2.0", x + 6, 700, 20);
+
+        Line line = Assert.Single(PdfLayout.BuildLines(page.Build(), static glyph => glyph.IsMath));
+
+        Assert.Equal("glTF™ 2.0", line.PlainText);
+    }
+
     [Theory]
     [InlineData(90, 100, 200, 200)]
     [InlineData(270, 100, 200, 592)]

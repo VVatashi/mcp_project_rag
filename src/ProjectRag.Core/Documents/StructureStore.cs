@@ -142,14 +142,15 @@ public sealed class StructureStore(Database database)
     /// </summary>
     /// <param name="documentId">The key of the document.</param>
     /// <param name="cancellationToken">The token that cancels the query.</param>
-    /// <returns>The full path, or <see langword="null"/> when the document does not exist or its path leaves the folder of the source.</returns>
+    /// <returns>The full path, or <see langword="null"/> when the document does not exist, is a web page or its path leaves the folder of the source.</returns>
     public async Task<string?> GetFilePathAsync(long documentId, CancellationToken cancellationToken)
     {
         await using NpgsqlConnection connection = await database.OpenAsync(cancellationToken);
         (string Root, string Path)? row = await connection.QuerySingleOrDefaultAsync<(string Root, string Path)?>(new CommandDefinition(
             "SELECT s.root_path, d.path FROM document d JOIN source s USING (source_id) WHERE d.document_id = @DocumentId",
             new { DocumentId = documentId }, cancellationToken: cancellationToken));
-        if (row is not { } found)
+        // A web page has no file on the disk.
+        if (row is not { } found || found.Root.Length == 0 || DocumentReader.IsWebPage(found.Path))
             return null;
 
         // The stored path comes from the scan of the folder. The check still keeps a changed root from reaching other files.

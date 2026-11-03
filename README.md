@@ -2,7 +2,7 @@
 
 ProjectRag is a local knowledge base of technical and project documentation. Agents search it through MCP or through a web API. A dashboard shows the sources, the runs of the indexer and the search.
 
-The knowledge base reads Markdown, plain text and PDF files from folders on this machine. Every file becomes Markdown first.
+The knowledge base reads Markdown, plain text, PDF and HTML files from folders on this machine, and web pages by their addresses. Every document becomes Markdown first.
 A PDF file keeps its headings, code, tables, footnotes and links, and its formulas become LaTeX. The knowledge base splits each document along its sections and stores the chunks with their pages and links in PostgreSQL.
 The search combines vectors of a local embedding model with the full text search of PostgreSQL. A local reranker orders the hits.
 
@@ -85,8 +85,18 @@ The next run of the indexer embeds them. The page Status shows the state of each
 
 ## Sources and the indexer
 
-A source is a folder with the documentation of one project. Its name, for example `axion`, lets an agent search one project.
-The default patterns read `**/*.md`, `**/*.markdown`, `**/*.txt`, `**/*.rst`, `**/*.adoc` and `**/*.pdf`. They skip `.git`, `node_modules`, `bin`, `obj`, `artifacts` and `.venv`.
+A source is a folder with the documentation of one project, web pages, or both. Its name, for example `axion`, lets an agent search one project.
+The default patterns read `**/*.md`, `**/*.markdown`, `**/*.txt`, `**/*.rst`, `**/*.adoc`, `**/*.pdf`, `**/*.html` and `**/*.htm`. They skip `.git`, `node_modules`, `bin`, `obj`, `artifacts` and `.venv`.
+
+The field `urls` of a source lists web pages by their addresses. The address of a page is the path of its document, so the rules of the categories match it too.
+A source of web pages only leaves `rootPath` empty. The indexer requests a page again after `Indexing:PageRefreshHours`, 24 hours by default.
+A page that does not load keeps its last version in the search, and the run gives a warning.
+A web page links to other pages by their full addresses, and these links stay out of the links between chunks.
+
+```json
+"urls": ["https://registry.khronos.org/KTX/specs/2.0/ktxspec.v2.html"],
+"categoryRules": [{ "pattern": "**/ktxspec.*.html", "category": "ktx" }]
+```
 
 Each document has a category, a topic such as `csharp` or `vulkan`. One folder may hold the documentation of several topics, so the category belongs to the document.
 The rules of a source give the categories: a pattern of the paths and a category, the first matching rule wins. A document without a matching rule takes the name of its source.
@@ -225,6 +235,7 @@ The server reads `src/ProjectRag.Server/appsettings.json`. Put the settings of o
 | `Chunking:MinChars` | 400 | A shorter chunk at the end of a section takes in the next small sections of the third level or deeper: its subsections and its siblings. 0 keeps each chunk in one section |
 | `Chunking:MaxFileBytes` | 64 MB | The size of the largest file |
 | `Indexing:ScanIntervalMinutes` | 10 | The interval of the scans of all sources. 0 turns them off |
+| `Indexing:PageRefreshHours` | 24 | The hours between two requests of a web page |
 
 ## Development
 
@@ -260,6 +271,7 @@ npm --prefix src/ProjectRag.Dashboard run lint
 Every file becomes Markdown, the intermediate form of the pipeline. The details are in [docs/ADR/0002-import-pipeline.md](docs/ADR/0002-import-pipeline.md).
 
 - A PDF file goes through a layout analysis of its glyphs. The bookmarks give the headings, monospace lines give code, rules give tables, and the link annotations give links.
+- An HTML file or a web page keeps its headings, lists, tables, code and links to its anchors. The formulas of MathJax stay LaTeX. The navigation, the table of contents and the scripts go away.
 - The formulas of TeX become LaTeX: scripts, fractions, large operators with their limits, cases and the symbols of CMSY.
 - The Markdown holds the service marks `<!-- rag:page N -->` and `<!-- rag:anchor name -->`. The chunks leave them out and keep the pages and the anchors as metadata.
 - A link `[text](#anchor)`, a link to another file of the source and a mention such as "section 8.14" become links between chunks.

@@ -51,21 +51,42 @@ PdfPig gives each glyph with its font, size and position, each thin vector line 
 | Element | How the importer finds it |
 | --- | --- |
 | Turned pages | The direction of most baselines. A page with its text turned by a quarter turns back, and the lines of other directions, such as a turned running header, go away. A bold line of a turned page is a label of a figure, not a heading |
-| Word spaces | Gaps between glyphs, a smaller gap at a change of the font. A space that the file writes as a glyph always counts. The glyphs of a font that the file does not embed come out too wide, so "of the" would become "ofthe" |
+| Word spaces | Gaps between glyphs, a smaller gap at a change of the font. A space that the file writes as a glyph always counts. The glyphs of a font that the file does not embed come out too wide, so "of the" would become "ofthe". A gap after a letter of the text counts from the advance of the letter, not from its ink: the ink of "f" reaches into the gap. A letter in a font of formulas, such as the body text of TeX in Computer Modern, keeps its ink |
 | Running headers and footers | Lines at the top or the bottom that repeat on many pages, or capitals with a page number. A header of a chapter repeats on a run of pages. A first or last line with a word of the headers, such as "ECMA-334", is a header too. A header in a font smaller than the text at the top of a page needs a run of two pages, as in a short chapter. A line of code is no such header. A page number in small Roman numerals counts as a number. The words of a line count in their sorted order, so "30 Copyright…" of an even page and "Copyright… 29" of an odd page are one footer |
 | Headings | Bookmarks with their target height, matched to a line by its text. A chapter of LaTeX searches farther. A bookmark without a line becomes a heading of its own. Short bold lines become headings below the outline, such as "Errors", also with a section number, such as "4.1.10. Implicit Conversions" of an outline that stops at the second level. A numbered line must go on from the number of a heading before it, as a child of "4.1" or a sibling of "4.1.9", and takes its level from it |
 | Headings without an outline | The hidden bookmarks of a word processor, such as "OLE_LINK6", do not count, and an outline that reaches fewer than two pages does not count. Then a bold or a much larger line is a heading. The depth of its number, such as "II.22.2", gives the level. A page of contents and a line in a larger regular font give no headings |
 | Notes | The label "NOTE" in a column left of a box goes away, so the text of the box stays one paragraph |
 | Lists | A line with a bullet stays an item of a list, also when it names identifiers in monospace. A glyph of a font of pictures, such as "MonotypeSorts", is a bullet. A check mark that PdfPig decodes, such as ✓, stays |
 | Symbol | PdfPig decodes the font Symbol that a file does not embed in the encoding of Windows. The importer maps its codes back: "a" is α, "£" is ≤, "Ó" is ©. A page where Symbol gives Greek letters keeps its text |
-| Title | The title of the file, or the name of the file without a title. A title that is the name of a file, such as "GL3PGM.PDF", gives way to the first heading |
+| Title | The title of the file. A file without a title takes the lines of its first page in the largest font, such as "Khronos Data Format Specification". A title that is the name of a file, such as "GL3PGM.PDF", gives way to the first heading |
 | Paragraphs | Leading, size and the indent of the first line. A full line inside a framed box continues its paragraph. A paragraph without an end of a sentence goes on at the top of the next page. A prototype, with a type in monospace at its start and ");" at its end, does not go on |
 | Hyphens | A hyphen at a line end goes when the document uses the joined word elsewhere: "compo-nent" becomes "component", "two-dimensional" stays |
 | Code | Lines in a monospace font. A prototype with italic parameters still counts as code. The monospace font of TeX sets the asterisk below the baseline. The asterisk joins the nearest line above it, so "char * const *string" stays one line. A closing brace alone is code, not a formula. Pseudocode sets its variables in math italics and its braces as math symbols. A run of code takes in the lines next to it with some monospace and one word of the text font at most. It also takes in the lines of braces and the comments such as "/* or */" or "// text", but no wrapped address such as "//www.khronos.org". A loop without a monospace line is code from the line that opens a brace to the line of the closing brace. A short script of a variable stays in the code: "s_c". A raised number or a sign such as "†" marks a footnote and stays out. An empty line inside a listing and a listing that goes on at the top of the next page keep one block |
 | Wrapped calls | A line of arguments in math italics, such as "index, count, name);", goes on with the call above it instead of becoming a formula |
-| Tables | Lines between wide rules with columns, and the rows right after the last rule that keep the columns |
+| Tables | Lines between wide rules with columns, and the rows right after the last rule that keep the columns. The rules of the cells of one row join into one wide rule |
+| Tables with a grid | Asciidoctor draws a border around each cell. Two or more rows with the same cells and the vertical borders between them form a table. A cell takes the glyphs between its borders from all lines of its row, so a cell over several lines stays one cell. The head of the table that repeats on the next page goes away. The text between two tables with the same columns has no vertical borders and stays text |
+| Trademarks | The form NFKC turns "™" into "TM", and a raised "TM" sticks to the name before it: "glTFTM". The importer keeps the sign, and a raised "TM" becomes "™" |
 | Footnotes | Smaller lines at the bottom of a page that start with a number |
 | Links | Link annotations with a target page and height. The target block gets an anchor |
+
+### HTML: the elements of the page
+
+An HTML file and a web page go through AngleSharp, a parser that follows the standard of HTML. The parser takes the encoding from the byte order mark or the meta tag. The importer walks the elements:
+
+| Element | Markdown |
+| --- | --- |
+| `h1` to `h6` | A heading of the same level. Its id becomes an anchor |
+| An element whose id a link of the page names | The mark `rag:anchor` before its block |
+| `a` | A link to an anchor of the page stays a link. A web page makes its relative links absolute from its address after redirects or from its element `base`. A file keeps them relative, so they point at the files of its source. A link of another scheme than http, https, mailto and file stays text |
+| `pre` | A fenced block with the language of the class `language-c` or the attribute `data-lang` |
+| `ul`, `ol` | A list. The blocks of an item indent under its marker |
+| `dl` | A paragraph for each term. A list with a long definition, with lists, tables or code, makes each term a heading one level below the section. So the chunks of a format in a long appendix carry its name. The text after the list stays in the section of its last term |
+| `table` | A pipe table. A cell joins its blocks into one line. A cell over several columns adds empty cells, and a cell over several rows leaves empty cells below it. A table without a head takes its first row |
+| `\( … \)` of MathJax in the text, and `\[ … \]` in a stem block of Asciidoctor | `$ … $` and `$$ … $$` |
+| A table inside a cell | The text of the inner table |
+| `script`, `style`, `nav`, `#toc`, `#footer` | Nothing |
+
+Asciidoctor sets a note as a table of an icon and the text, so the note keeps its text only, as in a PDF file. The numbers of the callouts of a listing become "(1) The text".
 
 ### Formulas: from the fonts of TeX to LaTeX
 
@@ -126,7 +147,7 @@ The dashboard shows a chunk next to its page of the original PDF file, drawn wit
 
 1. Markdown with the service marks `rag:page` and `rag:anchor` is the intermediate form of every document.
 2. Markdig reads the Markdown into sections, blocks, anchors, pages, links and mentions.
-3. The PDF importer analyzes the layout of the glyphs and writes formulas as LaTeX.
+3. The PDF importer analyzes the layout of the glyphs and writes formulas as LaTeX. The HTML importer walks the elements of the page.
 4. The chunker keeps atomic blocks whole, splits text between sentences and overlaps split blocks.
 5. The database stores sections, anchors and links. The web API and MCP give a chunk with its links, its backlinks and its neighbors (`read_chunk`).
 6. KaTeX checks the formulas, in the dashboard and in the script `check-math`.

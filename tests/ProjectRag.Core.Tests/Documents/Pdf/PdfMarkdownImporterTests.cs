@@ -316,6 +316,78 @@ public sealed class PdfMarkdownImporterTests
         Assert.Contains("more widely supported than", markdown, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void CoverTitle_TakesTheLinesInTheLargestFontOfTheFirstPage()
+    {
+        PageBuilder cover = new(1);
+        cover.Text("Metal Shading Language", 72, 684, 38);
+        cover.Text("Specification", 72, 638, 38);
+        cover.Text("Version 4.1", 72, 606, 24);
+        PageBuilder text = new(2);
+        text.Text("The language describes the shaders of the graphics and compute pipelines.", 72, 700);
+
+        Assert.Equal("Metal Shading Language Specification", PdfMarkdownImporter.CoverTitle([cover.Build(), text.Build()]));
+        // A first page without a larger font names nothing.
+        Assert.Null(PdfMarkdownImporter.CoverTitle([text.Build()]));
+        Assert.Null(PdfMarkdownImporter.CoverTitle([]));
+    }
+
+    [Fact]
+    public void Convert_ReadsATableWithABorderAroundEachCell()
+    {
+        // Each cell draws its own border, and the text of a cell wraps over two lines. Asciidoctor sets the tables of Khronos so.
+        PageBuilder page = new(2);
+        page.Text("The table lists the properties.", 72, 760);
+        double[] edges = [70, 220, 400];
+        (double Top, double Bottom)[] rows = [(740, 720), (720, 680), (680, 660)];
+        foreach ((double top, double bottom) in rows)
+        {
+            for (int i = 0; i + 1 < edges.Length; i++)
+                page.Rule(edges[i], edges[i + 1], top).Rule(edges[i], edges[i + 1], bottom);
+
+            foreach (double x in edges)
+                page.Bar(x, bottom - 0.3, top + 0.3);
+        }
+
+        page.Text("Name", 72, 728);
+        page.Text("Description", 222, 728);
+        page.Text("node", 72, 708, 10, GlyphStyle.Mono, "Courier");
+        page.Text("The index of the", 222, 708);
+        page.Text("node to animate.", 222, 696);
+        page.Text("path", 72, 668, 10, GlyphStyle.Mono, "Courier");
+        page.Text("The name.", 222, 668);
+
+        string markdown = Convert(page);
+
+        Assert.Contains("| Name | Description |\n| --- | --- |\n| `node` | The index of the node to animate. |\n| `path` | The name. |", markdown, StringComparison.Ordinal);
+        Assert.Contains("The table lists the properties.", markdown, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Convert_KeepsTheTextBetweenTwoTablesWithTheSameColumns()
+    {
+        // The rule under the first table and the rule over the second have the same cells. No borders stand between them.
+        PageBuilder page = new(2);
+        double[] edges = [70, 220, 400];
+        foreach ((double top, double bottom) in ((double, double)[])[(740, 720), (720, 700), (660, 640), (640, 620)])
+        {
+            for (int i = 0; i + 1 < edges.Length; i++)
+                page.Rule(edges[i], edges[i + 1], top).Rule(edges[i], edges[i + 1], bottom);
+
+            foreach (double x in edges)
+                page.Bar(x, bottom - 0.3, top + 0.3);
+
+            page.Text("Key", 72, bottom + 8);
+            page.Text("Value", 222, bottom + 8);
+        }
+
+        page.Text("The second table follows the first one closely.", 72, 680);
+
+        string markdown = Convert(page);
+
+        Assert.Contains("\n\nThe second table follows the first one closely.\n\n", markdown, StringComparison.Ordinal);
+    }
+
     // A document of two pages: the first holds the heading of the outline, the second the page of a test.
     private static string Convert(PageBuilder page, bool turned = false)
     {

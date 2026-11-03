@@ -13,13 +13,14 @@ interface FormState {
   name: string;
   description: string;
   rootPath: string;
+  urls: string;
   includeGlobs: string;
   excludeGlobs: string;
   categoryRules: string;
   replacements: string;
 }
 
-const emptyForm: FormState = { sourceId: null, name: '', description: '', rootPath: '', includeGlobs: '', excludeGlobs: '', categoryRules: '', replacements: '' };
+const emptyForm: FormState = { sourceId: null, name: '', description: '', rootPath: '', urls: '', includeGlobs: '', excludeGlobs: '', categoryRules: '', replacements: '' };
 
 // A rule of a category is a line "pattern = category", for example "ECMA-33*.pdf = csharp".
 function readRules(text: string): CategoryRule[] {
@@ -85,6 +86,7 @@ export function SourcesPage() {
       name: source.name,
       description: source.description,
       rootPath: source.rootPath,
+      urls: source.urls.join('\n'),
       includeGlobs: source.includeGlobs.join('\n'),
       excludeGlobs: source.excludeGlobs.join('\n'),
       categoryRules: writeRules(source.categoryRules),
@@ -106,6 +108,7 @@ export function SourcesPage() {
       name: form.name,
       description: form.description,
       rootPath: form.rootPath,
+      urls: lines(form.urls),
       includeGlobs: lines(form.includeGlobs),
       // An empty field keeps the default patterns for a new source.
       excludeGlobs: form.sourceId === null && !form.excludeGlobs.trim() ? null : lines(form.excludeGlobs),
@@ -149,10 +152,20 @@ export function SourcesPage() {
               </label>
               <label className="form__wide">
                 Folder
-                <input value={form.rootPath} onChange={(event) => setForm({ ...form, rootPath: event.target.value })} placeholder="C:\Docs\my-project" required />
-                <small>The absolute path of a folder on this machine.</small>
+                <input value={form.rootPath} onChange={(event) => setForm({ ...form, rootPath: event.target.value })} placeholder="C:\Docs\my-project" />
+                <small>The absolute path of a folder on this machine. A source of web pages only leaves it empty.</small>
               </label>
             </div>
+            <label>
+              Web pages
+              <textarea
+                rows={3}
+                value={form.urls}
+                onChange={(event) => setForm({ ...form, urls: event.target.value })}
+                placeholder="https://registry.khronos.org/KTX/specs/2.0/ktxspec.v2.html"
+              />
+              <small>One address per line. The indexer reads each page next to the files and requests it again after Indexing:PageRefreshHours, 24 hours by default.</small>
+            </label>
             <label>
               Description
               <input
@@ -168,7 +181,7 @@ export function SourcesPage() {
                   rows={4}
                   value={form.includeGlobs}
                   onChange={(event) => setForm({ ...form, includeGlobs: event.target.value })}
-                  placeholder={'Empty: Markdown, text and PDF\n**/*.md'}
+                  placeholder={'Empty: Markdown, text, PDF and HTML\n**/*.md'}
                 />
               </label>
               <label>
@@ -222,7 +235,7 @@ export function SourcesPage() {
               <thead>
                 <tr>
                   <th>Name</th>
-                  <th>Folder</th>
+                  <th>Folder and pages</th>
                   <th className="num">Documents</th>
                   <th className="num">Chunks</th>
                   <th>Vectors</th>
@@ -237,7 +250,12 @@ export function SourcesPage() {
                       <strong>{source.name}</strong>
                       {source.description && <div className="muted small">{source.description}</div>}
                     </td>
-                    <td className="mono small">{source.rootPath}</td>
+                    <td className="mono small">
+                      {source.rootPath}
+                      {source.urls.map((url) => (
+                        <div key={url}>{url}</div>
+                      ))}
+                    </td>
                     <td className="num">
                       <Link className="link" to={`/documents?source=${source.sourceId}`}>
                         {formatNumber(source.documentCount)}
