@@ -83,7 +83,7 @@ public sealed partial class DocumentChunker
                 int unitSize = Size(structure.Content, unit[0].Start, unit[^1].End, unitAtomic);
                 bool atomic = currentAtomic || unitAtomic;
                 int limit = atomic ? _atomicMaxChars : _maxChars;
-                // The repeated header of a table or fence of code counts toward the size of the chunk.
+                // The repeated header of a table or the fence of code or a formula counts toward the size of the chunk.
                 if (current.Count > 0 && Size(structure.Content, current[0].Start, unit[^1].End, atomic) + PrefixSize(current[0].Prefix) <= limit)
                 {
                     current.Add(new Piece(unit[0].Start, unit[^1].End));
@@ -266,11 +266,11 @@ public sealed partial class DocumentChunker
         int overlapFrom = body;
         while (next < lines.Count)
         {
-            // A line longer than the limit splits like text. A part of the line may hold only digits, so it gets a third of the room.
+            // A line longer than the limit splits like text. A part of the line may hold only digits, so its size is a third of the free space.
             if (LineSize(next) + overhead > _atomicMaxChars)
             {
-                int room = Math.Clamp((_atomicMaxChars - overhead) / DigitWeight, 100, _maxChars);
-                List<Piece> parts = SplitText(content, lines[next].Start, lines[next].End, room);
+                int partMax = Math.Clamp((_atomicMaxChars - overhead) / DigitWeight, 100, _maxChars);
+                List<Piece> parts = SplitText(content, lines[next].Start, lines[next].End, partMax);
                 for (int k = 0; k < parts.Count; k++)
                 {
                     bool isLastPart = k == parts.Count - 1 && next + 1 >= lines.Count;
@@ -338,7 +338,7 @@ public sealed partial class DocumentChunker
         return size;
     }
 
-    // The repeated header of a table or fence of code belongs to code or a table, so its digits count as in such a block.
+    // The repeated header of a table or the fence of code or a formula belongs to such a block, so its digits count the same way.
     private static int PrefixSize(string? prefix) => prefix is null ? 0 : Size(prefix, 0, prefix.Length, atomic: true);
 
     // Returns the index of the space after the last end of a sentence in the range, or -1 when there is none.
