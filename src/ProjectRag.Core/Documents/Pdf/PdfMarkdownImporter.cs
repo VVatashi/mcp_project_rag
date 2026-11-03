@@ -186,17 +186,42 @@ public static partial class PdfMarkdownImporter
             return;
 
         double textWidth = lines.Max(static line => line.Right) - lines.Min(static line => line.Left);
-        List<double> rules = [.. page.Rules.Where(rule => rule.Width >= textWidth * 0.3).Select(static rule => rule.Y).Distinct().OrderByDescending(static y => y)];
+        // The widest rule at each height. The edges of its cells tell the columns of a table with a border around each cell.
+        List<(double Y, double[] Edges)> rules = [.. JoinRules(page.Rules).Where(rule => rule.Rule.Width >= textWidth * 0.3)
+            .GroupBy(static rule => rule.Rule.Y).Select(static group => group.MaxBy(static rule => rule.Rule.Width))
+            .OrderByDescending(static rule => rule.Rule.Y).Select(static rule => (rule.Rule.Y, rule.Edges))];
+        IReadOnlyList<Bar> bars = page.Bars ?? [];
         int start = 0;
         while (start < rules.Count - 1)
         {
+            // Two or more rows with a border around each cell and the same columns form a table with a grid.
+            // A block of another layout may also draw cells, such as an instruction of SPIR-V with its text in one wide cell, so one such row is not enough.
+            // The vertical borders of the cells tell a row from the text between two tables with the same columns.
             int end = start;
-            while (end + 1 < rules.Count && IsTabular(lines.Where(line => line.Baseline < rules[end] && line.Baseline > rules[end + 1]).ToList()))
+            while (end + 1 < rules.Count && rules[start].Edges.Length >= 3 && SameEdges(rules[start].Edges, rules[end + 1].Edges)
+                && lines.Any(line => line.Baseline < rules[end].Y && line.Baseline > rules[end + 1].Y)
+                && rules[start].Edges.All(x => bars.Any(bar => Math.Abs(bar.X - x) < 1.5 && bar.Top >= rules[end].Y - 2 && bar.Bottom <= rules[end + 1].Y + 2)))
+                end++;
+
+            if (end - start >= 2)
+            {
+                for (int row = start; row < end; row++)
+                {
+                    foreach (Line line in lines.Where(line => line.Baseline < rules[row].Y && line.Baseline > rules[row + 1].Y))
+                        (line.InTable, line.CellEdges, line.CellRow) = (true, rules[start].Edges, row);
+                }
+
+                start = end;
+                continue;
+            }
+
+            end = start;
+            while (end + 1 < rules.Count && IsTabular(lines.Where(line => line.Baseline < rules[end].Y && line.Baseline > rules[end + 1].Y).ToList()))
                 end++;
 
             if (end > start)
             {
-                List<Line> table = [.. lines.Where(line => line.Baseline < rules[start] && line.Baseline > rules[end])];
+                List<Line> table = [.. lines.Where(line => line.Baseline < rules[start].Y && line.Baseline > rules[end].Y)];
                 foreach (Line line in table)
                     line.InTable = true;
 
@@ -205,6 +230,38 @@ public static partial class PdfMarkdownImporter
 
             start = end + 1;
         }
+    }
+
+    private static bool SameEdges(double[] first, double[] second) =>
+        first.Length == second.Length && first.Zip(second).All(static pair => Math.Abs(pair.First - pair.Second) < 1);
+
+    // Some tables draw a border for each cell. The borders of one row touch each other at one height and together make one wide rule.
+    private static List<(Rule Rule, double[] Edges)> JoinRules(IReadOnlyList<Rule> rules)
+    {
+        List<(Rule Rule, List<double> Edges)> joined = [];
+        foreach (Rule rule in rules.OrderBy(static rule => Math.Round(rule.Y * 2)).ThenBy(static rule => rule.Left))
+        {
+            if (joined.Count > 0 && joined[^1] is var (last, edges) && Math.Abs(last.Y - rule.Y) < 0.5 && rule.Left <= last.Right + 1)
+            {
+                // A border that starts where the one before it ends starts a new cell. An overlapping border only makes the last cell longer.
+                // A border that repeats the one before it or lies inside it adds nothing.
+                if (rule.Right > last.Right + 1)
+                {
+                    if (Math.Abs(rule.Left - last.Right) <= 1)
+                        edges.Add(rule.Right);
+                    else
+                        edges[^1] = rule.Right;
+                }
+
+                joined[^1] = (last with { Right = Math.Max(last.Right, rule.Right) }, edges);
+            }
+            else
+            {
+                joined.Add((rule, [rule.Left, rule.Right]));
+            }
+        }
+
+        return [.. joined.Select(static rule => (rule.Rule, rule.Edges.ToArray()))];
     }
 
     // A row past the last rule still belongs to the table when its cells start at the columns of the table and it follows closely.

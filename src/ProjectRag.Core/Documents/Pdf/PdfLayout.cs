@@ -115,6 +115,12 @@ internal sealed class Line
     /// <summary>Gets or sets a value that tells whether the line lies inside a table.</summary>
     public bool InTable { get; set; }
 
+    /// <summary>Gets or sets the edges of the cells from left to right, for a row of a table with a border around each cell.</summary>
+    public double[]? CellEdges { get; set; }
+
+    /// <summary>Gets or sets the number of the row with cell borders on its page. The lines of one row share it.</summary>
+    public int CellRow { get; set; }
+
     /// <summary>Gets or sets a value that tells whether the line is a footnote.</summary>
     public bool IsFootnote { get; set; }
 
@@ -218,13 +224,23 @@ internal static class PdfLayout
                 builder.Append(' ');
 
             builder.Append(item.Text);
-            foreach (Item script in item.Sub.Concat(item.Sup))
+            foreach (Item script in item.Sub)
                 builder.Append(script.Text);
 
+            builder.Append(SupText(item));
             previous = item;
         }
 
         return builder.ToString();
+    }
+
+    /// <summary>
+    /// Gives the text of the superscripts of an item. A raised "TM" after a name is the sign of a trademark.
+    /// </summary>
+    public static string SupText(Item item)
+    {
+        string text = string.Concat(item.Sup.Select(static script => script.Text));
+        return text == "TM" ? "™" : text;
     }
 
     /// <summary>

@@ -288,7 +288,13 @@ internal static class PdfPigSource
     /// <param name="text">The text.</param>
     /// <returns>The normalized text.</returns>
     public static string Normalize(string text) =>
-        string.Join(' ', TextCleanup.Clean(text.Normalize(NormalizationForm.FormKC)).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        string.Join(' ', TextCleanup.Clean(ToFormKC(text)).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
+    // The form NFKC also turns the sign "™" into the letters "TM", which then stick to the name before them: "glTFTM". The sign stays.
+    private static string ToFormKC(string text) =>
+        text.Contains('™', StringComparison.Ordinal)
+            ? string.Join('™', text.Split('™').Select(static part => part.Normalize(NormalizationForm.FormKC)))
+            : text.Normalize(NormalizationForm.FormKC);
 
     private static PdfPageModel ReadPage(Page page)
     {
@@ -333,7 +339,7 @@ internal static class PdfPigSource
                 style = GlyphStyle.None;
             }
             else
-                text = TextCleanup.Clean(text.Normalize(NormalizationForm.FormKC));
+                text = TextCleanup.Clean(ToFormKC(text));
 
             if (text.Length == 0)
                 continue;
@@ -347,10 +353,17 @@ internal static class PdfPigSource
         }
 
         List<Rule> rules = [];
+        List<Bar> bars = [];
         foreach (PdfPath path in page.Paths)
         {
-            if (path.GetBoundingRectangle() is { } bounds && frame.Turn(bounds) is var box && box.Height <= 1.5 && box.Width >= 2 && (path.IsStroked || path.IsFilled))
+            if (path.GetBoundingRectangle() is not { } bounds || !(path.IsStroked || path.IsFilled))
+                continue;
+
+            PdfRectangle box = frame.Turn(bounds);
+            if (box.Height <= 1.5 && box.Width >= 2)
                 rules.Add(new Rule(box.Left, box.Right, (box.Top + box.Bottom) / 2));
+            else if (box.Width <= 1.5 && box.Height >= 2)
+                bars.Add(new Bar((box.Left + box.Right) / 2, box.Bottom, box.Top));
         }
 
         List<PageLink> links = [];
@@ -363,7 +376,7 @@ internal static class PdfPigSource
             }
         }
 
-        return new PdfPageModel(page.Number, frame.Width, frame.Height, glyphs, rules, links, direction != 0);
+        return new PdfPageModel(page.Number, frame.Width, frame.Height, glyphs, rules, links, direction != 0, bars);
     }
 
     // The direction of the baseline of a letter in degrees, to a quarter turn: 0 for a line from left to right, 90 for a line from the bottom up.

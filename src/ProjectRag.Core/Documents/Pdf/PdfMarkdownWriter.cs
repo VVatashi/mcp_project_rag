@@ -307,7 +307,7 @@ internal sealed partial class PdfMarkdownWriter(HashSet<string> vocabulary, Dict
             builder.Append(item.Text);
             // A script of the text that is no footnote stays as text: "2nd", "x2".
             if (item.Sup.Count > 0 && !item.Sup.All(static script => script.Text.All(char.IsDigit)))
-                builder.Append(string.Concat(item.Sup.Select(static script => script.Text)));
+                builder.Append(PdfLayout.SupText(item));
 
             builder.Append(string.Concat(item.Sub.Select(static script => script.Text)));
             previous = item;
@@ -463,6 +463,9 @@ internal sealed partial class PdfMarkdownWriter(HashSet<string> vocabulary, Dict
     // A table with clear columns becomes a pipe table. A row with an empty first cell continues the cells of the row above.
     private string WriteTable(PdfBlock block, HashSet<string> footnotes)
     {
+        if (block.Lines.All(static line => line.CellEdges is not null))
+            return WriteGridTable(block, footnotes);
+
         List<List<List<Item>>> rows = [.. block.Lines.Select(PdfMarkdownImporter.Segments)];
         List<double> columns = [];
         foreach (List<Item> segment in rows.SelectMany(static row => row))
@@ -512,6 +515,54 @@ internal sealed partial class PdfMarkdownWriter(HashSet<string> vocabulary, Dict
             builder.Append("| ").AppendJoin(" | ", row.Select(static value => value ?? string.Empty)).Append(" |\n");
 
         return builder.ToString().TrimEnd();
+    }
+
+    // The borders of the cells give the columns. A cell takes the items whose middle lies between its edges, from all lines of its row.
+    // A table over a page break repeats its head on the next page, and the copy goes away.
+    private string WriteGridTable(PdfBlock block, HashSet<string> footnotes)
+    {
+        double[] edges = block.Lines.Select(static line => line.CellEdges!).MaxBy(static cells => cells.Length)!;
+        List<string[]> rows = [];
+        foreach (IGrouping<(int Page, int Row), Line> row in block.Lines.GroupBy(static line => (line.Page, line.CellRow)))
+        {
+            string[] values = new string[edges.Length - 1];
+            for (int column = 0; column < values.Length; column++)
+            {
+                List<Line> parts = [];
+                foreach (Line line in row)
+                {
+                    List<Item> items = [.. line.Items.Where(item => Column(edges, (item.Left + item.Right) / 2) == column)];
+                    if (items.Count > 0)
+                        parts.Add(new Line { Page = line.Page, Items = items, Size = line.Size, Baseline = line.Baseline, Kind = line.Kind });
+                }
+
+                values[column] = parts.Count == 0 ? string.Empty : WriteInline(new PdfBlock { Kind = PdfBlockKind.Paragraph, Page = row.Key.Page, Lines = parts }, footnotes, inTable: true);
+            }
+
+            if (rows.Count > 0 && values.SequenceEqual(rows[0]))
+                continue;
+
+            rows.Add(values);
+        }
+
+        StringBuilder builder = new();
+        builder.Append("| ").AppendJoin(" | ", rows[0]).Append(" |\n");
+        builder.Append('|').Append(string.Concat(Enumerable.Repeat(" --- |", edges.Length - 1))).Append('\n');
+        foreach (string[] row in rows.Skip(1))
+            builder.Append("| ").AppendJoin(" | ", row).Append(" |\n");
+
+        return builder.ToString().TrimEnd();
+    }
+
+    private static int Column(double[] edges, double x)
+    {
+        for (int i = 1; i < edges.Length - 1; i++)
+        {
+            if (x < edges[i])
+                return i - 1;
+        }
+
+        return edges.Length - 2;
     }
 
     private static string CodeSpan(string text)
