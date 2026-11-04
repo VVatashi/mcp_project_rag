@@ -84,6 +84,8 @@ An HTML file and a web page go through AngleSharp, a parser that follows the sta
 | `dl` | A paragraph for each term. A list with a long definition, with lists, tables or code, makes each term a heading one level below the section. So the chunks of a format in a long appendix carry its name. The text after the list stays in the section of its last term |
 | `table` | A pipe table. A cell joins its blocks into one line. A cell over several columns adds empty cells, and a cell over several rows leaves empty cells below it. A table without a head takes its first row |
 | `\( … \)` of MathJax in the text, and `\[ … \]` in a stem block of Asciidoctor | `$ … $` and `$$ … $$` |
+| `$ … $` of a page that sets it for MathJax, as the Khronos Data Format Specification does | `$ … $`. A block with only `$$ … $$` or an environment such as `align*` becomes display formulas. A page without the setting keeps its dollars as text |
+| A formula that KaTeX drew on the server, as in the Vulkan specification | The LaTeX of its boxes: a box above the strut is a numerator or a superscript, and a box below it is a denominator or a subscript. A column of an array stacks its rows. A source in MathML wins |
 | A table inside a cell | The text of the inner table |
 | `script`, `style`, `nav`, `#toc`, `#footer` | Nothing |
 

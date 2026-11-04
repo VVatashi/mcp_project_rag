@@ -19,7 +19,10 @@ namespace ProjectRag.Core.Documents.Html;
 /// <item>The scripts, the styles, the navigation, the table of contents and the footer of the page go away.</item>
 /// <item>An element whose id a link of the page names gets the mark <c>&lt;!-- rag:anchor id --&gt;</c>, and so does each heading with an id.
 /// A link to an anchor of the page stays a link, so the chunks link to each other as in a PDF file.</item>
-/// <item>The formulas of LaTeX for MathJax, <c>\( … \)</c> in the text and <c>\[ … \]</c> in a stem block of Asciidoctor, become <c>$ … $</c> and <c>$$ … $$</c>.</item>
+/// <item>The formulas of LaTeX for MathJax, <c>\( … \)</c> in the text and <c>\[ … \]</c> in a stem block of Asciidoctor, become <c>$ … $</c> and <c>$$ … $$</c>.
+/// A page that sets <c>$ … $</c> as the inline formula of MathJax, as the Khronos Data Format Specification does, keeps those formulas too.
+/// A block of such a page with only <c>$$ … $$</c> or <c>\begin{align*} … \end{align*}</c> becomes display formulas.</item>
+/// <item>A formula that KaTeX drew on the server, as in the Vulkan specification, gets its LaTeX back through <see cref="KatexReader"/>.</item>
 /// </list>
 /// </remarks>
 internal static partial class HtmlMarkdownImporter
@@ -87,6 +90,18 @@ internal static partial class HtmlMarkdownImporter
     [GeneratedRegex(@"^\\\[(?<math>[\s\S]*)\\\]$")]
     private static partial Regex DisplayMathRegex();
 
+    // The delimiters of a page that also sets $ … $ for MathJax. A display formula inside a line becomes an inline formula.
+    [GeneratedRegex(@"\\\((?<math>.+?)\\\)|\$\$(?<math>.+?)\$\$|(?<![\\$])\$(?<math>[^$]+?)(?<!\\)\$", RegexOptions.Singleline)]
+    private static partial Regex DollarMathRegex();
+
+    // A block of display formulas only: $$ … $$, \[ … \] and the environments that MathJax reads in the text, such as align*.
+    [GeneratedRegex(@"\G\s*(?:\$\$(?<math>.+?)\$\$|\\\[(?<math>.+?)\\\]|(?<math>\\begin\{(?<name>[A-Za-z]+\*?)\}.+?\\end\{\k<name>\}))", RegexOptions.Singleline)]
+    private static partial Regex DisplayBlockRegex();
+
+    // The setting of MathJax that adds $ … $ to its inline formulas: inlineMath: [['$','$'], …].
+    [GeneratedRegex(@"inlineMath\s*:\s*\[[^\]]*\[\s*['""]\$['""]")]
+    private static partial Regex DollarSettingRegex();
+
     [GeneratedRegex(@"(?:^|\s)language-(?<language>[\w+#.-]+)")]
     private static partial Regex LanguageRegex();
 
@@ -105,6 +120,8 @@ internal static partial class HtmlMarkdownImporter
         private readonly bool _nested;
         private readonly bool _inTable;
         private readonly IHtmlDocument _document;
+        private readonly bool _mathJax;
+        private readonly bool _dollars;
         private int _level = 1;
 
         public Writer(IHtmlDocument document, Uri? address)
@@ -116,6 +133,10 @@ internal static partial class HtmlMarkdownImporter
             _targets = new(StringComparer.Ordinal);
             _written = new(StringComparer.Ordinal);
             _pending = [];
+            // A page reads its formulas with MathJax when it loads the script. The script finds them in the text by their delimiters.
+            IHtmlCollection<IElement> scripts = document.QuerySelectorAll("script");
+            _dollars = scripts.Any(static script => DollarSettingRegex().IsMatch(script.TextContent));
+            _mathJax = _dollars || scripts.Any(static script => script.GetAttribute("src")?.Contains("mathjax", StringComparison.OrdinalIgnoreCase) == true);
             foreach (IElement link in document.QuerySelectorAll("a[href]"))
             {
                 if (LocalAnchor(link.GetAttribute("href")!) is { } anchor)
@@ -128,6 +149,8 @@ internal static partial class HtmlMarkdownImporter
             _document = parent._document;
             _address = parent._address;
             _linkBase = parent._linkBase;
+            _mathJax = parent._mathJax;
+            _dollars = parent._dollars;
             _targets = parent._targets;
             _written = parent._written;
             _pending = parent._pending;
@@ -252,6 +275,11 @@ internal static partial class HtmlMarkdownImporter
                 case "div" when element.ClassList.Contains("stemblock"):
                     Formula(element);
                     break;
+                case "div" when _mathJax && DisplayFormulas(element.TextContent) is { } formulas:
+                    foreach (string formula in formulas)
+                        Add($"$$\n{TextUnderscores(formula)}\n$$");
+
+                    break;
                 // Asciidoctor sets a note as a table of an icon and the text. The label of the note goes away, as in a PDF file.
                 case "div" when element.ClassList.Contains("admonitionblock") && element.QuerySelector("td.content") is { } content:
                     Blocks(content);
@@ -348,9 +376,33 @@ internal static partial class HtmlMarkdownImporter
 
         private void Formula(IElement element)
         {
+            if (element.QuerySelector(".katex") is { } katex)
+            {
+                Add($"$$\n{KatexReader.Read(katex)}\n$$");
+                return;
+            }
+
             string text = element.TextContent.Trim();
             Match display = DisplayMathRegex().Match(text);
             Add(display.Success ? $"$$\n{TextUnderscores(display.Groups["math"].Value.Trim())}\n$$" : MarkdownText.EscapeStart(Collapse(Inline(element))));
+        }
+
+        // The display formulas of a block that holds nothing else, or null.
+        private static List<string>? DisplayFormulas(string text)
+        {
+            text = text.Trim();
+            if (!text.StartsWith("$$", StringComparison.Ordinal) && !text.StartsWith(@"\[", StringComparison.Ordinal) && !text.StartsWith(@"\begin{", StringComparison.Ordinal))
+                return null;
+
+            List<string> formulas = [];
+            int end = 0;
+            for (Match match = DisplayBlockRegex().Match(text); match.Success; match = match.NextMatch())
+            {
+                formulas.Add(match.Groups["math"].Value.Trim());
+                end = match.Index + match.Length;
+            }
+
+            return formulas.Count > 0 && end == text.Length ? formulas : null;
         }
 
         private void List(IElement element)
@@ -479,6 +531,9 @@ internal static partial class HtmlMarkdownImporter
                     return InlineText(text.Data);
                 case IElement element when IsSkipped(element):
                     return string.Empty;
+                case IElement element when element.ClassList.Contains("katex"):
+                    string latex = KatexReader.Read(element);
+                    return $"${(_inTable ? latex.Replace("|", "\\|", StringComparison.Ordinal) : latex)}$";
                 case IElement element:
                     Anchor(element.Id);
                     Anchor(element.GetAttribute("name"));
@@ -508,7 +563,7 @@ internal static partial class HtmlMarkdownImporter
             text = WhitespaceRegex().Replace(text, " ");
             StringBuilder builder = new(text.Length + 8);
             int last = 0;
-            foreach (Match match in InlineMathRegex().Matches(text))
+            foreach (Match match in (_dollars ? DollarMathRegex() : InlineMathRegex()).Matches(text))
             {
                 builder.Append(MarkdownText.Escape(text[last..match.Index]));
                 string math = TextUnderscores(match.Groups["math"].Value.Trim());
