@@ -181,6 +181,42 @@ public sealed class HtmlMarkdownImporterTests
     }
 
     [Fact]
+    public void Read_TakesTheTallDelimitersThatKatexDrawsAsPictures()
+    {
+        // KaTeX drew max(|x|, [y]) and the other tall delimiters as pictures without text. The paths are those of KaTeX, with their line breaks.
+        // The left bracket is that of an older KaTeX, as in the Vulkan specification.
+        DocumentText text = Read("""
+            <div class="stemblock"><div class="content"><span class="katex-display"><span class="katex"><span class="katex-html">
+            <span class="base"><span class="mop">max</span>
+            <span class="minner"><span class="mopen"><span class="delimsizing mult"><svg><path d="M145 15 v585 v1200 v585 c2.667,10,9.667,15,21,15z M188 15 H145z"/></svg></span></span>
+            <span class="mord mathnormal">x</span>
+            <span class="mclose"><span class="delimsizing mult"><svg><path d="M145 15 v585z M188 15 H145z M367 15 v585z M410 15 H367z"/></svg></span></span></span>
+            <span class="minner"><span class="mopen"><span class="delimsizing mult"><svg><path d="M403 1759 V84 H666 V0 H319 V1759 v1200 v1759 h347 v-84
+            H403z M403 1759 V0 H319 V1759 v1200 v1759 h84z"/></svg></span></span>
+            <span class="mord mathnormal">y</span>
+            <span class="mclose"><span class="delimsizing mult"><svg><path d="M347 1759 V0 H0 V84 H263 V1759 v1200 v1759 H0 v84 H347z
+            M347 1759 V0 H263 V1759 v1200 v1759 h84z"/></svg></span></span></span>
+            <span class="minner"><span class="mopen"><span class="delimsizing mult"><svg><path d="M863,9c0,-2,-2,-5,-6,-9z"/></svg></span></span>
+            <span class="mord mathnormal">z</span>
+            <span class="mclose"><span class="delimsizing mult"><svg><path d="M76,0c-16.7,0,-25,3,-25,9z"/></svg></span></span></span>
+            <span class="minner"><span class="mopen"><span class="delimsizing mult"><svg><path d="M403 1759 V84 H666 V0 H319 V1759 v1200 v602 h84z
+            M403 1759 V0 H319 V1759 v1200 v602 h84z"/></svg></span></span>
+            <span class="mord mathnormal">a</span>
+            <span class="mclose"><span class="delimsizing mult"><svg><path d="M347 1759 V0 H0 V84 H263 V1759 v1200 v602 h84z
+            M347 1759 V0 h-84 V1759 v1200 v602 h84z"/></svg></span></span></span>
+            <span class="minner"><span class="mopen"><span class="delimsizing mult"><svg><path d="M319 602 V0 H403 V602 v1200 v1715 h263 v84 H319z
+            MM319 602 V0 H403 V602 v1200 v1715 H319z"/></svg></span></span>
+            <span class="mord mathnormal">b</span>
+            <span class="mclose"><span class="delimsizing mult"><svg><path d="M319 602 V0 H403 V602 v1200 v1799 H0 v-84 H319z
+            MM319 602 V0 H403 V602 v1200 v1715 H319z"/></svg></span></span></span>
+            <span class="mord mathnormal">c</span><span class="mclose"><span class="delimsizing mult"><svg><path d="M1 2 h3z"/></svg></span></span>
+            </span></span></span></span></div></div>
+            """);
+
+        Assert.Contains(@"\operatorname{max} | x\Vert [ y] ( z) \lceil a\rceil \lfloor b\rfloor c", text.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Read_KeepsTheRelativeLinksOfAFile()
     {
         DocumentText text = HtmlMarkdownImporter.Read(Encoding.UTF8.GetBytes("<p>See <a href=\"guide.html#setup\">the setup</a>.</p>"), "index", null);

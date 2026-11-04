@@ -86,7 +86,7 @@ An HTML file and a web page go through AngleSharp, a parser that follows the sta
 | `\( … \)` of MathJax in the text, and `\[ … \]` in a stem block of Asciidoctor | `$ … $` and `$$ … $$` |
 | `$ … $` of a page that sets it for MathJax, as the Khronos Data Format Specification does | `$ … $`. A page without the setting keeps its dollars as text |
 | A block with only `$$ … $$` or an environment such as `align*`, on a page that loads MathJax | Display formulas. A block with code stays code |
-| A formula that KaTeX drew on the server, as in the Vulkan specification | The LaTeX of its boxes. A box above the strut is a numerator or a superscript. A box below it is a denominator or a subscript. A row of an array is the boxes at one height. A source in MathML wins |
+| A formula that KaTeX drew on the server, as in the Vulkan specification | The LaTeX of its boxes. A box above the strut is a numerator or a superscript. A box below it is a denominator or a subscript. A row of an array is the boxes at one height. A tall delimiter that KaTeX draws as a picture, such as a bar, a bracket or a floor, gets its LaTeX from the path of the picture. A source in MathML wins |
 | A table inside a cell | The text of the inner table |
 | `script`, `style`, `nav`, `#toc`, `#footer` | Nothing |
 
