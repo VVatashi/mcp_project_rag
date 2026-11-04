@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -23,7 +25,7 @@ namespace ProjectRag.Core.Search;
 /// <param name="searchOptions">The options of the search.</param>
 /// <param name="rerankOptions">The options of the reranker.</param>
 /// <param name="logger">The logger.</param>
-public sealed class SearchService(
+public sealed partial class SearchService(
     SearchStore store,
     SourceStore sources,
     EmbeddingModelRegistry models,
@@ -112,25 +114,73 @@ public sealed class SearchService(
         return new SearchResult(mode, reranked, notes, [.. hits.Take(limit)]);
     }
 
-    // A hit takes the later hits with the same text as its copies, so the text fills one place of the result.
+    // A hit takes the later hits with almost the same text as its copies, so the text fills one place of the result.
+    // The core and the compatibility profile of OpenGL share their paragraphs, but the targets of their links name other pages.
+    // The compatibility profile also adds a few words to some of them, such as the alpha test next to the depth test.
+    // Two texts are copies when their shared runs of three words make nine tenths of all their runs. A copy keeps its similarity.
     private static List<SearchHit> MergeCopies(IReadOnlyList<SearchHit> hits)
     {
-        List<SearchHit> merged = [];
-        Dictionary<string, SearchHit> first = new(StringComparer.Ordinal);
+        List<(SearchHit Hit, HashSet<string> Runs)> kept = [];
         foreach (SearchHit hit in hits)
         {
-            if (first.TryGetValue(hit.Body, out SearchHit? kept))
+            HashSet<string> runs = WordRuns(hit.Body);
+            (int index, double similarity) = (-1, 0);
+            for (int i = 0; i < kept.Count && index < 0; i++)
             {
-                kept.Copies = [.. kept.Copies, new HitCopy(hit.ChunkId, hit.DocumentId, hit.Path, hit.Heading)];
+                similarity = Similarity(kept[i].Runs, runs);
+                if (similarity >= 0.9)
+                    index = i;
+            }
+
+            if (index >= 0)
+            {
+                SearchHit first = kept[index].Hit;
+                first.Copies = [.. first.Copies, new HitCopy(hit.ChunkId, hit.DocumentId, hit.Path, hit.Heading, Math.Round(similarity, 3))];
                 continue;
             }
 
-            first.Add(hit.Body, hit);
-            merged.Add(hit);
+            kept.Add((hit, runs));
         }
 
-        return merged;
+        return [.. kept.Select(static item => item.Hit)];
     }
+
+    // The runs of three words of a text, without the targets of its links and the marks of the importers, such as the pages and the anchors.
+    // A sign counts as a word, so "-1" differs from "1" and "a < b" from "a > b".
+    private static HashSet<string> WordRuns(string body)
+    {
+        string text = MarkRegex().Replace(LinkTargetRegex().Replace(body, "]"), " ");
+        string[] words = [.. WordRegex().Matches(text).Select(static match => match.Value.ToLowerInvariant())];
+        HashSet<string> runs = new(StringComparer.Ordinal);
+        for (int i = 0; i + 3 <= words.Length; i++)
+            runs.Add(string.Join(' ', words, i, 3));
+
+        // A text of one or two words is its only run. A text without words keeps its own text, so two such texts match only when they are equal.
+        if (runs.Count == 0)
+            runs.Add(words.Length > 0 ? string.Join(' ', words) : body.Trim());
+
+        return runs;
+    }
+
+    // The share of the runs that both texts hold among the runs of either text.
+    // Sets of very different sizes cannot reach nine tenths, so the count of the shared runs is skipped.
+    private static double Similarity(HashSet<string> first, HashSet<string> second)
+    {
+        if (Math.Min(first.Count, second.Count) < Math.Max(first.Count, second.Count) * 0.9)
+            return 0;
+
+        int shared = first.Count(second.Contains);
+        return (double)shared / (first.Count + second.Count - shared);
+    }
+
+    [GeneratedRegex(@"\]\(#[^)\s]*\)")]
+    private static partial Regex LinkTargetRegex();
+
+    [GeneratedRegex("<!--.*?-->", RegexOptions.Singleline)]
+    private static partial Regex MarkRegex();
+
+    [GeneratedRegex(@"\w+|[^\w\s]+")]
+    private static partial Regex WordRegex();
 
     private async Task<string[]> ResolveCategoriesAsync(IReadOnlyList<string>? names, CancellationToken cancellationToken)
     {

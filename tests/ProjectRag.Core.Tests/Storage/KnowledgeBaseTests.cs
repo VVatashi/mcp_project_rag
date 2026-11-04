@@ -143,12 +143,13 @@ public sealed class KnowledgeBaseTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Search_ShowsATextOfTwoDocumentsOnce()
+    public async Task Search_ShowsATextOfTwoDocumentsOnceAlsoWithOtherLinks()
     {
         ServiceProvider services = RequireDatabase();
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
-        Write("core.md", "# Core\n\n## Depth\n\nThe depth test compares the depth of a fragment with the buffer.\n\n## Stencil\n\nThe stencil test compares a reference value.\n");
-        Write("compatibility.md", "# Compatibility\n\n## Depth\n\nThe depth test compares the depth of a fragment with the buffer.\n\n## Alpha\n\nThe alpha test discards a fragment by its alpha.\n");
+        // The links of the two copies name other pages, as in the core and the compatibility profile of OpenGL.
+        Write("core.md", "# Core\n\n## Depth\n\nThe depth test compares the depth of a fragment with the [buffer](#p10-2) of the depth.\n\n## Stencil\n\nThe stencil test compares a reference value.\n");
+        Write("compatibility.md", "# Compatibility\n\n## Depth\n\nThe depth test compares the depth of a fragment with the [buffer](#p12-5) of the depth.\n\n## Alpha\n\nThe alpha test discards a fragment by its alpha.\n");
         int sourceId = await services.GetRequiredService<SourceStore>().AddAsync(new SourceInput { Name = "gl", RootPath = _root }, cancellationToken);
         await services.GetRequiredService<Indexer>().RunAsync(sourceId, null, cancellationToken);
         SearchService search = services.GetRequiredService<SearchService>();
@@ -161,8 +162,29 @@ public sealed class KnowledgeBaseTests : IAsyncLifetime
             HitCopy copy = Assert.Single(depth.Copies);
             Assert.Equal(["compatibility.md", "core.md"], new[] { depth.Path, copy.Path }.Order(StringComparer.Ordinal));
             Assert.EndsWith("Depth", copy.Heading, StringComparison.Ordinal);
+            Assert.Equal(1, copy.Similarity);
             Assert.Equal(3, result.Hits.Count);
         }
+    }
+
+    [Fact]
+    public async Task Search_MergesALongTextWithAnotherWordButNotAShortOne()
+    {
+        ServiceProvider services = RequireDatabase();
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        // The prose of these tests splits at 200 characters, so the long text is code, which stays whole up to 3000 characters.
+        string common = string.Join('\n', Enumerable.Range(1, 20).Select(static i => $"blend stage {i} reads the color of the fragment"));
+        Write("core.md", $"# Core\n\n## Blend\n\n```\n{common}\nfactor is zero\n```\n\n## Rule\n\nThe blend value must be set before the draw.\n");
+        Write("compatibility.md", $"# Compatibility\n\n## Blend\n\n```\n{common}\nfactor is one\n```\n\n## Rule\n\nThe blend value must not be set before the draw.\n");
+        int sourceId = await services.GetRequiredService<SourceStore>().AddAsync(new SourceInput { Name = "gl", RootPath = _root }, cancellationToken);
+        await services.GetRequiredService<Indexer>().RunAsync(sourceId, null, cancellationToken);
+
+        SearchResult result = await services.GetRequiredService<SearchService>().SearchAsync(new SearchRequest { Query = "blend value", Rerank = false, Limit = 10 }, cancellationToken);
+
+        // The long text differs in one word and merges with a similarity below 1. The short rules differ in their meaning and stay apart.
+        HitCopy copy = Assert.Single(Assert.Single(result.Hits, static hit => hit.Heading.EndsWith("Blend", StringComparison.Ordinal)).Copies);
+        Assert.InRange(copy.Similarity, 0.9, 0.999);
+        Assert.Equal(2, result.Hits.Count(static hit => hit.Heading.EndsWith("Rule", StringComparison.Ordinal)));
     }
 
     [Fact]

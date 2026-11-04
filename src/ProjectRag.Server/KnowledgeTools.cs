@@ -31,7 +31,8 @@ internal sealed class KnowledgeTools(SearchService search, SourceStore sources, 
         Call list_categories first to learn the topics, such as csharp, vulkan or opengl. Call search with a question or keywords in English or Russian,
         and narrow it with categories when the question names a topic. list_sources gives the folders and the web pages that hold the documents, with their categories.
         A hit gives the source, the path of the document, the path of its section and the text.
-        The copies of a hit are chunks of other places with the same text, such as the core and the compatibility profile of OpenGL.
+        The copies of a hit are chunks of other places with almost the same text, such as the core and the compatibility profile of OpenGL.
+        A copy with a similarity below 1 differs in a few words. Read it with read_chunk when the difference matters.
         To follow a hit, call read_chunk with its chunkId: it gives the section, the pages, the previous and the next chunk, the links of the chunk with their target chunks, and the chunks that link to it.
         To read more of a document, call read_document with the source, the path and an offset a little before charStart.
         Call find_documents when you know a part of a file name or a title.
@@ -58,7 +59,7 @@ internal sealed class KnowledgeTools(SearchService search, SourceStore sources, 
     }
 
     [McpServerTool(Name = "search", Title = "Search the documentation", ReadOnly = true, Idempotent = true, OpenWorld = false)]
-    [Description("Searches the documentation with a hybrid of vector and full text search, then reorders the hits with a reranker. Returns chunks of documents, the best first. A text that several places share appears once, with the other places in its copies.")]
+    [Description("Searches the documentation with a hybrid of vector and full text search, then reorders the hits with a reranker. Returns chunks of documents, the best first. A text that several places share, maybe with a few other words, appears once, with the other places in its copies.")]
     public async Task<SearchResult> SearchAsync(
         [Description("A question or keywords, in English or Russian.")] string query,
         [Description("The categories to search, such as csharp or vulkan. Leave it out to search all categories.")] string[]? categories = null,
