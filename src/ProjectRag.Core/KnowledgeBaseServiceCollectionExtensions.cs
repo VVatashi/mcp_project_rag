@@ -1,3 +1,5 @@
+using System.Net;
+
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -52,11 +54,12 @@ public static class KnowledgeBaseServiceCollectionExtensions
         services.AddHttpClient(LlamaRerankClient.HttpClientName, static (provider, http) =>
             http.Timeout = TimeSpan.FromSeconds(Math.Max(1, provider.GetRequiredService<IOptions<RerankOptions>>().Value.TimeoutSeconds)));
         // A page of documentation has no reason to take long. The name in User-Agent lets the owner of a site see who reads it.
+        // A specification of Khronos in one page holds 41 MB of HTML, but only 5 MB with gzip.
         services.AddHttpClient(HttpPageClient.HttpClientName, static http =>
         {
             http.Timeout = HttpPageClient.Timeout;
             http.DefaultRequestHeaders.UserAgent.ParseAdd("ProjectRag/1.0");
-        });
+        }).ConfigurePrimaryHttpMessageHandler(static () => new HttpClientHandler { AutomaticDecompression = DecompressionMethods.All });
         services.AddSingleton<IEmbeddingClient, LlamaEmbeddingClient>();
         services.AddSingleton<IPageClient, HttpPageClient>();
         services.AddSingleton<IRerankClient, LlamaRerankClient>();
