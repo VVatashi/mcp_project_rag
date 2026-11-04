@@ -117,6 +117,70 @@ public sealed class HtmlMarkdownImporterTests
     }
 
     [Fact]
+    public void Read_TakesTheDollarsOfMathJaxWhenThePageSetsThem()
+    {
+        DocumentText text = Read("""
+            <head><script type="text/x-mathjax-config">MathJax.Hub.Config({ tex2jax: { inlineMath: [['$','$'], ['\\(','\\)']] } });</script></head>
+            <body><p>The value $R'$ is nonlinear, and \(G\) is linear.</p>
+            <div class="informalequation"><span class="phrase">$$N = 9$$ $$B = 15$$</span></div>
+            <div class="informalequation"><span class="phrase">\begin{align*} R &amp;= {R' \over 12.92} \end{align*}</span></div>
+            </body>
+            """);
+
+        Assert.Contains("The value $R'$ is nonlinear, and $G$ is linear.", text.Content, StringComparison.Ordinal);
+        Assert.Contains("$$\nN = 9\n$$\n\n$$\nB = 15\n$$", text.Content, StringComparison.Ordinal);
+        Assert.Contains("$$\n\\begin{align*} R &= {R' \\over 12.92} \\end{align*}\n$$", text.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Read_KeepsCodeAnchorsAndTablesAroundTheFormulasOfMathJax()
+    {
+        DocumentText text = Read("""
+            <head><script>MathJax.Hub.Config({ tex2jax: { inlineMath: [['\\(','\\)'], ['$','$']] } });</script></head>
+            <body><p>See <a href="#eq1">the sum</a> and $x$.</p>
+            <div class="informalequation"><a id="eq1"></a>$$a + b$$</div>
+            <div class="listingblock"><div class="content"><pre>\begin{align}x\end{align}</pre></div></div>
+            <table><tr><th>Norm</th></tr><tr><td><div>$$|x|$$</div></td></tr></table>
+            </body>
+            """);
+
+        Assert.Contains("See [the sum](#eq1) and $x$.", text.Content, StringComparison.Ordinal);
+        Assert.Contains("<!-- rag:anchor eq1 -->\n$$\na + b\n$$", text.Content, StringComparison.Ordinal);
+        Assert.Contains("```\n\\begin{align}x\\end{align}\n```", text.Content, StringComparison.Ordinal);
+        Assert.Contains("| $\\vert x\\vert $ |", text.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Read_KeepsTheDollarsOfAPageWithoutTheSetting()
+    {
+        DocumentText text = Read("<p>It costs $5 and $6.</p>");
+
+        Assert.Contains("It costs \\$5 and \\$6.", text.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Read_TakesTheLatexBackFromAFormulaOfKatex()
+    {
+        // KaTeX drew f = c / (2^b - 1) on the server. A box above the strut is the numerator or the superscript.
+        DocumentText text = Read("""
+            <div class="stemblock"><div class="content"><span class="katex-display"><span class="katex"><span class="katex-html" aria-hidden="true">
+            <span class="base"><span class="strut" style="height:1.8em;"></span><span class="mord mathnormal">f</span><span class="mspace"></span><span class="mrel">=</span></span>
+            <span class="base"><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist">
+            <span style="top:-2.314em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord"><span class="mord">2</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist">
+            <span style="top:-2.931em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing mtight"><span class="mord mathnormal mtight">b</span></span></span>
+            </span></span></span></span></span><span class="mbin">−</span><span class="mord">1</span></span></span>
+            <span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line"></span></span>
+            <span style="top:-3.677em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord mathnormal">c</span></span></span>
+            </span><span class="vlist-s">​</span></span></span></span><span class="mclose nulldelimiter"></span></span></span>
+            </span></span></span></div></div>
+            <p>The value <span class="katex"><span class="katex-html"><span class="base"><span class="mord mathnormal">x</span><span class="mrel">≤</span><span class="mord text"><span class="mord textrm">a &amp; b</span></span></span></span></span> holds.</p>
+            """);
+
+        Assert.Contains("$$\nf=\\frac{c}{2^{b}-1}\n$$", text.Content, StringComparison.Ordinal);
+        Assert.Contains("The value $x\\leq \\text{a \\& b}$ holds.", text.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Read_KeepsTheRelativeLinksOfAFile()
     {
         DocumentText text = HtmlMarkdownImporter.Read(Encoding.UTF8.GetBytes("<p>See <a href=\"guide.html#setup\">the setup</a>.</p>"), "index", null);

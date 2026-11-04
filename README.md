@@ -271,7 +271,7 @@ npm --prefix src/ProjectRag.Dashboard run lint
 Every file becomes Markdown, the intermediate form of the pipeline. The details are in [docs/ADR/0002-import-pipeline.md](docs/ADR/0002-import-pipeline.md).
 
 - A PDF file goes through a layout analysis of its glyphs. The bookmarks give the headings, monospace lines give code, rules give tables, and the link annotations give links.
-- An HTML file or a web page keeps its headings, lists, tables, code and links to its anchors. The formulas of MathJax stay LaTeX. The navigation, the table of contents and the scripts go away.
+- An HTML file or a web page keeps its headings, lists, tables, code and links to its anchors. The formulas of MathJax stay LaTeX, also with the delimiter `$` when the page sets it. A formula that KaTeX drew on the server gets its LaTeX back from its boxes. The navigation, the table of contents and the scripts go away.
 - The formulas of TeX become LaTeX: scripts, fractions, large operators with their limits, cases and the symbols of CMSY.
 - The Markdown holds the service marks `<!-- rag:page N -->` and `<!-- rag:anchor name -->`. The chunks leave them out and keep the pages and the anchors as metadata.
 - A link `[text](#anchor)`, a link to another file of the source and a mention such as "section 8.14" become links between chunks.
