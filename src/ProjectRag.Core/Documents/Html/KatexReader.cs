@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 
 using AngleSharp.Dom;
 
@@ -14,7 +15,7 @@ namespace ProjectRag.Core.Documents.Html;
 /// against a strut. A box above the strut is a numerator or a superscript, and a box below it is a denominator or a subscript.
 /// The formula keeps its meaning for the search and for KaTeX, but not every space and size of the source.
 /// </remarks>
-internal static class KatexReader
+internal static partial class KatexReader
 {
     private static readonly Dictionary<string, string> Symbols = new(StringComparer.Ordinal)
     {
@@ -97,6 +98,23 @@ internal static class KatexReader
         ['⌊'] = @"\lfloor",
         ['⌋'] = @"\rfloor",
     };
+
+    // KaTeX draws some tall delimiters as one picture without a piece of text. Each kind has its own start of the path.
+    // A bracket and a ceiling share the start. A ceiling ends its first part with a short stroke.
+    // The versions of KaTeX end a bracket in different ways, so a bracket is any other path with that start.
+    // The part after the middle height also tells the two floors apart.
+    private static readonly (string Start, string Part, string Delimiter)[] Drawings =
+    [
+        ("M863,9", string.Empty, "("),
+        ("M76,0", string.Empty, ")"),
+        ("M403 1759 V84 H666", " v602 h84z", @"\lceil"),
+        ("M403 1759 V84 H666", string.Empty, "["),
+        ("M347 1759 V0 H0", " v602 h84z", @"\rceil"),
+        ("M347 1759 V0 H0", string.Empty, "]"),
+        ("M319 602 V0 H403", " v1715 h263", @"\lfloor"),
+        ("M319 602 V0 H403", " v1799 H0", @"\rfloor"),
+        ("M145 15", string.Empty, "|"),
+    ];
 
     private static readonly Dictionary<char, string> Accents = new()
     {
@@ -205,7 +223,7 @@ internal static class KatexReader
         if (classes.Contains("delimsizing") && classes.Contains("mult"))
         {
             string? delimiter = element.TextContent.Where(Pieces.ContainsKey).Select(static piece => Pieces[piece]).FirstOrDefault();
-            builder.Append(delimiter ?? string.Empty).Append(' ');
+            builder.Append(delimiter ?? Drawn(element) ?? string.Empty).Append(' ');
             return;
         }
 
@@ -264,6 +282,18 @@ internal static class KatexReader
 
         if (font is not null)
             builder.Append('}');
+    }
+
+    // Returns the delimiter of a picture, or null for a picture of another kind.
+    // KaTeX breaks the path over lines. The path of a double bar draws a second bar at x 367.
+    private static string? Drawn(IElement element)
+    {
+        if (element.QuerySelector("path")?.GetAttribute("d") is not { } d)
+            return null;
+
+        string path = SpaceRegex().Replace(d, " ");
+        string? delimiter = Drawings.FirstOrDefault(drawing => path.StartsWith(drawing.Start, StringComparison.Ordinal) && path.Contains(drawing.Part, StringComparison.Ordinal)).Delimiter;
+        return delimiter == "|" && path.Contains("M367 15", StringComparison.Ordinal) ? @"\Vert" : delimiter;
     }
 
     // The rows of an array are boxes of a stack in each column. The columns stand side by side.
@@ -367,4 +397,7 @@ internal static class KatexReader
             : text;
 
     private static string Tidy(string latex) => string.Join(' ', latex.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+
+    [GeneratedRegex(@"\s+")]
+    private static partial Regex SpaceRegex();
 }

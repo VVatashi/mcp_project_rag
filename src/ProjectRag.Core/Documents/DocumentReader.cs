@@ -16,7 +16,7 @@ public static class DocumentReader
     /// <summary>
     /// The version of the importers, the structure reader and the chunker. A new version makes the indexer read every file again.
     /// </summary>
-    public const int Version = 19;
+    public const int Version = 20;
 
     private static readonly HashSet<string> TextExtensions = new(StringComparer.OrdinalIgnoreCase) { ".md", ".markdown", ".txt", ".rst", ".adoc" };
 
