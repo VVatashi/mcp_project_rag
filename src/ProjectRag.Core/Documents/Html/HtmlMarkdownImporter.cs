@@ -21,7 +21,7 @@ namespace ProjectRag.Core.Documents.Html;
 /// A link to an anchor of the page stays a link, so the chunks link to each other as in a PDF file.</item>
 /// <item>The formulas of LaTeX for MathJax, <c>\( … \)</c> in the text and <c>\[ … \]</c> in a stem block of Asciidoctor, become <c>$ … $</c> and <c>$$ … $$</c>.
 /// A page that sets <c>$ … $</c> as the inline formula of MathJax, as the Khronos Data Format Specification does, keeps those formulas too.
-/// A block of such a page with only <c>$$ … $$</c> or <c>\begin{align*} … \end{align*}</c> becomes display formulas.</item>
+/// On any page that loads MathJax, a block with only <c>$$ … $$</c> or <c>\begin{align*} … \end{align*}</c> becomes display formulas.</item>
 /// <item>A formula that KaTeX drew on the server, as in the Vulkan specification, gets its LaTeX back through <see cref="KatexReader"/>.</item>
 /// </list>
 /// </remarks>
@@ -98,8 +98,12 @@ internal static partial class HtmlMarkdownImporter
     [GeneratedRegex(@"\G\s*(?:\$\$(?<math>.+?)\$\$|\\\[(?<math>.+?)\\\]|(?<math>\\begin\{(?<name>[A-Za-z]+\*?)\}.+?\\end\{\k<name>\}))", RegexOptions.Singleline)]
     private static partial Regex DisplayBlockRegex();
 
+    // The environments that KaTeX takes only in a display formula, with their inline twins aligned and gathered.
+    [GeneratedRegex(@"(?<=\\(?:begin|end))\{(?<name>align|gather)\*?\}")]
+    private static partial Regex DisplayEnvironmentRegex();
+
     // The setting of MathJax that adds $ … $ to its inline formulas: inlineMath: [['$','$'], …].
-    [GeneratedRegex(@"inlineMath\s*:\s*\[[^\]]*\[\s*['""]\$['""]")]
+    [GeneratedRegex(@"inlineMath\s*:\s*\[(?:[^\[\]]|\[[^\]]*\])*?\[\s*['""]\$['""]")]
     private static partial Regex DollarSettingRegex();
 
     [GeneratedRegex(@"(?:^|\s)language-(?<language>[\w+#.-]+)")]
@@ -275,10 +279,15 @@ internal static partial class HtmlMarkdownImporter
                 case "div" when element.ClassList.Contains("stemblock"):
                     Formula(element);
                     break;
-                case "div" when _mathJax && DisplayFormulas(element.TextContent) is { } formulas:
-                    foreach (string formula in formulas)
-                        Add($"$$\n{TextUnderscores(formula)}\n$$");
+                // A listing of LaTeX stays code.
+                case "div" when _mathJax && element.QuerySelector("pre, code") is null && DisplayFormulas(element.TextContent) is { } formulas:
+                    foreach (IElement inner in element.QuerySelectorAll("[id], a[name]"))
+                    {
+                        Anchor(inner.Id);
+                        Anchor(inner.GetAttribute("name"));
+                    }
 
+                    formulas.ForEach(formula => Display(TextUnderscores(formula)));
                     break;
                 // Asciidoctor sets a note as a table of an icon and the text. The label of the note goes away, as in a PDF file.
                 case "div" when element.ClassList.Contains("admonitionblock") && element.QuerySelector("td.content") is { } content:
@@ -376,16 +385,31 @@ internal static partial class HtmlMarkdownImporter
 
         private void Formula(IElement element)
         {
-            if (element.QuerySelector(".katex") is { } katex)
+            IHtmlCollection<IElement> formulas = element.QuerySelectorAll(".katex");
+            if (formulas.Length > 0)
             {
-                Add($"$$\n{KatexReader.Read(katex)}\n$$");
+                foreach (IElement katex in formulas)
+                    Display(KatexReader.Read(katex));
+
                 return;
             }
 
             string text = element.TextContent.Trim();
             Match display = DisplayMathRegex().Match(text);
-            Add(display.Success ? $"$$\n{TextUnderscores(display.Groups["math"].Value.Trim())}\n$$" : MarkdownText.EscapeStart(Collapse(Inline(element))));
+            if (display.Success)
+                Display(TextUnderscores(display.Groups["math"].Value.Trim()));
+            else
+                Add(MarkdownText.EscapeStart(Collapse(Inline(element))));
         }
+
+        // A display formula. A cell of a table joins its blocks into one line, so there the formula stays inside the line.
+        // KaTeX takes align* only in a display formula, so inside a line it becomes aligned, the same layout.
+        private void Display(string latex) =>
+            Add(_inTable ? $"${CellMath(DisplayEnvironmentRegex().Replace(latex, static match => match.Groups["name"].Value == "gather" ? "{gathered}" : "{aligned}"))}$" : $"$$\n{latex}\n$$");
+
+        // A cell of a pipe table ends at a pipe, also inside a formula. The commands \Vert and \vert draw the same lines.
+        private static string CellMath(string latex) =>
+            latex.Replace(@"\|", @"\Vert ", StringComparison.Ordinal).Replace("|", @"\vert ", StringComparison.Ordinal);
 
         // The display formulas of a block that holds nothing else, or null.
         private static List<string>? DisplayFormulas(string text)
@@ -533,7 +557,7 @@ internal static partial class HtmlMarkdownImporter
                     return string.Empty;
                 case IElement element when element.ClassList.Contains("katex"):
                     string latex = KatexReader.Read(element);
-                    return $"${(_inTable ? latex.Replace("|", "\\|", StringComparison.Ordinal) : latex)}$";
+                    return $"${(_inTable ? CellMath(latex) : latex)}$";
                 case IElement element:
                     Anchor(element.Id);
                     Anchor(element.GetAttribute("name"));
@@ -567,7 +591,7 @@ internal static partial class HtmlMarkdownImporter
             {
                 builder.Append(MarkdownText.Escape(text[last..match.Index]));
                 string math = TextUnderscores(match.Groups["math"].Value.Trim());
-                builder.Append('$').Append(_inTable ? math.Replace("|", "\\|", StringComparison.Ordinal) : math).Append('$');
+                builder.Append('$').Append(_inTable ? CellMath(math) : math).Append('$');
                 last = match.Index + match.Length;
             }
 

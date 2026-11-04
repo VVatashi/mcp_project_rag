@@ -45,7 +45,7 @@ internal static class KatexReader
         ["{"] = @"\{",
         ["}"] = @"\}",
         ["∣"] = "|",
-        ["∥"] = @"\|",
+        ["∥"] = @"\Vert ",
         ["∑"] = @"\sum",
         ["∏"] = @"\prod",
         ["∫"] = @"\int",
@@ -181,11 +181,16 @@ internal static class KatexReader
 
         if (classes.Contains("accent"))
         {
-            List<(double Shift, IElement Box)> boxes = Stack(element);
-            IElement? mark = element.QuerySelector(".accent-body");
-            char sign = mark?.TextContent.Trim() is [char only] ? only : '^';
-            IElement? body = boxes.Select(static box => box.Box).FirstOrDefault(box => mark is null || !box.Contains(mark));
-            builder.Append(Accents.GetValueOrDefault(sign, @"\hat")).Append('{').Append(Inner(body)).Append('}');
+            // The mark of this accent is a box of its own stack. An accent inside the body has a mark of its own.
+            // KaTeX draws \vec and the wide accents as pictures, without a sign.
+            List<IElement> boxes = [.. Stack(element).Select(static box => box.Box)];
+            IElement? mark = boxes.Find(static box => box.ClassList.Contains("accent-body"));
+            IElement? body = boxes.Find(box => box != mark);
+            string command = mark is null ? @"\hat"
+                : mark.ClassList.Contains("accent-vec") ? @"\vec"
+                : Visible(mark.TextContent).Trim() is [char sign] ? Accents.GetValueOrDefault(sign, @"\hat")
+                : @"\widehat";
+            builder.Append(command).Append('{').Append(Inner(body)).Append('}');
             return;
         }
 
@@ -261,20 +266,28 @@ internal static class KatexReader
             builder.Append('}');
     }
 
-    // The rows of an array are boxes of a stack in each column, from the top down. The columns stand side by side.
+    // The rows of an array are boxes of a stack in each column. The columns stand side by side.
+    // KaTeX writes no box for an empty cell, so a row is the set of the boxes at one height across the columns.
     private static void Table(IElement table, StringBuilder builder)
     {
         List<IElement> columns = [.. table.Children.Where(static child => child.ClassName?.Contains("col-align-", StringComparison.Ordinal) == true)];
-        List<List<string>> cells = [.. columns.Select(static column => Stack(column).OrderByDescending(static box => box.Shift).Select(static box => Inner(box.Box)).ToList())];
-        int rows = cells.Count == 0 ? 0 : cells.Max(static column => column.Count);
+        List<List<(double Shift, IElement Box)>> stacks = [.. columns.Select(Stack)];
+        List<double> rows = [];
+        foreach (double shift in stacks.SelectMany(static stack => stack).Select(static box => box.Shift).OrderDescending())
+        {
+            if (rows.Count == 0 || rows[^1] - shift > 0.05)
+                rows.Add(shift);
+        }
+
         string align = string.Concat(columns.Select(static column => column.ClassName!.Contains("col-align-l", StringComparison.Ordinal) ? 'l' : column.ClassName.Contains("col-align-r", StringComparison.Ordinal) ? 'r' : 'c'));
         builder.Append(@"\begin{array}{").Append(align).Append('}');
-        for (int row = 0; row < rows; row++)
+        for (int row = 0; row < rows.Count; row++)
         {
             if (row > 0)
                 builder.Append(@" \\ ");
 
-            builder.AppendJoin(" & ", cells.Select(column => row < column.Count ? column[row] : string.Empty));
+            double height = rows[row];
+            builder.AppendJoin(" & ", stacks.Select(stack => Inner(stack.Find(box => Math.Abs(box.Shift - height) <= 0.05).Box)));
         }
 
         builder.Append(@"\end{array}");
@@ -333,7 +346,16 @@ internal static class KatexReader
     {
         StringBuilder builder = new();
         foreach (char c in Visible(element.TextContent).Trim())
-            builder.Append(c is '#' or '$' or '%' or '&' or '_' or '{' or '}' ? $"\\{c}" : c.ToString());
+        {
+            builder.Append(c switch
+            {
+                '#' or '$' or '%' or '&' or '_' or '{' or '}' => $"\\{c}",
+                '\\' => @"\textbackslash{}",
+                '^' => @"\textasciicircum{}",
+                '~' => @"\textasciitilde{}",
+                _ => c.ToString(),
+            });
+        }
 
         return builder.ToString();
     }

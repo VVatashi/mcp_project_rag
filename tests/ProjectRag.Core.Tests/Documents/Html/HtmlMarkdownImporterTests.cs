@@ -133,6 +133,24 @@ public sealed class HtmlMarkdownImporterTests
     }
 
     [Fact]
+    public void Read_KeepsCodeAnchorsAndTablesAroundTheFormulasOfMathJax()
+    {
+        DocumentText text = Read("""
+            <head><script>MathJax.Hub.Config({ tex2jax: { inlineMath: [['\\(','\\)'], ['$','$']] } });</script></head>
+            <body><p>See <a href="#eq1">the sum</a> and $x$.</p>
+            <div class="informalequation"><a id="eq1"></a>$$a + b$$</div>
+            <div class="listingblock"><div class="content"><pre>\begin{align}x\end{align}</pre></div></div>
+            <table><tr><th>Norm</th></tr><tr><td><div>$$|x|$$</div></td></tr></table>
+            </body>
+            """);
+
+        Assert.Contains("See [the sum](#eq1) and $x$.", text.Content, StringComparison.Ordinal);
+        Assert.Contains("<!-- rag:anchor eq1 -->\n$$\na + b\n$$", text.Content, StringComparison.Ordinal);
+        Assert.Contains("```\n\\begin{align}x\\end{align}\n```", text.Content, StringComparison.Ordinal);
+        Assert.Contains("| $\\vert x\\vert $ |", text.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Read_KeepsTheDollarsOfAPageWithoutTheSetting()
     {
         DocumentText text = Read("<p>It costs $5 and $6.</p>");
