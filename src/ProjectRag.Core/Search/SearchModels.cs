@@ -102,13 +102,13 @@ public sealed class SearchHit
     public double? RerankScore { get; set; }
 
     /// <summary>
-    /// Gets the other chunks with the same text, such as a paragraph that the core and the compatibility profile of OpenGL share. The search shows the text once.
+    /// Gets the other chunks with almost the same text, such as a paragraph that the core and the compatibility profile of OpenGL share. The search shows the text once.
     /// </summary>
     public IReadOnlyList<HitCopy> Copies { get; set; } = [];
 }
 
 /// <summary>
-/// A chunk with the same text as a hit.
+/// A chunk with almost the same text as a hit.
 /// </summary>
 /// <param name="ChunkId">The key of the chunk.</param>
 /// <param name="DocumentId">The key of the document.</param>

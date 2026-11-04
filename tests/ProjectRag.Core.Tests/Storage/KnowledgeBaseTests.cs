@@ -143,12 +143,13 @@ public sealed class KnowledgeBaseTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Search_ShowsATextOfTwoDocumentsOnce()
+    public async Task Search_ShowsATextOfTwoDocumentsOnceAlsoWithOtherLinks()
     {
         ServiceProvider services = RequireDatabase();
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
-        Write("core.md", "# Core\n\n## Depth\n\nThe depth test compares the depth of a fragment with the buffer.\n\n## Stencil\n\nThe stencil test compares a reference value.\n");
-        Write("compatibility.md", "# Compatibility\n\n## Depth\n\nThe depth test compares the depth of a fragment with the buffer.\n\n## Alpha\n\nThe alpha test discards a fragment by its alpha.\n");
+        // The links of the two copies name other pages, as in the core and the compatibility profile of OpenGL.
+        Write("core.md", "# Core\n\n## Depth\n\nThe depth test compares the depth of a fragment with the [buffer](#p10-2) of the depth.\n\n## Stencil\n\nThe stencil test compares a reference value.\n");
+        Write("compatibility.md", "# Compatibility\n\n## Depth\n\nThe depth test compares the depth of a fragment with the [buffer](#p12-5) of the depth.\n\n## Alpha\n\nThe alpha test discards a fragment by its alpha.\n");
         int sourceId = await services.GetRequiredService<SourceStore>().AddAsync(new SourceInput { Name = "gl", RootPath = _root }, cancellationToken);
         await services.GetRequiredService<Indexer>().RunAsync(sourceId, null, cancellationToken);
         SearchService search = services.GetRequiredService<SearchService>();

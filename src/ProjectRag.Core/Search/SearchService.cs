@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -23,7 +25,7 @@ namespace ProjectRag.Core.Search;
 /// <param name="searchOptions">The options of the search.</param>
 /// <param name="rerankOptions">The options of the reranker.</param>
 /// <param name="logger">The logger.</param>
-public sealed class SearchService(
+public sealed partial class SearchService(
     SearchStore store,
     SourceStore sources,
     EmbeddingModelRegistry models,
@@ -112,25 +114,59 @@ public sealed class SearchService(
         return new SearchResult(mode, reranked, notes, [.. hits.Take(limit)]);
     }
 
-    // A hit takes the later hits with the same text as its copies, so the text fills one place of the result.
+    // A hit takes the later hits with almost the same text as its copies, so the text fills one place of the result.
+    // The core and the compatibility profile of OpenGL share their paragraphs, but the targets of their links name other pages.
+    // A few words may differ too, such as "or alpha". Two texts are copies when nine of ten runs of three words match.
     private static List<SearchHit> MergeCopies(IReadOnlyList<SearchHit> hits)
     {
-        List<SearchHit> merged = [];
-        Dictionary<string, SearchHit> first = new(StringComparer.Ordinal);
+        List<(SearchHit Hit, HashSet<string> Runs)> kept = [];
         foreach (SearchHit hit in hits)
         {
-            if (first.TryGetValue(hit.Body, out SearchHit? kept))
+            HashSet<string> runs = WordRuns(hit.Body);
+            int index = kept.FindIndex(other => Similarity(other.Runs, runs) >= 0.9);
+            if (index >= 0)
             {
-                kept.Copies = [.. kept.Copies, new HitCopy(hit.ChunkId, hit.DocumentId, hit.Path, hit.Heading)];
+                SearchHit first = kept[index].Hit;
+                first.Copies = [.. first.Copies, new HitCopy(hit.ChunkId, hit.DocumentId, hit.Path, hit.Heading)];
                 continue;
             }
 
-            first.Add(hit.Body, hit);
-            merged.Add(hit);
+            kept.Add((hit, runs));
         }
 
-        return merged;
+        return [.. kept.Select(static item => item.Hit)];
     }
+
+    // The runs of three words of a text, without the targets of its links and the marks of its pages.
+    private static HashSet<string> WordRuns(string body)
+    {
+        string text = MarkRegex().Replace(LinkTargetRegex().Replace(body, "]"), " ");
+        string[] words = [.. WordRegex().Matches(text).Select(static match => match.Value.ToLowerInvariant())];
+        HashSet<string> runs = new(StringComparer.Ordinal);
+        for (int i = 0; i + 3 <= words.Length; i++)
+            runs.Add(string.Join(' ', words, i, 3));
+
+        if (runs.Count == 0)
+            runs.Add(string.Join(' ', words));
+
+        return runs;
+    }
+
+    // The share of the runs that both texts hold among the runs of either text.
+    private static double Similarity(HashSet<string> first, HashSet<string> second)
+    {
+        int shared = first.Count(second.Contains);
+        return (double)shared / (first.Count + second.Count - shared);
+    }
+
+    [GeneratedRegex(@"\]\(#[^)\s]*\)")]
+    private static partial Regex LinkTargetRegex();
+
+    [GeneratedRegex("<!--.*?-->", RegexOptions.Singleline)]
+    private static partial Regex MarkRegex();
+
+    [GeneratedRegex(@"\w+")]
+    private static partial Regex WordRegex();
 
     private async Task<string[]> ResolveCategoriesAsync(IReadOnlyList<string>? names, CancellationToken cancellationToken)
     {
