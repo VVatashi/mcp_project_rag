@@ -226,6 +226,7 @@ export interface HitCopy {
   documentId: number;
   path: string;
   heading: string;
+  similarity: number;
 }
 
 export interface SearchResult {

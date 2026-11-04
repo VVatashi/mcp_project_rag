@@ -114,4 +114,6 @@ public sealed class SearchHit
 /// <param name="DocumentId">The key of the document.</param>
 /// <param name="Path">The path of the document.</param>
 /// <param name="Heading">The path of the section.</param>
-public sealed record HitCopy(long ChunkId, long DocumentId, string Path, string Heading);
+/// <param name="Similarity">The share of the runs of three words that the two texts share, from 0.9 to 1. A value of 1 means the same words.
+/// A smaller value means that a few words differ, such as "must" and "must not". The tool read_chunk shows the text of the copy.</param>
+public sealed record HitCopy(long ChunkId, long DocumentId, string Path, string Heading, double Similarity);

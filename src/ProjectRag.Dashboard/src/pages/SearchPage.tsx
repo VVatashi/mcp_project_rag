@@ -122,6 +122,7 @@ export function SearchPage() {
                         <Link className="link" to={`/chunks/${copy.chunkId}`} title={copy.heading}>
                           {copy.path}
                         </Link>
+                        {copy.similarity < 1 && ` (${copy.similarity.toFixed(2)})`}
                       </span>
                     ))}
                   </div>
