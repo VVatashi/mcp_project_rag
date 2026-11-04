@@ -113,6 +113,19 @@ export function SearchPage() {
                   {hit.pageStart !== null && ` · page ${hit.pageStart}${hit.pageEnd !== hit.pageStart ? `–${hit.pageEnd}` : ''}`}
                   {hit.linkCount > 0 && ` · ${hit.linkCount} links`}
                 </div>
+                {hit.copies.length > 0 && (
+                  <div className="hit__path mono small">
+                    also in{' '}
+                    {hit.copies.map((copy, index) => (
+                      <span key={copy.chunkId}>
+                        {index > 0 && ', '}
+                        <Link className="link" to={`/chunks/${copy.chunkId}`} title={copy.heading}>
+                          {copy.path}
+                        </Link>
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <Markdown text={hit.body} anchorHref={(anchor) => anchorAddress(hit.documentId, anchor)} />
               </li>
             ))}

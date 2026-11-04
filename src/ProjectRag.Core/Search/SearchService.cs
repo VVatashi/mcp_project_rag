@@ -85,7 +85,9 @@ public sealed class SearchService(
 
         bool useReranker = (request.Rerank ?? rerank.Enabled) && rerank.Candidates > 1;
         int candidates = useReranker ? Math.Max(limit, rerank.Candidates) : limit;
-        IReadOnlyList<SearchHit> hits = await store.SearchAsync(model, vector, query, sourceIds, categories, candidates, options, cancellationToken);
+        // The copies of a text take places of the candidates, so the store finds twice as many.
+        IReadOnlyList<SearchHit> found = await store.SearchAsync(model, vector, query, sourceIds, categories, candidates * 2, options, cancellationToken);
+        IReadOnlyList<SearchHit> hits = [.. MergeCopies(found).Take(candidates)];
         string mode = model is null ? "text" : hits.Any(static hit => hit.TextRank is not null) ? "hybrid" : "vector";
 
         bool reranked = false;
@@ -108,6 +110,26 @@ public sealed class SearchService(
         }
 
         return new SearchResult(mode, reranked, notes, [.. hits.Take(limit)]);
+    }
+
+    // A hit takes the later hits with the same text as its copies, so the text fills one place of the result.
+    private static List<SearchHit> MergeCopies(IReadOnlyList<SearchHit> hits)
+    {
+        List<SearchHit> merged = [];
+        Dictionary<string, SearchHit> first = new(StringComparer.Ordinal);
+        foreach (SearchHit hit in hits)
+        {
+            if (first.TryGetValue(hit.Body, out SearchHit? kept))
+            {
+                kept.Copies = [.. kept.Copies, new HitCopy(hit.ChunkId, hit.DocumentId, hit.Path, hit.Heading)];
+                continue;
+            }
+
+            first.Add(hit.Body, hit);
+            merged.Add(hit);
+        }
+
+        return merged;
     }
 
     private async Task<string[]> ResolveCategoriesAsync(IReadOnlyList<string>? names, CancellationToken cancellationToken)

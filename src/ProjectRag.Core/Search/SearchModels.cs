@@ -100,4 +100,18 @@ public sealed class SearchHit
 
     /// <summary>Gets the score of the reranker, or <see langword="null"/> without the reranker.</summary>
     public double? RerankScore { get; set; }
+
+    /// <summary>
+    /// Gets the other chunks with the same text, such as a paragraph that the core and the compatibility profile of OpenGL share. The search shows the text once.
+    /// </summary>
+    public IReadOnlyList<HitCopy> Copies { get; set; } = [];
 }
+
+/// <summary>
+/// A chunk with the same text as a hit.
+/// </summary>
+/// <param name="ChunkId">The key of the chunk.</param>
+/// <param name="DocumentId">The key of the document.</param>
+/// <param name="Path">The path of the document.</param>
+/// <param name="Heading">The path of the section.</param>
+public sealed record HitCopy(long ChunkId, long DocumentId, string Path, string Heading);
