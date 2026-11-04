@@ -87,6 +87,19 @@ public sealed class PdfLayoutTests
     }
 
     [Fact]
+    public void BuildLines_FindsASqueezedSpaceBetweenWordsOfCode()
+    {
+        // A justified line of OpenGL squeezes the space between "std140" and "layout" to a third of a character. The letters of a word touch.
+        PageBuilder page = new(1);
+        double x = page.Text("std140", 100, 700, 10, GlyphStyle.Mono, "NimbusMonL-Regu");
+        page.Text("layout", x + 1.7, 700, 10, GlyphStyle.Mono, "NimbusMonL-Regu");
+
+        Line line = Assert.Single(PdfLayout.BuildLines(page.Build(), static glyph => glyph.IsMath));
+
+        Assert.Equal("std140 layout", line.PlainText);
+    }
+
+    [Fact]
     public void BuildLines_KeepsTheSpacesThatTheFileWrites()
     {
         // A font without its program gives too wide glyphs: the gap of the space is narrower than a word space, in the text and in the code.

@@ -143,6 +143,29 @@ public sealed class KnowledgeBaseTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Search_ShowsATextOfTwoDocumentsOnce()
+    {
+        ServiceProvider services = RequireDatabase();
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        Write("core.md", "# Core\n\n## Depth\n\nThe depth test compares the depth of a fragment with the buffer.\n\n## Stencil\n\nThe stencil test compares a reference value.\n");
+        Write("compatibility.md", "# Compatibility\n\n## Depth\n\nThe depth test compares the depth of a fragment with the buffer.\n\n## Alpha\n\nThe alpha test discards a fragment by its alpha.\n");
+        int sourceId = await services.GetRequiredService<SourceStore>().AddAsync(new SourceInput { Name = "gl", RootPath = _root }, cancellationToken);
+        await services.GetRequiredService<Indexer>().RunAsync(sourceId, null, cancellationToken);
+        SearchService search = services.GetRequiredService<SearchService>();
+
+        foreach (bool rerank in new[] { true, false })
+        {
+            SearchResult result = await search.SearchAsync(new SearchRequest { Query = "depth test of a fragment", Rerank = rerank }, cancellationToken);
+
+            SearchHit depth = Assert.Single(result.Hits, static hit => hit.Heading.EndsWith("Depth", StringComparison.Ordinal));
+            HitCopy copy = Assert.Single(depth.Copies);
+            Assert.Equal(["compatibility.md", "core.md"], new[] { depth.Path, copy.Path }.Order(StringComparer.Ordinal));
+            Assert.EndsWith("Depth", copy.Heading, StringComparison.Ordinal);
+            Assert.Equal(3, result.Hits.Count);
+        }
+    }
+
+    [Fact]
     public async Task Replacements_FixTheTextOfTheMatchingFiles()
     {
         ServiceProvider services = RequireDatabase();

@@ -551,10 +551,13 @@ public static partial class PdfMarkdownImporter
         }
 
         // A lone line of code inside a paragraph is a long name of the API that the paragraph wraps. A statement of code ends otherwise.
-        for (int i = 1; i < lines.Count - 1; i++)
+        // A name that TeX broke after "_-" goes on in the next line, also at the end of a paragraph: "NEGATIVE_ONE_-" and "TO_ONE or ZERO_TO_ONE.".
+        for (int i = 1; i < lines.Count; i++)
         {
-            if (lines[i].Kind == LineKind.Code && lines[i - 1].Kind == LineKind.Text && lines[i + 1].Kind == LineKind.Text && !lines[i].InTable
-                && lines[i - 1].Baseline - lines[i].Baseline < lines[i].Size * 1.6 && lines[i].Baseline - lines[i + 1].Baseline < lines[i].Size * 1.6
+            bool inside = i + 1 < lines.Count && lines[i + 1].Kind == LineKind.Text && lines[i].Baseline - lines[i + 1].Baseline < lines[i].Size * 1.6;
+            bool broken = lines[i - 1].PlainText.TrimEnd().EndsWith("_-", StringComparison.Ordinal);
+            if (lines[i].Kind == LineKind.Code && lines[i - 1].Kind == LineKind.Text && (inside || broken) && !lines[i].InTable
+                && lines[i - 1].Baseline - lines[i].Baseline < lines[i].Size * 1.6
                 && lines[i].PlainText.TrimEnd() is not [.., '{' or '}' or ';'])
                 lines[i].Kind = LineKind.Text;
         }
@@ -772,9 +775,17 @@ public static partial class PdfMarkdownImporter
 
         // TeX indents the first line of a paragraph from the margin. A continued line starts at the margin, or where the previous line started.
         // Inside a framed box every line starts at the indent of the box, and a full previous line shows that the paragraph goes on.
+        // A list of errors in OpenGL lies right of the margin. The first line of an item starts right of the lines after it.
+        // A line back at the start of that first line starts the next item.
+        // A paragraph of TeX also starts right of its other lines, but those lines lie at the margin, so it stays out.
         bool indented = line.Left - margin > line.Size * 0.8;
+        bool firstRight = block.Lines.Count > 1 && block.Lines[0].Left - block.Lines[1].Left > line.Size * 0.5 && block.Lines[1].Left - margin > line.Size * 0.5;
+        if (firstRight && Math.Abs(line.Left - block.Lines[0].Left) < line.Size * 0.5)
+            return false;
+
         bool previousFull = previous.Right - previous.Left >= (right - margin) * 0.8;
-        return !indented || (previousFull && Math.Abs(indent) < line.Size * 0.5) || (indent > -line.Size * 0.5 && previous.Left - margin > line.Size * 0.8 && block.Lines.Count > 1);
+        bool backLeft = indented && indent < -line.Size * 0.5 && indent > -line.Size * 3 && previous.Right >= right - (line.Size * 2) && previous.PlainText.TrimEnd() is not [.., '.' or ':'];
+        return !indented || backLeft || (previousFull && Math.Abs(indent) < line.Size * 0.5) || (indent > -line.Size * 0.5 && previous.Left - margin > line.Size * 0.8 && block.Lines.Count > 1);
     }
 
     // A short line of bold text alone, without an end of a sentence, is a heading below the outline, such as "Errors" or "Texture-Combined Samplers".
@@ -790,6 +801,11 @@ public static partial class PdfMarkdownImporter
         // The labels of a diagram are bold lines too, but they come in groups. A heading stands alone between other blocks.
         // A bold line with a number, such as "4.1.10. Implicit Conversions", is a heading when its number goes on from the number of a heading before it:
         // a child of "4.1" or a sibling of "4.1.9". Its level follows from that heading. Numbered labels of a figure or rows of a table go on from no heading.
+        // OpenGL indents the label "Errors" and its list from the margin. The text after the list goes back to the margin and belongs to the section again.
+        // So the indented label stays text when such text follows its indented blocks. A heading would take that text.
+        // Vulkan and OpenXR indent their labels too, such as "Valid Usage", but the text of the margin after them starts a new topic.
+        Dictionary<int, double> margins = blocks.Where(static block => block.Kind == PdfBlockKind.Paragraph).SelectMany(static block => block.Lines)
+            .GroupBy(static line => line.Page).ToDictionary(static page => page.Key, static page => page.GroupBy(static line => Math.Round(line.Left)).MaxBy(static left => left.Count())!.Key);
         bool[] candidates = [.. blocks.Select(IsBoldLine)];
         string?[] numbers = [.. blocks.Select((block, index) => candidates[index] ? SectionNumber(block.Lines[0].PlainText) : null)];
         List<(string Number, int Level)> numbered = [];
@@ -823,6 +839,9 @@ public static partial class PdfMarkdownImporter
                 continue;
             }
 
+            if (text == "Errors" && Indented(block) && TextAfterIndent(i))
+                continue;
+
             // A line that starts with a digit and goes on from no heading, such as the label "2 Rasterization" of a figure, is no heading.
             // A name such as "H.264 Picture Parameter Sets" counts as a label. A numbered heading next to a label is no part of its group.
             if (char.IsDigit(text[0]))
@@ -836,6 +855,25 @@ public static partial class PdfMarkdownImporter
             block.Kind = PdfBlockKind.Heading;
             block.HeadingLevel = level + 1;
             block.HeadingTitle = text;
+        }
+
+        bool Indented(PdfBlock block) => block.Lines.Count > 0 && IndentedLine(block.Lines[0]);
+
+        bool IndentedLine(Line line) => margins.TryGetValue(line.Page, out double margin) && line.Left - margin > line.Size * 0.5;
+
+        bool TextAfterIndent(int label)
+        {
+            for (int j = label + 1; j < blocks.Count; j++)
+            {
+                if (blocks[j].Kind == PdfBlockKind.Heading || candidates[j])
+                    return false;
+
+                // The first line of a paragraph of TeX is indented, but the lines after it start at the margin.
+                if (blocks[j].Kind == PdfBlockKind.Paragraph && !blocks[j].Lines.TrueForAll(IndentedLine))
+                    return true;
+            }
+
+            return false;
         }
     }
 

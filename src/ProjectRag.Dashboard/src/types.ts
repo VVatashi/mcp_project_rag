@@ -218,6 +218,14 @@ export interface SearchHit {
   textRank: number | null;
   score: number;
   rerankScore: number | null;
+  copies: HitCopy[];
+}
+
+export interface HitCopy {
+  chunkId: number;
+  documentId: number;
+  path: string;
+  heading: string;
 }
 
 export interface SearchResult {

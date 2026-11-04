@@ -317,6 +317,50 @@ public sealed class PdfMarkdownImporterTests
     }
 
     [Fact]
+    public void Convert_GivesTheWholeWordToALinkThatEndsInsideIt()
+    {
+        // The link of the glossary of ECMA-334 covers "conversion" of "conversions". A link that ends at a sign keeps its end: "Info::member".
+        PageBuilder page = new(2);
+        double x = page.Text("All", 72, 700);
+        double start = x + 3;
+        double end = page.Text("conversion", start, 700);
+        x = page.Text("s and", end, 700);
+        double name = x + 3;
+        double nameEnd = page.Text("Info", name, 700);
+        page.Text("::member exist.", nameEnd, 700);
+        page.Link(start, 697, end, 709, 1, 718);
+        page.Link(name, 697, nameEnd, 709, 1, 718);
+
+        string markdown = Convert(page);
+
+        Assert.Contains("All [conversions](#", markdown, StringComparison.Ordinal);
+        Assert.Contains(" and [Info](#", markdown, StringComparison.Ordinal);
+        Assert.Contains(")::member exist.", markdown, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Convert_KeepsTheTextAfterAnIndentedListOfErrorsInItsSection()
+    {
+        // OpenGL indents the label "Errors" and hangs the first line of each error. The text of the section goes on at the margin.
+        PageBuilder page = new(2);
+        page.Text("The command sets the clip control of the context for all of the draws.", 72, 700);
+        page.Text("The origin and the depth select the modes of the clip volume of the view.", 72, 688);
+        page.Text("Errors", 82, 664, 10, GlyphStyle.Bold, "Times-Bold");
+        page.Text("An INVALID_ENUM error is generated if the origin value is not one", 99, 640);
+        page.Text("of the two origins.", 82, 628);
+        page.Text("An INVALID_ENUM error is generated if the depth mode is not any", 99, 616);
+        page.Text("of the two modes.", 82, 604);
+        page.Text("Primitives are clipped to the clip volume of the view in this space.", 89, 580);
+        page.Text("The volume holds the points inside the planes of the view of the scene.", 72, 568);
+
+        string markdown = Convert(page);
+
+        Assert.DoesNotContain("# Errors", markdown, StringComparison.Ordinal);
+        Assert.Contains("\n\nAn INVALID_ENUM error is generated if the origin value is not one of the two origins.\n\nAn INVALID_ENUM error", markdown, StringComparison.Ordinal);
+        Assert.Contains("is not any of the two modes.\n\nPrimitives are clipped", markdown, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void CoverTitle_TakesTheLinesInTheLargestFontOfTheFirstPage()
     {
         PageBuilder cover = new(1);

@@ -59,6 +59,17 @@ public sealed partial class DocumentChunkerTests
     }
 
     [Fact]
+    public void Split_StartsLongCodeWithItsLeadIn()
+    {
+        string code = "```cs\n" + string.Join('\n', Enumerable.Range(0, 60).Select(static i => $"line {i:D2} of the code")) + "\n```";
+        IReadOnlyList<TextChunk> chunks = Split($"The code defines these lines:\n\n{code}\n", maxChars: 200, atomicMaxChars: 400, overlapChars: 60);
+
+        Assert.True(chunks.Count > 2);
+        Assert.StartsWith("The code defines these lines:\n\n```cs\nline 00", chunks[0].Body, StringComparison.Ordinal);
+        Assert.All(chunks.Skip(1), static chunk => Assert.StartsWith("```cs", chunk.Body, StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Split_CutsALongLineOfDigitsToAThirdOfTheLimit()
     {
         string table = "| Bit | Value |\n| --- | --- |\n| 0 | " + string.Join(' ', Enumerable.Repeat("1", 600)) + " |\n";

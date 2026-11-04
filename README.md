@@ -172,7 +172,7 @@ A client with Streamable HTTP takes this entry:
 | --- | --- |
 | `list_categories` | Lists the categories of the documents, such as `csharp` or `vulkan`, with their counts |
 | `list_sources` | Lists the sources with their descriptions and counts |
-| `search` | Searches the chunks. It takes a query, the categories, the names of sources and a number of hits |
+| `search` | Searches the chunks. It takes a query, the categories, the names of sources and a number of hits. A text that several places share appears once, and the hit names the other places as copies |
 | `find_documents` | Finds documents by a part of the path or the title, with tolerance for typos |
 | `read_document` | Reads the text of a document from an offset. A hit gives the offset in `charStart` |
 | `read_chunk` | Reads a chunk by its `chunkId`: its section, its pages, the previous and the next chunk, its links with their targets and the chunks that link to it |

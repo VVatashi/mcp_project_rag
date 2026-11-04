@@ -199,14 +199,16 @@ internal sealed partial class PdfMarkdownWriter(HashSet<string> vocabulary, Dict
     {
         List<(SegmentKind Kind, string Text, string? Link)> segments = [];
         PdfPageModel? page = pages.GetValueOrDefault(line.Page);
+        string?[] links = [.. line.Items.Select(item => LinkAt(page, line.Page, item))];
+        SnapLinks(line.Items, links);
         int i = 0;
         while (i < line.Items.Count)
         {
             Item item = line.Items[i];
-            string? link = LinkAt(page, line.Page, item);
+            string? link = links[i];
             SegmentKind kind = item.IsMath ? SegmentKind.Math : (item.Style & GlyphStyle.Mono) != 0 ? SegmentKind.Code : SegmentKind.Text;
             int end = i + 1;
-            while (end < line.Items.Count && KindOf(line.Items[end]) == kind && LinkAt(page, line.Page, line.Items[end]) == link
+            while (end < line.Items.Count && KindOf(line.Items[end]) == kind && links[end] == link
                 && (kind != SegmentKind.Text || !HasFootnote(line.Items[end - 1], line.Page, footnotes)))
                 end++;
 
@@ -263,6 +265,34 @@ internal sealed partial class PdfMarkdownWriter(HashSet<string> vocabulary, Dict
 
         return merged;
     }
+
+    // The area of a link may cover a part of a word, as the links of the glossary in ECMA-334 do: "[conversion](#p145-2)s" or "un[defined](#p61-5)".
+    // A link that ends between two letters or digits of one word takes the rest of the letters and digits of that word.
+    // A link that ends at a sign stays, as in "[VkRenderingInfo](#p627-5)::`pColorAttachments`" or "[XrSpace](#p174-1)’s".
+    private static void SnapLinks(List<Item> items, string?[] links)
+    {
+        for (int k = 1; k < items.Count; k++)
+        {
+            if ((links[k - 1] is null) == (links[k] is null) || !InWord(items[k - 1], items[k]))
+                continue;
+
+            if (links[k - 1] is { } left)
+            {
+                for (int j = k; j < items.Count && links[j] is null && (j == k || InWord(items[j - 1], items[j])); j++)
+                    links[j] = left;
+            }
+            else
+            {
+                for (int j = k - 1; j >= 0 && links[j] is null && (j == k - 1 || InWord(items[j], items[j + 1])); j--)
+                    links[j] = links[k];
+            }
+        }
+    }
+
+    // Two neighbor items of the text continue one word when no space parts them. A letter or a digit must meet a letter or a digit.
+    private static bool InWord(Item left, Item right) =>
+        KindOf(left) == SegmentKind.Text && KindOf(right) == SegmentKind.Text && !PdfLayout.NeedsSpace(left, right)
+        && left.Text.Length > 0 && right.Text.Length > 0 && char.IsLetterOrDigit(left.Text[^1]) && char.IsLetterOrDigit(right.Text[0]);
 
     private static SegmentKind KindOf(Item item) => item.IsMath ? SegmentKind.Math : (item.Style & GlyphStyle.Mono) != 0 ? SegmentKind.Code : SegmentKind.Text;
 

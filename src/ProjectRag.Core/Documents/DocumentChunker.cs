@@ -172,12 +172,14 @@ public sealed partial class DocumentChunker
                 continue;
             }
 
-            if (current is { } done)
-                pieces.Add(done);
-
+            // A short lead-in, such as "Metal 4 defines the following structures and enumerations:", starts the first piece of the long code after it.
+            int? lead = current is { Prefix: null } before && !currentAtomic && block.IsAtomic && before.End - before.Start <= _maxChars / 4 ? before.Start : null;
             List<Piece> parts = Size(content, block.Start, block.End, block.IsAtomic) <= (block.IsAtomic ? _atomicMaxChars : _maxChars)
                 ? [new Piece(block.Start, block.End)]
-                : block.IsAtomic ? SplitLines(content, block) : SplitText(content, block.Start, block.End, _maxChars);
+                : block.IsAtomic ? SplitLines(content, block, lead ?? block.Start) : SplitText(content, block.Start, block.End, _maxChars);
+            if (current is { } done && parts[0].Start != lead)
+                pieces.Add(done);
+
             pieces.AddRange(parts.Take(parts.Count - 1));
             current = parts[^1];
             currentAtomic = block.IsAtomic;
@@ -230,7 +232,8 @@ public sealed partial class DocumentChunker
     }
 
     // Code, a formula or a table splits between lines. Each later piece repeats the header of a table or the fence, and the last lines before the cut.
-    private List<Piece> SplitLines(string content, DocumentBlock block)
+    // The first piece starts at start, before the block when a lead-in goes with it. The lead-in stays out when it leaves no room for the first line.
+    private List<Piece> SplitLines(string content, DocumentBlock block, int start)
     {
         List<(int Start, int End)> lines = [];
         int position = block.Start;
@@ -260,6 +263,9 @@ public sealed partial class DocumentChunker
 
         int LineSize(int line) => Size(content, lines[line].Start, lines[line].End, atomic: true);
 
+        if (start < block.Start && Size(content, start, lines[Math.Min(body, lines.Count - 1)].End, atomic: true) + (suffix?.Length ?? 0) + 1 > _atomicMaxChars)
+            start = block.Start;
+
         List<Piece> pieces = [];
         int overhead = PrefixSize(prefix) + (suffix?.Length ?? 0) + 1;
         int next = body;
@@ -274,7 +280,7 @@ public sealed partial class DocumentChunker
                 for (int k = 0; k < parts.Count; k++)
                 {
                     bool isLastPart = k == parts.Count - 1 && next + 1 >= lines.Count;
-                    pieces.Add(new Piece(pieces.Count == 0 ? block.Start : parts[k].Start, parts[k].End, pieces.Count == 0 ? null : prefix, isLastPart ? null : suffix));
+                    pieces.Add(new Piece(pieces.Count == 0 ? start : parts[k].Start, parts[k].End, pieces.Count == 0 ? null : prefix, isLastPart ? null : suffix));
                 }
 
                 next++;
@@ -283,7 +289,7 @@ public sealed partial class DocumentChunker
             }
 
             // A piece holds the overlap and at least one new line. The first piece counts the fence that closes it.
-            int length = pieces.Count == 0 ? Size(content, block.Start, lines[next].Start, atomic: true) + (suffix?.Length ?? 0) + 1 : overhead + Size(content, lines[overlapFrom].Start, lines[next].Start, atomic: true);
+            int length = pieces.Count == 0 ? Size(content, start, lines[next].Start, atomic: true) + (suffix?.Length ?? 0) + 1 : overhead + Size(content, lines[overlapFrom].Start, lines[next].Start, atomic: true);
             int end = next;
             do
             {
@@ -293,7 +299,7 @@ public sealed partial class DocumentChunker
             while (end < lines.Count && length + LineSize(end) <= _atomicMaxChars);
 
             bool isLast = end >= lines.Count;
-            pieces.Add(new Piece(pieces.Count == 0 ? block.Start : lines[overlapFrom].Start, lines[end - 1].End, pieces.Count == 0 ? null : prefix, isLast ? null : suffix));
+            pieces.Add(new Piece(pieces.Count == 0 ? start : lines[overlapFrom].Start, lines[end - 1].End, pieces.Count == 0 ? null : prefix, isLast ? null : suffix));
             if (isLast)
                 break;
 
