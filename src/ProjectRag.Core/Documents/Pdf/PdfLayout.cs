@@ -245,7 +245,8 @@ internal static class PdfLayout
 
     /// <summary>
     /// Tells whether a space separates two neighbor items. A word space is at least a sixth of the size of the font.
-    /// Monospace text without the spaces of the file keeps them only through the gaps, so its threshold is half a character.
+    /// Monospace text without the spaces of the file keeps them only through the gaps.
+    /// The letters of a monospace word touch, and a justified line squeezes a space to a third of a character, so the threshold is a quarter of a character.
     /// </summary>
     public static bool NeedsSpace(Item left, Item right)
     {
@@ -255,7 +256,7 @@ internal static class PdfLayout
 
         double gap = right.Left - left.Right;
         if ((left.Style & right.Style & GlyphStyle.Mono) != 0)
-            return gap > MonoWidth(left) * 0.5;
+            return gap > MonoWidth(left) * 0.25;
 
         // A change between the text, code and a formula squeezes the space of a justified line, so a smaller gap counts.
         bool fontChange = ((left.Style ^ right.Style) & GlyphStyle.Mono) != 0 || (left.IsMath != right.IsMath && !left.Text.All(char.IsPunctuation) && !right.Text.All(char.IsPunctuation));

@@ -296,6 +296,29 @@ internal static class PdfPigSource
             ? string.Join('™', text.Split('™').Select(static part => part.Normalize(NormalizationForm.FormKC)))
             : text.Normalize(NormalizationForm.FormKC);
 
+    // LaTeX draws the sign "\_" as a short rule, not as a glyph, as in the state tables of OpenGL ES: "MAX_SHADER_STORAGE_BUFFER_BINDINGS".
+    // A short rule just below the baseline that touches a glyph on each side becomes the sign "_".
+    // The sign fills its own room between the glyphs and stands alone.
+    // The dotted underline of a link in ECMA-334 makes a chain of short rules under the letters, so it stays out.
+    private static Glyph? Underscore(List<Glyph> glyphs, List<PdfRectangle> strokes, PdfRectangle box)
+    {
+        double y = (box.Top + box.Bottom) / 2;
+        Glyph? left = glyphs.Find(glyph => Near(glyph, y) && Math.Abs(glyph.Right - box.Left) <= glyph.Size * 0.1);
+        if (left is null || box.Width > left.Size * 0.6)
+            return null;
+
+        Glyph? right = glyphs.Find(glyph => Near(glyph, y) && Math.Abs(glyph.Left - box.Right) <= glyph.Size * 0.1 && glyph.Size == left.Size);
+        if (right is null || right.Left - left.Right < box.Width * 0.7)
+            return null;
+
+        double reach = left.Size * 0.4;
+        bool chain = strokes.Exists(other => other != box && Math.Abs(((other.Top + other.Bottom) / 2) - y) < 0.3 && other.Left < box.Right + reach && other.Right > box.Left - reach);
+        return chain ? null : new Glyph("_", box.Left, box.Right, left.Baseline, left.Size, left.Style, left.Font, left.Baseline, y);
+
+        static bool Near(Glyph glyph, double y) =>
+            y <= glyph.Baseline + (glyph.Size * 0.05) && y >= glyph.Baseline - (glyph.Size * 0.3) && glyph.Text.All(char.IsLetterOrDigit);
+    }
+
     private static PdfPageModel ReadPage(Page page)
     {
         // A page may hold its text turned by a quarter, such as a wide table, and turned lines in the margin, such as a running header.
@@ -357,7 +380,7 @@ internal static class PdfPigSource
             glyphs.Add(new Glyph(text, start.X, right, start.Y, letter.PointSize, style, font, box.Top, box.Bottom, spaceBefore));
         }
 
-        List<Rule> rules = [];
+        List<PdfRectangle> strokes = [];
         List<Bar> bars = [];
         foreach (PdfPath path in page.Paths)
         {
@@ -365,10 +388,19 @@ internal static class PdfPigSource
                 continue;
 
             PdfRectangle box = frame.Turn(bounds);
-            if (box.Height <= 1.5 && box.Width >= 2)
-                rules.Add(new Rule(box.Left, box.Right, (box.Top + box.Bottom) / 2));
+            if (box.Height <= 1.5 && box.Width >= 0.5)
+                strokes.Add(box);
             else if (box.Width <= 1.5 && box.Height >= 2)
                 bars.Add(new Bar((box.Left + box.Right) / 2, box.Bottom, box.Top));
+        }
+
+        List<Rule> rules = [];
+        foreach (PdfRectangle box in strokes)
+        {
+            if (Underscore(glyphs, strokes, box) is { } underscore)
+                glyphs.Add(underscore);
+            else if (box.Width >= 2)
+                rules.Add(new Rule(box.Left, box.Right, (box.Top + box.Bottom) / 2));
         }
 
         List<PageLink> links = [];
