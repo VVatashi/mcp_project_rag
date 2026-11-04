@@ -58,7 +58,7 @@ internal sealed class KnowledgeTools(SearchService search, SourceStore sources, 
     }
 
     [McpServerTool(Name = "search", Title = "Search the documentation", ReadOnly = true, Idempotent = true, OpenWorld = false)]
-    [Description("Searches the documentation with a hybrid of vector and full text search, then reorders the hits with a reranker. Returns chunks of documents, the best first. A text that several documents share appears once, with the other places in its copies.")]
+    [Description("Searches the documentation with a hybrid of vector and full text search, then reorders the hits with a reranker. Returns chunks of documents, the best first. A text that several places share appears once, with the other places in its copies.")]
     public async Task<SearchResult> SearchAsync(
         [Description("A question or keywords, in English or Russian.")] string query,
         [Description("The categories to search, such as csharp or vulkan. Leave it out to search all categories.")] string[]? categories = null,

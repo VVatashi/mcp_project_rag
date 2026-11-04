@@ -298,7 +298,7 @@ internal static class PdfPigSource
 
     // LaTeX draws the sign "\_" as a short rule, not as a glyph, as in the state tables of OpenGL ES: "MAX_SHADER_STORAGE_BUFFER_BINDINGS".
     // A short rule just below the baseline that touches a glyph on each side becomes the sign "_".
-    // The sign fills its own room between the glyphs and stands alone.
+    // The sign fills its own empty room between the glyphs and stands alone. A rule under one letter, such as "b" of "abc", stays out.
     // The dotted underline of a link in ECMA-334 makes a chain of short rules under the letters, so it stays out.
     private static Glyph? Underscore(List<Glyph> glyphs, List<PdfRectangle> strokes, PdfRectangle box)
     {
@@ -308,7 +308,7 @@ internal static class PdfPigSource
             return null;
 
         Glyph? right = glyphs.Find(glyph => Near(glyph, y) && Math.Abs(glyph.Left - box.Right) <= glyph.Size * 0.1 && glyph.Size == left.Size);
-        if (right is null || right.Left - left.Right < box.Width * 0.7)
+        if (right is null || right.Left - left.Right < box.Width * 0.7 || glyphs.Exists(glyph => Near(glyph, y) && glyph.Left >= left.Right - 0.1 && glyph.Right <= right.Left + 0.1 && glyph.Right > glyph.Left))
             return null;
 
         double reach = left.Size * 0.4;

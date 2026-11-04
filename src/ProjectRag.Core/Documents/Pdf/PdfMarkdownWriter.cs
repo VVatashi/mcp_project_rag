@@ -289,7 +289,7 @@ internal sealed partial class PdfMarkdownWriter(HashSet<string> vocabulary, Dict
         }
     }
 
-    // Two neighbor items of the text continue one word when no space parts them and a letter or a digit meets a letter or a digit.
+    // Two neighbor items of the text continue one word when no space parts them. A letter or a digit must meet a letter or a digit.
     private static bool InWord(Item left, Item right) =>
         KindOf(left) == SegmentKind.Text && KindOf(right) == SegmentKind.Text && !PdfLayout.NeedsSpace(left, right)
         && left.Text.Length > 0 && right.Text.Length > 0 && char.IsLetterOrDigit(left.Text[^1]) && char.IsLetterOrDigit(right.Text[0]);

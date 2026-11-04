@@ -246,7 +246,7 @@ internal static class PdfLayout
     /// <summary>
     /// Tells whether a space separates two neighbor items. A word space is at least a sixth of the size of the font.
     /// Monospace text without the spaces of the file keeps them only through the gaps.
-    /// The letters of a monospace word touch, and a justified line squeezes a space to a third of a character, so the threshold is a quarter of a character.
+    /// The letters of a monospace word touch. A justified line squeezes a space to a third of a character, so the threshold is a quarter of a character.
     /// </summary>
     public static bool NeedsSpace(Item left, Item right)
     {
