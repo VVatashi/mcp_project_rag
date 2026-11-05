@@ -333,7 +333,10 @@ internal static partial class HtmlMarkdownImporter
             // HTML allows a div around a term and its definition.
             List<IElement> children = [.. list.Children.SelectMany(static child => child.LocalName == "div" ? (IEnumerable<IElement>)child.Children : [child])];
             // A long definition holds lists, tables or code. Its term names a part of the section, so the chunks of the part carry it in their heading.
-            bool parts = !_nested && _level < 6 && children.Any(static child => child.LocalName == "dd" && child.QuerySelector("ul, ol, dl, table, pre") is not null);
+            // A list in a sidebar, such as the return codes of a command, is a note beside the text. A list of numbered notes under a table is not a part either.
+            bool parts = !_nested && _level < 6 && list.Closest(".sidebarblock") is null
+                && children.Any(static child => child.LocalName == "dd" && child.QuerySelector("ul, ol, dl, table, pre") is not null)
+                && !Numbered(children.Where(static child => child.LocalName == "dt").ToList());
             List<IElement> terms = [];
             foreach (IElement child in children)
             {
@@ -364,6 +367,10 @@ internal static partial class HtmlMarkdownImporter
             foreach (IElement term in terms)
                 Block(term);
         }
+
+        // The terms of a list of notes are their numbers: 1, 2, 3.
+        private static bool Numbered(List<IElement> terms) =>
+            terms.Count > 0 && terms.All(static term => term.TextContent.Trim() is { Length: > 0 } number && number.All(char.IsAsciiDigit));
 
         private void Code(IElement element)
         {
@@ -566,6 +573,8 @@ internal static partial class HtmlMarkdownImporter
                         "br" => " ",
                         "code" or "kbd" or "samp" or "tt" => CodeSpan(element.TextContent),
                         "a" => Link(element),
+                        "sup" when !element.ClassList.Contains("footnote") && !element.ClassList.Contains("footnoteref") => Script(element, '^'),
+                        "sub" => Script(element, '_'),
                         // A block inside a cell or an item becomes a part of its line.
                         _ when IsBlock(element) => $" {string.Concat(element.ChildNodes.Select(Inline))} ",
                         _ => string.Concat(element.ChildNodes.Select(Inline)),
@@ -573,6 +582,17 @@ internal static partial class HtmlMarkdownImporter
                 default:
                     return string.Empty;
             }
+        }
+
+        // A superscript or a subscript keeps its place: 2^27, 2^{b-1}, x_f. Without the sign, 2^27 reads as 227.
+        // A note marker after a word also becomes a superscript, such as Limit Type^1.
+        private string Script(IElement element, char sign)
+        {
+            string text = Collapse(string.Concat(element.ChildNodes.Select(Inline)));
+            if (text.Length == 0)
+                return string.Empty;
+
+            return text.All(char.IsLetterOrDigit) ? $"{sign}{text}" : $"{sign}{{{text}}}";
         }
 
         private string CodeSpan(string text)

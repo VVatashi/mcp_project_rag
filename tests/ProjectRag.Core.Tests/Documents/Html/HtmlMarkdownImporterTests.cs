@@ -78,6 +78,39 @@ public sealed class HtmlMarkdownImporterTests
     }
 
     [Fact]
+    public void Read_KeepsTheTermsOfASidebarAndOfNumberedNotesInTheText()
+    {
+        DocumentText text = Read("""
+            <body>
+            <h2 id="limits">Limits</h2>
+            <table><tr><th>Limit</th><th>Value</th></tr><tr><td>maxSize</td><td>4096</td></tr></table>
+            <div class="dlist"><dl><dt class="hdlist1">1</dt><dd><p>The value is a minimum.</p><ul><li>See below.</li></ul></dd></dl></div>
+            <div class="sidebarblock"><div class="content"><div class="title">Return Codes</div>
+            <div class="dlist"><dl><dt class="hdlist1"><a href="#codes">Failure</a></dt><dd><ul><li>VK_ERROR_UNKNOWN</li></ul></dd></dl></div></div></div>
+            <p>The next text.</p>
+            </body>
+            """);
+
+        Assert.DoesNotContain("### ", text.Content, StringComparison.Ordinal);
+        Assert.Contains("| maxSize | 4096 |\n\n1\n\nThe value is a minimum.", text.Content, StringComparison.Ordinal);
+        Assert.Contains("Return Codes\n\n[Failure](#codes)\n\n- VK_ERROR_UNKNOWN", text.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Read_KeepsTheSignsOfTheSuperscriptsAndTheSubscripts()
+    {
+        DocumentText text = Read("""
+            <table><tr><th>Limit</th><th>Limit Type<sup>1</sup></th></tr><tr><td>2<sup>27</sup></td><td>2<sup>b-1</sup> - 1</td></tr></table>
+            <p>The point x<sub>f</sub> of G<sub>2</sub><sup>4</sup>, with a note<sup class="footnote">[<a href="#_footnotedef_1">1</a>]</sup>.</p>
+            <p>An empty mark<sup></sup> and the same note<sup class="footnoteref">[<a href="#_footnotedef_1">1</a>]</sup>.</p>
+            """);
+
+        Assert.Contains("| Limit | Limit Type^1 |\n| --- | --- |\n| 2^27 | 2^{b-1} - 1 |", text.Content, StringComparison.Ordinal);
+        Assert.Contains("The point x_f of G_2^4, with a note\\[[1](#_footnotedef_1)\\].", text.Content, StringComparison.Ordinal);
+        Assert.Contains("An empty mark and the same note\\[[1](#_footnotedef_1)\\].", text.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Read_KeepsTheColumnsOfACellOverTwoRowsAndATableInACell()
     {
         DocumentText text = Read("""
