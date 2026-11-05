@@ -42,4 +42,10 @@ public sealed class SearchOptions
     /// Gets or sets the time limit of the embedding of a query in seconds. After it the search uses the full text search only.
     /// </summary>
     public int QueryTimeoutSeconds { get; set; } = 20;
+
+    /// <summary>
+    /// Gets or sets the categories that a request without categories skips, such as the old versions of a specification.
+    /// A request that names such a category searches it.
+    /// </summary>
+    public string[] HiddenCategories { get; set; } = [];
 }

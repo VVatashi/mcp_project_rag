@@ -230,6 +230,7 @@ The server reads `src/ProjectRag.Server/appsettings.json`. Put the settings of o
 | `Search:Pool` | 100 | The candidates of the vector and of the full text search before the fusion |
 | `Search:RrfK`, `Search:VectorWeight` | 60, 0.8 | The fusion of the ranks |
 | `Search:QueryTimeoutSeconds` | 20 | The time limit of the embedding of a query. After it the search uses the full text search only |
+| `Search:HiddenCategories` | `["opengl-old"]` | The categories that a search without categories skips, such as the old versions of a specification. A request that names one searches it |
 | `Chunking:MaxChars` | 1800 | The size of a chunk. A change reads every file again |
 | `Chunking:AtomicMaxChars` | 3000 | The size of a chunk with code, a formula or a table, which splits only beyond it. A digit in such a chunk counts as three characters |
 | `Chunking:OverlapChars` | 300 | The most characters that a chunk repeats from the previous one when a block splits |

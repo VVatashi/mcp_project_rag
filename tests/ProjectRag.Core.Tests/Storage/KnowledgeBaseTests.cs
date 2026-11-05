@@ -247,6 +247,21 @@ public sealed class KnowledgeBaseTests : IAsyncLifetime
         Assert.NotEmpty(result.Hits);
         await Assert.ThrowsAsync<ArgumentException>(() => search.SearchAsync(new SearchRequest { Query = "pipeline", Categories = ["missing"] }, cancellationToken));
 
+        // A hidden category leaves the search without categories, and a request that names it still finds it.
+        SearchOptions searchOptions = services.GetRequiredService<IOptionsMonitor<SearchOptions>>().CurrentValue;
+        searchOptions.HiddenCategories = ["vulkan"];
+        try
+        {
+            SearchResult hidden = await search.SearchAsync(new SearchRequest { Query = "pipeline shaders", Rerank = false }, cancellationToken);
+            Assert.NotEmpty(hidden.Hits);
+            Assert.DoesNotContain(hidden.Hits, static hit => hit.Category == "vulkan");
+            Assert.NotEmpty((await search.SearchAsync(new SearchRequest { Query = "pipeline shaders", Categories = ["vulkan"], Rerank = false }, cancellationToken)).Hits);
+        }
+        finally
+        {
+            searchOptions.HiddenCategories = [];
+        }
+
         // A new rule changes the categories of the stored documents without a new read of the files.
         input.CategoryRules = [new CategoryRule { Pattern = "*.md", Category = "opengl" }];
         await sources.UpdateAsync(sourceId, input, cancellationToken);
