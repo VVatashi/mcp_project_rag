@@ -101,11 +101,12 @@ public static partial class PdfMarkdownImporter
     }
 
     // The fonts of Computer Modern are math only in a document whose body uses another font.
+    // TeX takes the bullet of a list from its math font, as in the older OpenGL specifications. That bullet stays text, so the line is an item.
     private static Func<Glyph, bool> MathFonts(IReadOnlyList<PdfPageModel> pages)
     {
         string body = pages.SelectMany(static page => page.Glyphs).GroupBy(static glyph => glyph.Font).MaxBy(static group => group.Count())?.Key ?? string.Empty;
         bool bodyIsComputerModern = body.StartsWith("CM", StringComparison.Ordinal);
-        return glyph => glyph.IsMath && !(bodyIsComputerModern && (glyph.Font.StartsWith("CMR", StringComparison.Ordinal) || glyph.Font.StartsWith("CMBX", StringComparison.Ordinal)
+        return glyph => glyph.IsMath && glyph.Text != "•" && !(bodyIsComputerModern && (glyph.Font.StartsWith("CMR", StringComparison.Ordinal) || glyph.Font.StartsWith("CMBX", StringComparison.Ordinal)
             || glyph.Font.StartsWith("CMTI", StringComparison.Ordinal) || glyph.Font.StartsWith("CMSL", StringComparison.Ordinal) || glyph.Font.StartsWith("CMSS", StringComparison.Ordinal)));
     }
 

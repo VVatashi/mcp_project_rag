@@ -275,6 +275,26 @@ public sealed class PdfMarkdownImporterTests
     }
 
     [Fact]
+    public void Convert_ReadsABulletOfTheMathFontAsAnItem()
+    {
+        // TeX takes the bullet of a list from its math font, as in the OpenGL 4.5 specification.
+        PageBuilder page = new(2);
+        page.Text("•", 72, 700, 10, GlyphStyle.Math, "CMSY10");
+        page.Text("The size of the image must be positive.", 84, 700);
+        page.Text("•", 72, 680, 10, GlyphStyle.Math, "CMSY10");
+        double x = page.Text("level", 84, 680, 10, MathItalic, "CMMI10");
+        x = page.Text("≤", x + 3, 680, 10, GlyphStyle.Math, "CMSY10");
+        page.Text("q", x + 3, 680, 10, MathItalic, "CMMI10");
+
+        string markdown = Convert(page);
+
+        Assert.Contains("- The size of the image must be positive.", markdown, StringComparison.Ordinal);
+        Assert.Contains("positive.\n\n- $\\mathit{level}\\le q$\n", markdown, StringComparison.Ordinal);
+        Assert.DoesNotContain("bullet", markdown, StringComparison.Ordinal);
+        Assert.DoesNotContain("$$", markdown, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Convert_EscapesTheDotOfANumberedItem()
     {
         PageBuilder page = new(2);

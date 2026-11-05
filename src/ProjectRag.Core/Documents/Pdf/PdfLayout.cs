@@ -594,19 +594,23 @@ internal static class PdfLayout
                 math += weight;
         }
 
+        // An item of a list with a bullet stays text, also when it names an identifier in monospace or its text is a formula.
         // A prototype of a function sets its parameters in italics, so a line of code is mostly, not fully, monospace.
-        // An item of a list with a bullet stays text, also when it names an identifier in monospace.
-        if (total > 0 && mono >= total * 0.7 && line.Items[0].Text is not ("•" or "◦" or "▪" or "‣"))
+        bool bullet = IsBullet(line.Items[0].Text);
+        if (total > 0 && mono >= total * 0.7 && !bullet)
             return LineKind.Code;
 
         // A display formula starts with a formula item and is mostly formula. A sentence with an inline formula starts with a word.
-        bool startsWithMath = line.Items[0].IsMath || (line.Items.Count > 1 && line.Items[0].Text.Length == 1 && line.Items[1].IsMath);
+        bool startsWithMath = line.Items[0].IsMath || (line.Items.Count > 1 && line.Items[0].Text.Length == 1 && !bullet && line.Items[1].IsMath);
         bool hasTall = line.Items.Any(static item => item.IsTall || item.IsLatex);
         if (total > 0 && startsWithMath && (math >= total * 0.6 || (hasTall && math >= total * 0.35)))
             return LineKind.Math;
 
         return LineKind.Text;
     }
+
+    // The bullets that start an item of a list.
+    internal static bool IsBullet(string text) => text is "•" or "◦" or "▪" or "‣";
 
     private static double Median(IEnumerable<double> values)
     {
