@@ -59,6 +59,7 @@ public sealed class SearchStore(Database database)
                     WHERE ce.model_id = {model.ModelId}
                       AND (cardinality(@SourceIds) = 0 OR d.source_id = ANY (@SourceIds))
                       AND (cardinality(@Categories) = 0 OR d.category = ANY (@Categories))
+                      AND (cardinality(@Categories) > 0 OR NOT d.category = ANY (@HiddenCategories))
                     ORDER BY distance
                     LIMIT @Pool
                 ) e
@@ -80,6 +81,7 @@ public sealed class SearchStore(Database database)
                   AND c.tsv @@ q.tsq
                   AND (cardinality(@SourceIds) = 0 OR d.source_id = ANY (@SourceIds))
                   AND (cardinality(@Categories) = 0 OR d.category = ANY (@Categories))
+                  AND (cardinality(@Categories) > 0 OR NOT d.category = ANY (@HiddenCategories))
                 ORDER BY ts_rank(c.tsv, q.tsq) DESC, c.chunk_id
                 LIMIT @Pool
             ),
@@ -116,6 +118,7 @@ public sealed class SearchStore(Database database)
                 Query = query,
                 SourceIds = sourceIds.ToArray(),
                 Categories = categories.ToArray(),
+                HiddenCategories = options.HiddenCategories ?? [],
                 options.Pool,
                 Weight = Math.Clamp(options.VectorWeight, 0, 1),
                 options.RrfK,

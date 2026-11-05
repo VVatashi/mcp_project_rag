@@ -592,6 +592,10 @@ internal static partial class HtmlMarkdownImporter
             if (text.Length == 0)
                 return string.Empty;
 
+            // A trademark sign belongs to the name, as in Vulkan®. The title of the page writes it without a sign.
+            if (sign == '^' && text is "®" or "™" or "©" or "℠")
+                return text;
+
             return text.All(char.IsLetterOrDigit) ? $"{sign}{text}" : $"{sign}{{{text}}}";
         }
 

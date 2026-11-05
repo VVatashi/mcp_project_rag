@@ -246,9 +246,9 @@ public sealed partial class DocumentChunkerTests
         Assert.Contains("## Declaration", chunk.Body, StringComparison.Ordinal);
         Assert.EndsWith("`sin` returns the sine of `angle`.", chunk.Body, StringComparison.Ordinal);
 
-        // A large section keeps its subsections apart.
+        // A large section keeps its large subsection apart. The short text of the title joins its small subsections.
         string large = page.Replace("`sin` returns the sine of `angle`.", string.Join(' ', Enumerable.Repeat("The sine of the angle.", 100)), StringComparison.Ordinal);
-        Assert.Equal(["sin", "sin > Declaration", "sin > Parameters", "sin > Description"], Split(large, minChars: 400).Select(static chunk => chunk.Heading).Distinct());
+        Assert.Equal(["sin", "sin > Description"], Split(large, minChars: 400).Select(static chunk => chunk.Heading).Distinct());
     }
 
     [Fact]

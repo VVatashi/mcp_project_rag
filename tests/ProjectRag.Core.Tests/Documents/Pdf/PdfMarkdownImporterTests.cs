@@ -79,6 +79,22 @@ public sealed class PdfMarkdownImporterTests
     }
 
     [Fact]
+    public void Convert_KeepsOnlyTheCaptionOfADiagram()
+    {
+        PageBuilder page = new(2);
+        page.Text("The tests run in the order of the diagram on the next lines.", 72, 720);
+        page.Text("Fragment Scissor Test", 90, 700, 10, GlyphStyle.Mono, "Courier");
+        page.Text("Depth Buffer Stencil", 90, 688, 10, GlyphStyle.Mono, "Courier");
+        page.Text("Figure 4.1. Per-fragment operations.", 90, 676, 10, GlyphStyle.Mono, "Courier");
+        page.Text("The next paragraph goes on with the blending of the fragment and the framebuffer.", 72, 640);
+
+        string markdown = Convert(page);
+
+        Assert.Contains("<!-- rag:anchor figure-4.1 -->\nFigure 4.1. Per-fragment operations.", markdown, StringComparison.Ordinal);
+        Assert.DoesNotContain("Scissor", markdown, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Convert_ReadsALoopWithoutAMonospaceLineAsCode()
     {
         // No line of the loop is mostly monospace: the bound and the variables are math italics, and a comment is in the text font.

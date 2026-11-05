@@ -230,10 +230,11 @@ The server reads `src/ProjectRag.Server/appsettings.json`. Put the settings of o
 | `Search:Pool` | 100 | The candidates of the vector and of the full text search before the fusion |
 | `Search:RrfK`, `Search:VectorWeight` | 60, 0.8 | The fusion of the ranks |
 | `Search:QueryTimeoutSeconds` | 20 | The time limit of the embedding of a query. After it the search uses the full text search only |
+| `Search:HiddenCategories` | `["opengl-old"]` | The categories that a search without categories skips, such as the old versions of a specification. A request that names one searches it |
 | `Chunking:MaxChars` | 1800 | The size of a chunk. A change reads every file again |
 | `Chunking:AtomicMaxChars` | 3000 | The size of a chunk with code, a formula or a table, which splits only beyond it. A digit in such a chunk counts as three characters |
 | `Chunking:OverlapChars` | 300 | The most characters that a chunk repeats from the previous one when a block splits |
-| `Chunking:MinChars` | 400 | A shorter chunk at the end of a section takes in the next small sections of the third level or deeper: its subsections and its siblings. A section that fits whole with its subsections under `MaxChars` becomes one chunk. 0 keeps each chunk in one section |
+| `Chunking:MinChars` | 400 | A shorter chunk at the end of a section takes in the next small sections of the third level or deeper: its subsections and its siblings. A section that fits whole with its subsections under `MaxChars` becomes one chunk. A short text under a title also takes in the small subsections that follow it. 0 keeps each chunk in one section |
 | `Chunking:MaxFileBytes` | 64 MB | The size of the largest file |
 | `Indexing:ScanIntervalMinutes` | 10 | The interval of the scans of all sources. 0 turns them off |
 | `Indexing:PageRefreshHours` | 24 | The hours between two requests of a web page |

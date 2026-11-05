@@ -62,8 +62,18 @@ internal sealed partial class PdfMarkdownWriter(HashSet<string> vocabulary, Dict
     private static string? FootnoteId(PdfBlock block) =>
         FootnoteNumberRegex().Match(block.Lines[0].PlainText) is { Success: true } match ? string.Create(CultureInfo.InvariantCulture, $"p{block.Page}-{match.Groups["number"].Value}") : null;
 
+    // The labels of a diagram have no order and no meaning as text, so only the caption below them stays.
+    private static List<Line>? FigureCaption(PdfBlock block)
+    {
+        int start = block.Lines.FindLastIndex(static line => CaptionRegex().Match(line.PlainText) is { Success: true } match && match.Groups["kind"].Value == "Figure");
+        return start > 0 ? block.Lines[start..] : null;
+    }
+
     private static string? CaptionAnchor(PdfBlock block)
     {
+        if (block.Kind == PdfBlockKind.Code && FigureCaption(block) is { } figure && CaptionRegex().Match(figure[0].PlainText) is { Success: true } figureMatch)
+            return $"figure-{figureMatch.Groups["number"].Value.TrimEnd('.')}";
+
         if (block.Kind != PdfBlockKind.Paragraph || CaptionRegex().Match(block.Lines[0].PlainText) is not { Success: true } match)
             return null;
 
@@ -73,7 +83,7 @@ internal sealed partial class PdfMarkdownWriter(HashSet<string> vocabulary, Dict
     private string WriteBlock(PdfBlock block, HashSet<string> footnotes) => block.Kind switch
     {
         PdfBlockKind.Heading => $"{new string('#', block.HeadingLevel)} {MarkdownText.EscapeHeading(block.HeadingTitle ?? string.Join(' ', block.Lines.Select(static line => line.PlainText)))}",
-        PdfBlockKind.Code => WriteCode(block.Lines),
+        PdfBlockKind.Code => FigureCaption(block) is { } caption ? MarkdownText.EscapeStart(string.Join(' ', caption.Select(static line => line.PlainText.Trim()))) : WriteCode(block.Lines),
         PdfBlockKind.Math => WriteMath(block),
         PdfBlockKind.Table => WriteTable(block, footnotes),
         PdfBlockKind.Footnote => WriteFootnote(block, footnotes),

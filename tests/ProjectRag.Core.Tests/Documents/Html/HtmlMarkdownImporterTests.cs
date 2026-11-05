@@ -102,11 +102,13 @@ public sealed class HtmlMarkdownImporterTests
         DocumentText text = Read("""
             <table><tr><th>Limit</th><th>Limit Type<sup>1</sup></th></tr><tr><td>2<sup>27</sup></td><td>2<sup>b-1</sup> - 1</td></tr></table>
             <p>The point x<sub>f</sub> of G<sub>2</sub><sup>4</sup>, with a note<sup class="footnote">[<a href="#_footnotedef_1">1</a>]</sup>.</p>
+            <p>The Vulkan<sup>®</sup> name.</p>
             <p>An empty mark<sup></sup> and the same note<sup class="footnoteref">[<a href="#_footnotedef_1">1</a>]</sup>.</p>
             """);
 
         Assert.Contains("| Limit | Limit Type^1 |\n| --- | --- |\n| 2^27 | 2^{b-1} - 1 |", text.Content, StringComparison.Ordinal);
         Assert.Contains("The point x_f of G_2^4, with a note\\[[1](#_footnotedef_1)\\].", text.Content, StringComparison.Ordinal);
+        Assert.Contains("The Vulkan® name.", text.Content, StringComparison.Ordinal);
         Assert.Contains("An empty mark and the same note\\[[1](#_footnotedef_1)\\].", text.Content, StringComparison.Ordinal);
     }
 

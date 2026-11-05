@@ -190,10 +190,10 @@ public sealed partial class DocumentChunker
     }
 
     // A section lies near the section of a chunk when it lies inside it, or when both are small sections of one parent.
-    // Chapters and their sections of the first level stay apart.
+    // Chapters and their sections of the first level stay apart. A short text under a title, such as the first line of a reference page, joins its first subsection.
     private static bool IsNear(IReadOnlyList<DocumentSection> sections, int chunkSection, int next)
     {
-        if (chunkSection < 0 || next < 0 || next >= sections.Count || chunkSection >= sections.Count || sections[next].Level < 3)
+        if (chunkSection < 0 || next < 0 || next >= sections.Count || chunkSection >= sections.Count || (sections[next].Level < 3 && sections[next].Parent != chunkSection))
             return false;
 
         if (sections[next].Parent == sections[chunkSection].Parent)
