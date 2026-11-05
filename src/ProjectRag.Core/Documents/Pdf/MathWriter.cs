@@ -339,15 +339,19 @@ internal static class MathWriter
 
     private static bool SameStyle(Item a, Item b) => a.IsMath == b.IsMath && (a.Style & GlyphStyle.Italic) == (b.Style & GlyphStyle.Italic) && Math.Abs(a.Size - b.Size) < 0.5;
 
-    private static string Word(string word, Item style)
-    {
-        if (!style.IsMath)
-            return $"\\text{{{EscapeText(word)}}}";
+    private static string Word(string word, Item style) =>
+        style.IsMath ? MathWord(word, (style.Style & GlyphStyle.Italic) != 0) : $"\\text{{{EscapeText(word)}}}";
 
+    /// <summary>
+    /// Writes a word of a formula. A letter stays as it is, an italic name becomes <c>\mathit</c>, and a known function becomes its command.
+    /// Any other word becomes <c>\mathrm</c>.
+    /// </summary>
+    public static string MathWord(string word, bool italic)
+    {
         if (word.Length == 1)
             return word;
 
-        if ((style.Style & GlyphStyle.Italic) != 0)
+        if (italic)
             return $"\\mathit{{{word}}}";
 
         // \mod takes an argument in KaTeX. The binary operator is \bmod.
@@ -357,7 +361,10 @@ internal static class MathWriter
         return Operators.Contains(word) ? $"\\{word}" : $"\\mathrm{{{word}}}";
     }
 
-    private static string Symbol(string text)
+    /// <summary>
+    /// Writes a sign of a formula as its command of LaTeX, such as <c>\le</c> for ≤. A sign without a command stays as it is.
+    /// </summary>
+    public static string Symbol(string text)
     {
         if (text.StartsWith('\\'))
             return text;
