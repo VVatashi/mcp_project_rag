@@ -11,6 +11,8 @@ namespace ProjectRag.Core.Documents;
 /// A chunk stays inside one section. It collects whole blocks up to <see cref="ChunkingOptions.MaxChars"/>.
 /// A chunk shorter than <see cref="ChunkingOptions.MinChars"/> at the end of a section takes in the next small section when that section lies inside the section of the chunk
 /// or shares its parent. The heading of that section then stays in the text of the chunk.
+/// A section whose subsections fit with it under <see cref="ChunkingOptions.MaxChars"/> becomes one chunk, such as the short reference page of one function.
+/// Both rules need <see cref="ChunkingOptions.MinChars"/> above 0.
 /// A chunk with code, a formula or a table may grow to <see cref="ChunkingOptions.AtomicMaxChars"/>, so such a block stays whole.
 /// A digit in such a chunk counts as three characters.
 /// A caption stays with its table or figure, and a short lead-in that ends with a colon stays with the block after it.
@@ -64,17 +66,26 @@ public sealed partial class DocumentChunker
         List<Piece> current = [];
         bool currentAtomic = false;
         int currentSection = -1;
+        // The end of a section that fits whole into one chunk. Its subsections join the chunk of the section.
+        int wholeEnd = -1;
         foreach (IGrouping<int, DocumentBlock> section in structure.Blocks.GroupBy(static block => block.Section))
         {
             // A short chunk goes on into a nearby small section. Any other chunk ends with its section.
             // A large section starts a chunk of its own, so its heading names the chunk and the hits of the search.
+            bool inWhole = section.First().Start < wholeEnd;
             bool small = section.Last().End - section.First().Start < _minChars;
-            if (current.Count == 0 || current[^1].End - current[0].Start >= _minChars || !small || !IsNear(structure.Sections, currentSection, section.Key))
+            if (!inWhole && (current.Count == 0 || current[^1].End - current[0].Start >= _minChars || !small || !IsNear(structure.Sections, currentSection, section.Key)))
             {
                 writer.Add(current, currentSection);
                 current = [];
                 currentAtomic = false;
                 currentSection = section.Key;
+                wholeEnd = -1;
+                if (_minChars > 0 && Whole(structure, section.Key, section.First()) is int whole)
+                {
+                    currentSection = whole;
+                    wholeEnd = structure.Sections[whole].End;
+                }
             }
 
             foreach (List<DocumentBlock> unit in Units(structure.Content, [.. section]))
@@ -91,10 +102,15 @@ public sealed partial class DocumentChunker
                     continue;
                 }
 
-                writer.Add(current, currentSection);
-                current = [];
-                currentAtomic = false;
-                currentSection = section.Key;
+                // A new chunk keeps the section that the start of the chunk chose, such as a whole section above this one.
+                if (current.Count > 0)
+                {
+                    writer.Add(current, currentSection);
+                    current = [];
+                    currentAtomic = false;
+                    currentSection = section.Key;
+                }
+
                 if (unitSize <= (unitAtomic ? _atomicMaxChars : _maxChars))
                 {
                     current.Add(new Piece(unit[0].Start, unit[^1].End));
@@ -114,6 +130,63 @@ public sealed partial class DocumentChunker
 
         writer.Add(current, currentSection);
         return writer.Chunks;
+    }
+
+    // The largest section that starts with this block and fits into one chunk. A heading right above a subheading has no blocks of its own,
+    // so the search goes up through such headings: "# Title" right above "## A" and "## B" makes one chunk under "Title".
+    // The section 0 holds the text before the first heading, so it is no parent of a heading here.
+    private int? Whole(DocumentStructure structure, int index, DocumentBlock first)
+    {
+        int? whole = Fits(structure, index) ? index : null;
+        for (int parent = structure.Sections[index].Parent; parent > 0; parent = structure.Sections[parent].Parent)
+        {
+            if (FirstBlockAt(structure.Blocks, structure.Sections[parent].Start) != FirstBlockAt(structure.Blocks, first.Start))
+                break;
+
+            if (Fits(structure, parent))
+                whole = parent;
+        }
+
+        return whole;
+    }
+
+    // A section with subsections fits into one chunk when all its blocks together stay under the limit.
+    // A short reference page, such as the page of one function, then becomes one chunk instead of a chunk for each part.
+    private bool Fits(DocumentStructure structure, int index)
+    {
+        if (index < 0 || index >= structure.Sections.Count)
+            return false;
+
+        DocumentSection section = structure.Sections[index];
+        // The size of a chunk is never below the count of its characters, so a longer section cannot fit.
+        // The sections go in the order of the text, so the first subsection follows its section.
+        bool parent = index + 1 < structure.Sections.Count && structure.Sections[index + 1].Parent == index;
+        if (section.End - section.Start > _maxChars || !parent)
+            return false;
+
+        int first = FirstBlockAt(structure.Blocks, section.Start);
+        int last = first;
+        bool atomic = false;
+        while (last < structure.Blocks.Count && structure.Blocks[last].End <= section.End)
+            atomic |= structure.Blocks[last++].IsAtomic;
+
+        return last > first && Size(structure.Content, structure.Blocks[first].Start, structure.Blocks[last - 1].End, atomic) <= _maxChars;
+    }
+
+    private static int FirstBlockAt(IReadOnlyList<DocumentBlock> blocks, int start)
+    {
+        int low = 0;
+        int high = blocks.Count;
+        while (low < high)
+        {
+            int middle = (low + high) / 2;
+            if (blocks[middle].Start < start)
+                low = middle + 1;
+            else
+                high = middle;
+        }
+
+        return low;
     }
 
     // A section lies near the section of a chunk when it lies inside it, or when both are small sections of one parent.

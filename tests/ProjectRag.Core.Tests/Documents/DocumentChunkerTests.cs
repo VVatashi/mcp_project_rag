@@ -227,12 +227,41 @@ public sealed partial class DocumentChunkerTests
             The formats.
 
             """;
-        IReadOnlyList<TextChunk> chunks = Split(content, minChars: 400);
+        IReadOnlyList<TextChunk> chunks = Split(content, maxChars: 600, minChars: 400);
 
         // A small section takes in its subsections and its small siblings. A large section and a section of the first level start chunks of their own.
         Assert.Equal(["Spec > 2 Extensions", "Spec > 2 Extensions > VK_KHR_c", "Spec > 3 Formats"], chunks.Select(static chunk => chunk.Heading));
         Assert.Contains("#### Revision\n\n1\n\n#### Contact", chunks[0].Body, StringComparison.Ordinal);
         Assert.Contains("The second extension.", chunks[0].Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Split_KeepsASmallSectionWholeWithItsSubsections()
+    {
+        const string page = "# sin\n\nsin — return the sine of the parameter\n\n## Declaration\n\n```glsl\ngenType sin(genType angle);\n```\n\n"
+            + "## Parameters\n\n`angle`: Specify the quantity, in radians.\n\n## Description\n\n`sin` returns the sine of `angle`.\n";
+
+        TextChunk chunk = Assert.Single(Split(page, minChars: 400));
+        Assert.Equal("sin", chunk.Heading);
+        Assert.Contains("## Declaration", chunk.Body, StringComparison.Ordinal);
+        Assert.EndsWith("`sin` returns the sine of `angle`.", chunk.Body, StringComparison.Ordinal);
+
+        // A large section keeps its subsections apart.
+        string large = page.Replace("`sin` returns the sine of `angle`.", string.Join(' ', Enumerable.Repeat("The sine of the angle.", 100)), StringComparison.Ordinal);
+        Assert.Equal(["sin", "sin > Declaration", "sin > Parameters", "sin > Description"], Split(large, minChars: 400).Select(static chunk => chunk.Heading).Distinct());
+    }
+
+    [Fact]
+    public void Split_KeepsAWholeSectionUnderAHeadingWithoutText()
+    {
+        const string page = "# Title\n\n## A\n\nThe first part.\n\n## B\n\nThe second part.\n";
+
+        TextChunk chunk = Assert.Single(Split(page, minChars: 400));
+        Assert.Equal("Title", chunk.Heading);
+        Assert.Contains("## B", chunk.Body, StringComparison.Ordinal);
+
+        // 0 keeps every chunk inside one section.
+        Assert.Equal(["Title > A", "Title > B"], Split(page).Select(static chunk => chunk.Heading));
     }
 
     [Fact]

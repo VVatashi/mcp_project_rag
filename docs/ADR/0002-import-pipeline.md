@@ -141,6 +141,7 @@ The chunker reads the blocks of Markdig, not lines:
 
 1. A chunk stays inside one section and collects whole blocks up to 1800 characters.
    A chunk under 400 characters at the end of a section takes in the next small sections of the third level or deeper, its subsections and its siblings, while the chunk stays under the limit.
+   A section that fits whole with its subsections under the limit becomes one chunk, at any level. A reference page of one function, such as `sin`, is then one chunk instead of six.
    A section of 400 characters or more starts a chunk of its own, so its heading names its chunks and the hits of the search.
    The headings of these sections stay in its text. The chunk keeps the section of its start, and a section counts the chunks that overlap its text.
    The Vulkan specification has thousands of sections such as "Revision" or "Contact" with one line each, and a chunk of one line gives the search no context.

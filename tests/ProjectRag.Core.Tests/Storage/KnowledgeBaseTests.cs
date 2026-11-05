@@ -57,6 +57,8 @@ public sealed class KnowledgeBaseTests : IAsyncLifetime
         {
             ["ConnectionStrings:ProjectRag"] = connectionString,
             ["Chunking:MaxChars"] = "200",
+            // The tests count the chunks of each section, so small sections stay apart.
+            ["Chunking:MinChars"] = "0",
             ["Embedding:Model"] = "fake",
             ["Rerank:Candidates"] = "10",
         }).Build();
