@@ -38,6 +38,7 @@ public sealed class ChunkingOptions
     /// </summary>
     /// <remarks>
     /// A specification has many short sections, such as "Revision" or "Contact" of an extension. A chunk of one line has no context for the search.
+    /// A section whose subsections fit with it into one chunk also becomes one chunk, such as the short reference page of one function.
     /// 0 keeps every chunk inside one section. A change makes the indexer read every file again.
     /// </remarks>
     public int MinChars { get; set; } = 400;
