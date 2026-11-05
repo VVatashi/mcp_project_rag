@@ -81,12 +81,13 @@ An HTML file and a web page go through AngleSharp, a parser that follows the sta
 | `a` | A link to an anchor of the page stays a link. A web page makes its relative links absolute from its address after redirects or from its element `base`. A file keeps them relative, so they point at the files of its source. A link of another scheme than http, https, mailto and file stays text |
 | `pre` | A fenced block with the language of the class `language-c` or the attribute `data-lang` |
 | `ul`, `ol` | A list. The blocks of an item indent under its marker |
-| `dl` | A paragraph for each term. A list with a long definition, with lists, tables or code, makes each term a heading one level below the section. So the chunks of a format in a long appendix carry its name. The text after the list stays in the section of its last term |
+| `dl` | A paragraph for each term. A list with a long definition, with lists, tables or code, makes each term a heading one level below the section. So the chunks of a format in a long appendix carry its name. A list in an Asciidoctor sidebar and a list of numbered notes stay paragraphs. The text after the list stays in the section of its last term |
 | `table` | A pipe table. A cell joins its blocks into one line. A cell over several columns adds empty cells, and a cell over several rows leaves empty cells below it. A table without a head takes its first row |
 | `\( … \)` of MathJax in the text, and `\[ … \]` in a stem block of Asciidoctor | `$ … $` and `$$ … $$` |
 | `$ … $` of a page that sets it for MathJax, as the Khronos Data Format Specification does | `$ … $`. A page without the setting keeps its dollars as text |
 | A block with only `$$ … $$` or an environment such as `align*`, on a page that loads MathJax | Display formulas. A block with code stays code |
 | A formula that KaTeX drew on the server, as in the Vulkan specification | The LaTeX of its boxes. A box above the strut is a numerator or a superscript. A box below it is a denominator or a subscript. A row of an array is the boxes at one height. A tall delimiter that KaTeX draws as a picture, such as a bar, a bracket or a floor, gets its LaTeX from the path of the picture. A source in MathML wins |
+| `sup`, `sub` | The sign `^` or `_` before the text: `2^27`, `2^{b-1}`, `x_f`. A footnote mark of Asciidoctor stays a link |
 | A table inside a cell | The text of the inner table |
 | `script`, `style`, `nav`, `#toc`, `#footer` | Nothing |
 
