@@ -247,7 +247,7 @@ public sealed class Indexer(
         try
         {
             // Every format becomes Markdown first. The structure and the chunks come from the Markdown.
-            DocumentText text = DocumentReader.Read(path, bytes, address);
+            DocumentText text = DocumentReader.Read(path, bytes, address, address is null ? reader.Source.RootPath : null);
             structure = MarkdownStructureReader.Read(text with { Content = TextReplacement.ApplyAll(text.Content, replacements) }, path);
             chunks = reader.Chunker.Split(structure);
         }

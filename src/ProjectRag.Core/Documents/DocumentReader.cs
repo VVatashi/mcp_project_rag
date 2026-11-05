@@ -1,3 +1,4 @@
+using ProjectRag.Core.Documents.DocBook;
 using ProjectRag.Core.Documents.Html;
 using ProjectRag.Core.Documents.Pdf;
 
@@ -8,6 +9,7 @@ namespace ProjectRag.Core.Documents;
 /// </summary>
 /// <remarks>
 /// A PDF file goes through <see cref="PdfMarkdownImporter"/>, and an HTML file or a web page through <see cref="HtmlMarkdownImporter"/>.
+/// A file of DocBook 5 goes through <see cref="DocBookMarkdownImporter"/>. Another XML file is text.
 /// Any other file is text: Markdown, plain text, reStructuredText or AsciiDoc.
 /// <see cref="MarkdownStructureReader"/> reads Markdown structure only, so the other text formats split at empty lines.
 /// </remarks>
@@ -16,7 +18,7 @@ public static class DocumentReader
     /// <summary>
     /// The version of the importers, the structure reader and the chunker. A new version makes the indexer read every file again.
     /// </summary>
-    public const int Version = 22;
+    public const int Version = 23;
 
     private static readonly HashSet<string> TextExtensions = new(StringComparer.OrdinalIgnoreCase) { ".md", ".markdown", ".txt", ".rst", ".adoc" };
 
@@ -27,8 +29,9 @@ public static class DocumentReader
     /// A web page without the extension of another format is HTML.</param>
     /// <param name="bytes">The bytes of the file.</param>
     /// <param name="address">The address of a web page after its redirects. <see langword="null"/> takes the path.</param>
+    /// <param name="root">The folder of the source of a file. A file of DocBook reads its entities and its parts of XInclude from this folder only.</param>
     /// <returns>The text of the document in Markdown.</returns>
-    public static DocumentText Read(string path, byte[] bytes, Uri? address = null)
+    public static DocumentText Read(string path, byte[] bytes, Uri? address = null, string? root = null)
     {
         ArgumentNullException.ThrowIfNull(path);
         ArgumentNullException.ThrowIfNull(bytes);
@@ -44,8 +47,28 @@ public static class DocumentReader
             || extension.Equals(".xhtml", StringComparison.OrdinalIgnoreCase) || (address is not null && !TextExtensions.Contains(extension)))
             return HtmlMarkdownImporter.Read(bytes, name, address);
 
+        if (extension.Equals(".xml", StringComparison.OrdinalIgnoreCase) && DocBookMarkdownImporter.IsDocBook(bytes))
+            return DocBookMarkdownImporter.Read(bytes, name, FileReader(root, path));
+
         string content = TextCleanup.Decode(bytes);
         return new DocumentText(MarkdownStructureReader.FindTitle(content) ?? name, content);
+    }
+
+    // Reads a file by its path relative to the document. A path outside the folder of the source gives nothing.
+    private static Func<string, byte[]?>? FileReader(string? root, string path)
+    {
+        if (string.IsNullOrEmpty(root))
+            return null;
+
+        string top = Path.GetFullPath(root);
+        string folder = Path.GetDirectoryName(Path.GetFullPath(Path.Combine(top, path))) ?? top;
+        return relative =>
+        {
+            string full = Path.GetFullPath(Path.Combine(folder, relative));
+            string inside = Path.GetRelativePath(top, full);
+            bool outside = Path.IsPathRooted(inside) || inside == ".." || inside.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal);
+            return !outside && File.Exists(full) ? File.ReadAllBytes(full) : null;
+        };
     }
 
     /// <summary>

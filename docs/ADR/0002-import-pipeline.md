@@ -93,6 +93,28 @@ An HTML file and a web page go through AngleSharp, a parser that follows the sta
 
 Asciidoctor sets a note as a table of an icon and the text, so the note keeps its text only, as in a PDF file. The numbers of the callouts of a listing become "(1) The text".
 
+### DocBook: the elements of a reference page
+
+A file of DocBook 5 goes through `System.Xml`, with the DTD of the file and XInclude. The reference pages of OpenGL take their entities from `math.ent` and their tables of versions from other files.
+A resolver gives the parser only the files in the folder of the file and its subfolders. Any other path gives nothing.
+A pointer of XInclude may hold a simple path of XPath, such as `xpointer(/*/*[@role='45']/*)`. A loop of parts, a broken part and any other pointer give nothing.
+
+| Element | Markdown |
+| --- | --- |
+| `refentry` | The title from `refentrytitle`, then a line with the names and the purpose |
+| `funcsynopsis`, `fieldsynopsis` | A block of C under "C Specification", or a block of GLSL. One line for each prototype |
+| `refsect1`, `section` | A heading one level below its parent. The importer leaves out the section with the copyright, since every page repeats it |
+| `variablelist` | A paragraph "term: definition" for each entry. The other blocks of the definition follow it |
+| `itemizedlist`, `orderedlist` | A list. The blocks of an item indent under its marker |
+| `informaltable`, `table` | A pipe table. The last row of the head is its head. A span adds empty cells |
+| `parameter`, `constant`, `function` | A code span |
+| `citerefentry` | A link to the file of the page: `[glBindTexture](glBindTexture.xml)` |
+| `inlineequation`, `informalequation` | `$ … $` and `$$ … $$` |
+| `$ … $` and `$$ … $$` in the text, as the GLSL pages write LaTeX for MathJax | `$ … $`. The rules of Pandoc keep a price such as "$5 and $6" as text |
+
+A formula of presentation MathML becomes LaTeX. Scripts, fractions, roots, fences, accents and tables become their commands. The signs share their commands with the formulas of a PDF file.
+An identifier of several letters is upright, unless the page asks for italics: `\mathrm{nd}`, `\mathit{width}`. An identifier with spaces is text.
+
 ### Formulas: from the fonts of TeX to LaTeX
 
 The specifications set formulas in the fonts of Computer Modern. The importer reads the layout of these glyphs:
@@ -153,6 +175,7 @@ The dashboard shows a chunk next to its page of the original PDF file, drawn wit
 1. Markdown with the service marks `rag:page` and `rag:anchor` is the intermediate form of every document.
 2. Markdig reads the Markdown into sections, blocks, anchors, pages, links and mentions.
 3. The PDF importer analyzes the layout of the glyphs and writes formulas as LaTeX. The HTML importer walks the elements of the page.
+   The DocBook importer walks the elements of the file and turns MathML into LaTeX.
 4. The chunker keeps atomic blocks whole, splits text between sentences and overlaps split blocks.
 5. The database stores sections, anchors and links. The web API and MCP give a chunk with its links, its backlinks and its neighbors (`read_chunk`).
 6. KaTeX checks the formulas, in the dashboard and in the script `check-math`.
@@ -184,3 +207,5 @@ Every chunk has balanced fences of code and formulas. The tests of the chunker c
   The replacements of a source fix such errors with regular expressions for the matching files, before the chunks.
 - A bookmark or a link that points into a turned page keeps the height of the page before the turn. Its target may land on another block of that page.
 - A new version of the importer or the chunker reads every file again. Unchanged chunks keep their vectors by the hash of their text.
+- A file of DocBook changes its document only when its own bytes change. A change in a part of XInclude, such as a table of versions, waits for the next change of the file or a new version of the importer.
+- A part of XInclude that is a file of its own, such as `apiversion.xml`, also becomes a small document, unless the patterns of the source leave it out.

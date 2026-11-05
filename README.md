@@ -87,6 +87,7 @@ The next run of the indexer embeds them. The page Status shows the state of each
 
 A source is a folder with the documentation of one project, web pages, or both. Its name, for example `axion`, lets an agent search one project.
 The default patterns read `**/*.md`, `**/*.markdown`, `**/*.txt`, `**/*.rst`, `**/*.adoc`, `**/*.pdf`, `**/*.html` and `**/*.htm`. They skip `.git`, `node_modules`, `bin`, `obj`, `artifacts` and `.venv`.
+A source reads files of DocBook 5 when its patterns name them, for example `OpenGL-Refpages/gl4/*.xml`.
 
 The field `urls` of a source lists web pages by their addresses. The address of a page is the path of its document, so the rules of the categories match it too.
 A source of web pages only leaves `rootPath` empty. The indexer requests a page again after `Indexing:PageRefreshHours`, 24 hours by default.
@@ -272,6 +273,8 @@ Every file becomes Markdown, the intermediate form of the pipeline. The details 
 
 - A PDF file goes through a layout analysis of its glyphs. The bookmarks give the headings, monospace lines give code, rules give tables, and the link annotations give links.
 - An HTML file or a web page keeps its headings, lists, tables, code and links to its anchors. The formulas of MathJax stay LaTeX, also with the delimiter `$` when the page sets it. A formula that KaTeX drew on the server gets its LaTeX back from its boxes. The navigation, the table of contents and the scripts go away.
+- A file of DocBook 5, such as a reference page of OpenGL, keeps its sections, lists, tables and the synopsis of its functions. Its formulas of MathML become LaTeX.
+  A reference to another page becomes a link to its file. The entities of the DTD and the parts of XInclude come from the folder of the file and its subfolders.
 - The formulas of TeX become LaTeX: scripts, fractions, large operators with their limits, cases and the symbols of CMSY.
 - The Markdown holds the service marks `<!-- rag:page N -->` and `<!-- rag:anchor name -->`. The chunks leave them out and keep the pages and the anchors as metadata.
 - A link `[text](#anchor)`, a link to another file of the source and a mention such as "section 8.14" become links between chunks.
