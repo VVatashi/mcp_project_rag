@@ -46,11 +46,8 @@ public sealed class CodeSearchService(CodeSearchStore store, SourceStore sources
         int filesMatched = 0;
         bool truncated = false;
         string? language = string.IsNullOrWhiteSpace(request.Language) ? null : request.Language.Trim().ToLowerInvariant();
-        await foreach (CodeFile file in store.StreamAsync(sourceId, language, request.IsRegex ? null : request.Pattern, request.CaseSensitive, request.IncludeTests, cancellationToken))
+        await foreach (CodeFile file in store.StreamAsync(sourceId, language, request.IsRegex ? null : request.Pattern, request.CaseSensitive, request.IncludeTests, paths is null ? null : path => paths.Match(path).HasMatches, cancellationToken))
         {
-            if (paths is not null && !paths.Match(file.Path).HasMatches)
-                continue;
-
             bool any = false;
             foreach (LineMatch match in matcher.Find(file.Content))
             {

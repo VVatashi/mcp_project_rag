@@ -29,4 +29,9 @@ public sealed class CodeGraphOptions
     /// Gets or sets the minutes that the extractor keeps the loaded projects of a code base after its last use. The default is 30. The value 0 keeps nothing.
     /// </summary>
     public int KeepWorkspaceMinutes { get; set; } = 30;
+
+    /// <summary>
+    /// Gets or sets the most code bases whose loaded projects the extractor keeps at the same time. The extractor retires the least recently used ones. The default is 2. The value 0 keeps nothing.
+    /// </summary>
+    public int MaxKeptWorkspaces { get; set; } = 2;
 }

@@ -174,7 +174,8 @@ public sealed class CodeTierSearchTests : IAsyncLifetime
         int sourceId = await services.GetRequiredService<SourceStore>().AddAsync(new SourceInput { Name = "demo", Kind = SourceKind.Code, RootPath = _root }, cancellationToken);
         await services.GetRequiredService<Indexer>().RunAsync(sourceId, null, cancellationToken);
         await using NpgsqlConnection connection = await services.GetRequiredService<Database>().OpenAsync(cancellationToken);
-        Assert.Equal(2, await connection.ExecuteScalarAsync<long>("SELECT count(*) FROM chunk WHERE kind <> 'prose' AND tsv @@ plainto_tsquery('russian', 'synchronizer')"));
+        Assert.Equal(0, await connection.ExecuteScalarAsync<long>("SELECT count(*) FROM chunk WHERE kind <> 'prose' AND tsv IS NOT NULL"));
+        Assert.Equal(1, await connection.ExecuteScalarAsync<long>("SELECT count(*) FROM chunk WHERE kind = 'prose' AND tsv @@ plainto_tsquery('russian', 'synchronizer')"));
         SearchService search = services.GetRequiredService<SearchService>();
 
         foreach (bool rerank in new[] { true, false })

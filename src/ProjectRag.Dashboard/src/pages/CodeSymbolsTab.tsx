@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router';
 
 import { api } from '../api';
@@ -34,13 +34,30 @@ export function CodeSymbolsTab() {
     setParameters(next, { replace });
   };
 
-  const commit = useEffectEvent((value: string) => update({ q: value.trim() }, true));
+  const [syncedText, setSyncedText] = useState(text);
+  if (syncedText !== text) {
+    setSyncedText(text);
+    if (draft.trim() !== text) setDraft(text);
+  }
+
+  const timer = useRef<number>(undefined);
+  const commit = useRef((value: string) => update({ q: value.trim() }, true));
 
   useEffect(() => {
-    if (draft.trim() === text) return;
-    const timer = window.setTimeout(() => commit(draft), debounceMs);
-    return () => window.clearTimeout(timer);
-  }, [draft, text]);
+    commit.current = (value) => update({ q: value.trim() }, true);
+  });
+
+  useEffect(() => {
+    window.clearTimeout(timer.current);
+  }, [text]);
+
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+
+  const type = (value: string) => {
+    setDraft(value);
+    window.clearTimeout(timer.current);
+    if (value.trim() !== text) timer.current = window.setTimeout(() => commit.current(value), debounceMs);
+  };
 
   const sources = useLoad(api.sources, []);
   const codeSources = sources.data?.filter((source) => source.kind === 'code') ?? [];
@@ -66,7 +83,7 @@ export function CodeSymbolsTab() {
         <input
           className="search__input mono"
           value={draft}
-          onChange={(event) => setDraft(event.target.value)}
+          onChange={(event) => type(event.target.value)}
           placeholder="A name, camel humps (SSync) or a qualified name (SceneHost.Update)"
           aria-label="Symbol"
           autoFocus

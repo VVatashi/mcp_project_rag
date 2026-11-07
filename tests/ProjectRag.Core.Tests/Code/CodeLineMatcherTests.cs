@@ -6,6 +6,16 @@ public sealed class CodeLineMatcherTests
 {
     private const string Sample = "using System;\npublic class Scene\n{\n    int scene = 1;\n}\n";
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Create_RejectsAPatternWithANulCharacter(bool isRegex)
+    {
+        CodeSearchException error = Assert.Throws<CodeSearchException>(() => CodeLineMatcher.Create("a\0b", isRegex, true));
+
+        Assert.Equal("Pattern", error.Field);
+    }
+
     [Fact]
     public void Find_GivesTheLineTheColumnAndTheLengthOfALiteral()
     {

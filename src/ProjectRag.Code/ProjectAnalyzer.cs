@@ -38,7 +38,7 @@ internal sealed class ProjectAnalyzer(ProjectUnit unit, FileCatalog catalog, IRe
         Compilation? compilation = await unit.Project.GetCompilationAsync(cancellationToken).ConfigureAwait(false);
         if (compilation is not CSharpCompilation)
         {
-            _result.Diagnostics.Add(new GraphDiagnostic(unit.Index, "warning", string.Empty, "The project has no C# compilation.", null, null));
+            _result.Diagnostics.Add(new GraphDiagnostic(unit.Index, "warning", string.Empty, "The project is not a C# project, so the graph has no symbols for it.", null, null));
             return _result;
         }
 

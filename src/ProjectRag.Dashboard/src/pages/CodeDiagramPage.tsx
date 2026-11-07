@@ -151,18 +151,37 @@ function saveText(name: string, text: string) {
 }
 
 function NumberOption({ label, value, min, max, onChange }: { label: string; value: number; min: number; max: number; onChange: (value: number) => void }) {
+  const [draft, setDraft] = useState(String(value));
+  const [syncedValue, setSyncedValue] = useState(value);
+  if (syncedValue !== value) {
+    setSyncedValue(value);
+    setDraft(String(value));
+  }
+
+  const commit = () => {
+    const parsed = Math.round(Number(draft));
+    if (draft.trim() === '' || !Number.isFinite(parsed)) {
+      setDraft(String(value));
+      return;
+    }
+    const next = Math.min(max, Math.max(min, parsed));
+    setDraft(String(next));
+    if (next !== value) onChange(next);
+  };
+
   return (
     <label className="inline">
       {label}
       <input
         type="number"
         className="diagram-number"
-        value={value}
+        value={draft}
         min={min}
         max={max}
-        onChange={(event) => {
-          const next = Number(event.target.value);
-          if (Number.isInteger(next) && next >= min && next <= max) onChange(next);
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') commit();
         }}
       />
     </label>
@@ -200,7 +219,7 @@ function Toolbar({
   codeSources,
 }: {
   state: State;
-  change: (values: Record<string, string | null>) => void;
+  change: (values: Record<string, string | null>, replace?: boolean) => void;
   projects: string[];
   codeSources: Source[];
 }) {
@@ -276,15 +295,15 @@ function Toolbar({
           </label>
         )}
         {state.view === 'type' && state.id && <span className="mono small muted diagram-id">{state.id}</span>}
-        {state.view === 'namespaces' && <NumberOption label="Min weight" value={state.minWeight} min={1} max={100000} onChange={(value) => change({ minWeight: value === 1 ? null : String(value) })} />}
-        {state.view === 'type' && <NumberOption label="Depth" value={state.depth} min={1} max={3} onChange={(value) => change({ depth: value === 1 ? null : String(value) })} />}
+        {state.view === 'namespaces' && <NumberOption label="Min weight" value={state.minWeight} min={1} max={100000} onChange={(value) => change({ minWeight: value === 1 ? null : String(value) }, true)} />}
+        {state.view === 'type' && <NumberOption label="Depth" value={state.depth} min={1} max={3} onChange={(value) => change({ depth: value === 1 ? null : String(value) }, true)} />}
         {state.view !== 'projects' && (
           <NumberOption
             label="Max nodes"
             value={state.maxNodes}
             min={1}
             max={500}
-            onChange={(value) => change({ maxNodes: value === defaultMaxNodes[state.view] ? null : String(value) })}
+            onChange={(value) => change({ maxNodes: value === defaultMaxNodes[state.view] ? null : String(value) }, true)}
           />
         )}
         {state.view === 'type' && (
@@ -312,7 +331,7 @@ function Toolbar({
             value={state.maxEdges}
             min={5}
             max={500}
-            onChange={(value) => change({ maxEdges: value === defaultMaxEdges ? null : String(value) })}
+            onChange={(value) => change({ maxEdges: value === defaultMaxEdges ? null : String(value) }, true)}
           />
         )}
         {state.view === 'type' && <Check label="Neighbor edges" checked={state.neighborEdges} onChange={(checked) => change({ neighborEdges: flag(checked, '1') })} />}
@@ -438,7 +457,7 @@ export function CodeDiagramPage() {
   const current = ready && outcome.data?.key === key ? outcome.data.diagram : undefined;
   const busy = ready && current === undefined && !outcome.error;
 
-  const change = (values: Record<string, string | null>) => {
+  const change = (values: Record<string, string | null>, replace = false) => {
     const next = new URLSearchParams(parameters);
     if (state.sourceId !== null && !next.has('source')) next.set('source', String(state.sourceId));
     for (const [name, value] of Object.entries(values)) {
@@ -452,7 +471,7 @@ export function CodeDiagramPage() {
         next.delete('id');
       }
     }
-    setParameters(next);
+    setParameters(next, { replace });
   };
 
   const mapHref = (href: string): string => {

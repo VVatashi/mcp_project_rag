@@ -62,6 +62,8 @@ internal sealed class KeptWorkspace
 
     public ITimer? Timer { get; set; }
 
+    public long LastUsed { get; set; }
+
     public Solution Solution { get; set; }
 
     public string SdkVersion { get; }

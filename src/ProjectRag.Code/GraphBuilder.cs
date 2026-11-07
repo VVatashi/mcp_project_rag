@@ -138,10 +138,15 @@ internal sealed class GraphBuilder(CodeGraphInput input, CodeGraphOptions option
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            ProjectResult failed = new();
-            failed.Diagnostics.Add(new GraphDiagnostic(unit.Index, "error", string.Empty, "The analysis failed: " + exception.Message, null, null));
-            return failed;
+            return FailedResult(unit.Index, exception);
         }
+    }
+
+    internal static ProjectResult FailedResult(int projectIndex, Exception exception)
+    {
+        ProjectResult failed = new() { ErrorCount = 1 };
+        failed.Diagnostics.Add(new GraphDiagnostic(projectIndex, "error", string.Empty, "The analysis failed: " + exception.Message, null, null));
+        return failed;
     }
 
     private async Task CheckSdkAsync(string root, CancellationToken cancellationToken)

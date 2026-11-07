@@ -136,6 +136,15 @@ public sealed class SourceWatchSetTests : IDisposable
     [InlineData("src/Program.cs", false)]
     [InlineData("docs/binary.md", false)]
     [InlineData("src/objects/a.cs", false)]
+    [InlineData(".gitignore", false)]
+    [InlineData("src/deep/.gitignore", false)]
+    [InlineData("src\\.GitIgnore", false)]
+    [InlineData(".git/info/exclude", false)]
+    [InlineData(".git/info/other", true)]
+    [InlineData(".git/exclude", true)]
+    [InlineData("bin/.gitignore", true)]
+    [InlineData("node_modules/pkg/.gitignore", true)]
+    [InlineData("src/.gitignored", true)]
     public void IsNoise_DropsTheFoldersThatTheFileListSkips(string path, bool expected) =>
         Assert.Equal(expected, SourceWatchSet.IsNoise(path, null));
 

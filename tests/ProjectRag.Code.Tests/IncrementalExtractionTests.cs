@@ -205,6 +205,55 @@ public sealed class IncrementalExtractionTests(EditableSampleFixture fixture) : 
     }
 
     [Fact]
+    public async Task FullBuild_OfAnotherRootRetiresTheLeastRecentlyUsedWorkspace()
+    {
+        fixture.RequireRestore();
+        await fixture.ResetAsync();
+        string second = Directory.CreateTempSubdirectory("project-rag-code-second-").FullName;
+        try
+        {
+            await SampleFixture.WriteSampleAsync(second, null);
+            string? failure = await SampleFixture.RestoreAsync(second);
+            Assert.Null(failure);
+            using RoslynCodeGraphExtractor extractor = new(Options.Create(new CodeGraphOptions { MaxDegreeOfParallelism = 2, MaxKeptWorkspaces = 1 }));
+            CodeGraphInput first = fixture.Input();
+            CodeGraphInput other = first with { RootPath = second };
+            await extractor.ExtractAsync(first, TestContext.Current.CancellationToken);
+            await extractor.ExtractAsync(other, TestContext.Current.CancellationToken);
+
+            Assert.Null(await extractor.UpdateAsync(Update(first), TestContext.Current.CancellationToken));
+            Assert.NotNull(await extractor.UpdateAsync(Update(other), TestContext.Current.CancellationToken));
+        }
+        finally
+        {
+            Directory.Delete(second, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Update_ReturnsNullWhenNoWorkspaceMayBeKept()
+    {
+        fixture.RequireRestore();
+        await fixture.ResetAsync();
+        using RoslynCodeGraphExtractor extractor = new(Options.Create(new CodeGraphOptions { MaxKeptWorkspaces = 0 }));
+        await extractor.ExtractAsync(fixture.Input(), TestContext.Current.CancellationToken);
+
+        Assert.Null(await extractor.UpdateAsync(Update(fixture.Input()), TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public void FailedAnalysis_CountsAsAnError()
+    {
+        ProjectResult result = GraphBuilder.FailedResult(3, new InvalidOperationException("boom"));
+
+        Assert.True(result.ErrorCount >= 1);
+        GraphDiagnostic diagnostic = Assert.Single(result.Diagnostics);
+        Assert.Equal(3, diagnostic.Project);
+        Assert.Equal("error", diagnostic.Severity);
+        Assert.Contains("boom", diagnostic.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task FullBuild_ReplacesTheKeptWorkspace()
     {
         fixture.RequireRestore();

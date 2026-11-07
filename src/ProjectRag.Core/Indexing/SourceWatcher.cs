@@ -2,8 +2,6 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
-using Npgsql;
-
 using ProjectRag.Core.Sources;
 
 namespace ProjectRag.Core.Indexing;
@@ -51,7 +49,7 @@ public sealed class SourceWatcher(SourceStore sources, IndexScheduler scheduler,
                 }
 
                 TimeSpan quiet = TimeSpan.FromMilliseconds(Math.Max(1, current.QuietMilliseconds));
-                set.Flush(quiet, TimeSpan.FromSeconds(Math.Max(1, current.MaxDelaySeconds)));
+                Flush(set, quiet, TimeSpan.FromSeconds(Math.Max(1, current.MaxDelaySeconds)));
                 await Task.Delay(Tick(quiet), time, stoppingToken);
             }
         }
@@ -64,15 +62,32 @@ public sealed class SourceWatcher(SourceStore sources, IndexScheduler scheduler,
     // The pause between two checks of the debounce. A short quiet time gets a short pause, a long one does not need polling every 25 ms.
     private static TimeSpan Tick(TimeSpan quiet) => TimeSpan.FromTicks(Math.Clamp(quiet.Ticks / 4, MinTick.Ticks, MaxTick.Ticks));
 
+    // An exception out of the loop would stop the whole host, so any error except the stop of the application only skips this step.
     private async Task RefreshAsync(SourceWatchSet set, CancellationToken stoppingToken)
     {
+#pragma warning disable CA1031
         try
         {
             set.Sync(await sources.ListFoldersAsync(stoppingToken));
         }
-        catch (NpgsqlException exception)
+        catch (Exception exception) when (exception is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
+#pragma warning restore CA1031
         {
-            logger.LogError(exception, "The watcher cannot read the list of the sources from the database.");
+            logger.LogError(exception, "The watcher cannot refresh the list of the sources.");
+        }
+    }
+
+    private void Flush(SourceWatchSet set, TimeSpan quiet, TimeSpan maxDelay)
+    {
+#pragma warning disable CA1031
+        try
+        {
+            set.Flush(quiet, maxDelay);
+        }
+        catch (Exception exception)
+#pragma warning restore CA1031
+        {
+            logger.LogError(exception, "The watcher cannot ask for the runs of the changed sources.");
         }
     }
 }

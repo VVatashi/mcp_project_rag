@@ -63,10 +63,19 @@ internal sealed class SourceWatchSet(IndexScheduler scheduler, TimeProvider time
     /// </summary>
     /// <param name="relativePath">The path relative to the folder of the source, with any separator.</param>
     /// <param name="dotGlobs">The patterns that bring dot files back, or <see langword="null"/>.</param>
-    /// <returns><see langword="true"/> for a path in a folder that the file list skips.</returns>
+    /// <returns>
+    /// <see langword="true"/> for a path in a folder that the file list skips.
+    /// A <c>.gitignore</c> file outside the noise folders and <c>.git/info/exclude</c> always pass, because they change the file list.
+    /// </returns>
     public static bool IsNoise(string relativePath, Matcher? dotGlobs)
     {
         string[] segments = relativePath.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries);
+        if (segments is [".git", "info", "exclude"] || (segments.Length > 0 && segments[^1].Equals(".gitignore", StringComparison.OrdinalIgnoreCase)
+            && !segments.Any(static segment => NoiseFolders.Contains(segment, StringComparer.OrdinalIgnoreCase))))
+        {
+            return false;
+        }
+
         if (segments.Any(static segment => NoiseFolders.Contains(segment, StringComparer.OrdinalIgnoreCase)))
             return true;
 

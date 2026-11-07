@@ -293,6 +293,8 @@ The server reads `src/ProjectRag.Server/appsettings.json`. Put the settings of o
 | `Watch:MaxDelaySeconds` | 30 | The longest wait from the first change of a burst to the run |
 | `CodeGraph:MsBuildPath` | empty | The folder of MSBuild for the code graph. Empty takes the newest installed .NET SDK |
 | `CodeGraph:MaxDegreeOfParallelism` | half the processors | The projects that the code graph reads at once |
+| `CodeGraph:KeepWorkspaceMinutes` | 30 | The minutes that the loaded projects of a code base stay in memory without a change, for fast updates. 0 keeps none |
+| `CodeGraph:MaxKeptWorkspaces` | 2 | The most code bases whose loaded projects stay in memory. A large code base keeps more than 1 GB. 0 keeps none |
 | `CodeChunking:MaxChars` | 2400 | The size of a chunk of code. A change splits every code file again |
 | `CodeChunking:MinChars` | 400 | Neighbor members of one type merge into one chunk below this size |
 | `CodeChunking:OverlapLines` | 2 | The lines that a part of a long member repeats from the part before it |

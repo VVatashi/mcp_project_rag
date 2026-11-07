@@ -67,6 +67,7 @@ public sealed class SearchStore(Database database)
                 """)
             : "SELECT NULL::bigint AS chunk_id, NULL::integer AS r WHERE false";
 
+        // The GIN index chunk_tsv is partial (WHERE kind = 'prose'), so the full text leg must keep the same literal predicate.
         string sql = $"""
             WITH vec AS (
                 {vectorSql}

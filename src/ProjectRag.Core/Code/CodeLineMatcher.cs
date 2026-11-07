@@ -30,7 +30,7 @@ public sealed class CodeLineMatcher
     /// <param name="isRegex">Tells that the pattern is a regular expression.</param>
     /// <param name="caseSensitive">Tells that the case of letters matters.</param>
     /// <returns>The matcher.</returns>
-    /// <exception cref="CodeSearchException">The pattern is empty, has a line end, or is not a valid regular expression.</exception>
+    /// <exception cref="CodeSearchException">The pattern is empty, has a line end or a NUL character, or is not a valid regular expression.</exception>
     public static CodeLineMatcher Create(string pattern, bool isRegex, bool caseSensitive)
     {
         if (string.IsNullOrEmpty(pattern))
@@ -38,6 +38,9 @@ public sealed class CodeLineMatcher
 
         if (pattern.AsSpan().ContainsAny('\r', '\n'))
             throw new CodeSearchException(nameof(CodeGrepRequest.Pattern), "The pattern must be one line.");
+
+        if (pattern.Contains('\0', StringComparison.Ordinal))
+            throw new CodeSearchException(nameof(CodeGrepRequest.Pattern), "The pattern must not hold a NUL character.");
 
         if (!isRegex)
             return new CodeLineMatcher(pattern, caseSensitive ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase, null);

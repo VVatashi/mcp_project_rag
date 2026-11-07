@@ -18,6 +18,7 @@ public sealed class RoslynCodeGraphExtractor(IOptions<CodeGraphOptions> options,
 {
     private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
     private readonly ConcurrentDictionary<string, KeptWorkspace> _kept = new(KeptWorkspace.KeyComparer);
+    private long _clock;
 
     /// <inheritdoc/>
     public int Version => 1;
@@ -30,7 +31,7 @@ public sealed class RoslynCodeGraphExtractor(IOptions<CodeGraphOptions> options,
         string sdkVersion = MsBuildRegistration.Register(settings.MsBuildPath);
         Release(input.RootPath);
 
-        (CodeGraph graph, KeptWorkspace? entry) = await new GraphBuilder(input, settings, sdkVersion).BuildAsync(settings.KeepWorkspaceMinutes > 0, cancellationToken).ConfigureAwait(false);
+        (CodeGraph graph, KeptWorkspace? entry) = await new GraphBuilder(input, settings, sdkVersion).BuildAsync(settings.KeepWorkspaceMinutes > 0 && settings.MaxKeptWorkspaces > 0, cancellationToken).ConfigureAwait(false);
         if (entry is not null)
             Keep(entry, TimeSpan.FromMinutes(settings.KeepWorkspaceMinutes));
 
@@ -81,6 +82,7 @@ public sealed class RoslynCodeGraphExtractor(IOptions<CodeGraphOptions> options,
 
     private void Keep(KeptWorkspace entry, TimeSpan lifetime)
     {
+        entry.LastUsed = Interlocked.Increment(ref _clock);
         entry.Timer = _time.CreateTimer(_ => Expire(entry), null, lifetime, Timeout.InfiniteTimeSpan);
         KeptWorkspace? previous = null;
         _kept.AddOrUpdate(
@@ -92,10 +94,31 @@ public sealed class RoslynCodeGraphExtractor(IOptions<CodeGraphOptions> options,
                 return entry;
             });
         previous?.Retire();
+        RetireLeastRecentlyUsed(Math.Max(0, options.Value.MaxKeptWorkspaces));
+    }
+
+    private void RetireLeastRecentlyUsed(int limit)
+    {
+        while (_kept.Count > limit)
+        {
+            KeyValuePair<string, KeptWorkspace>? oldest = null;
+            foreach (KeyValuePair<string, KeptWorkspace> pair in _kept)
+            {
+                if (oldest is null || pair.Value.LastUsed < oldest.Value.Value.LastUsed)
+                    oldest = pair;
+            }
+
+            if (oldest is null)
+                return;
+
+            if (_kept.TryRemove(oldest.Value))
+                oldest.Value.Value.Retire();
+        }
     }
 
     private void Touch(KeptWorkspace entry)
     {
+        entry.LastUsed = Interlocked.Increment(ref _clock);
         TimeSpan lifetime = TimeSpan.FromMinutes(options.Value.KeepWorkspaceMinutes);
         if (lifetime > TimeSpan.Zero)
             entry.Timer?.Change(lifetime, Timeout.InfiniteTimeSpan);

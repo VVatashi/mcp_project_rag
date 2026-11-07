@@ -78,7 +78,7 @@ public sealed class CodeFileLister(IOptionsMonitor<CodeOptions> options, ILogger
     /// Walks a folder that is not a work tree of Git and applies its <c>.gitignore</c> files.
     /// </summary>
     /// <remarks>
-    /// The walk skips <c>.git</c>, the folders <c>bin</c>, <c>obj</c> and <c>node_modules</c>, links to folders and every folder with a <c>.git</c> of its own, such as a submodule.
+    /// The walk skips <c>.git</c>, the folders <c>bin</c>, <c>obj</c> and <c>node_modules</c>, links to folders, links to files outside the folder and every folder with a <c>.git</c> of its own, such as a submodule.
     /// An ignored folder is not entered, so a rule cannot bring back a file in it.
     /// </remarks>
     /// <param name="root">The folder.</param>
@@ -90,11 +90,11 @@ public sealed class CodeFileLister(IOptionsMonitor<CodeOptions> options, ILogger
         List<(GitIgnore Rules, string Folder)> stack = [];
         // The file of the repository that is not under version control has the lowest priority.
         TryAddRules(stack, Path.Combine(root, ".git", "info", "exclude"), string.Empty);
-        WalkFolder(new DirectoryInfo(root), string.Empty, stack, files);
+        WalkFolder(new DirectoryInfo(root), string.Empty, stack, files, new SourceLinkGuard(root));
         return files;
     }
 
-    private static void WalkFolder(DirectoryInfo folder, string relative, List<(GitIgnore Rules, string Folder)> stack, List<string> files)
+    private static void WalkFolder(DirectoryInfo folder, string relative, List<(GitIgnore Rules, string Folder)> stack, List<string> files, SourceLinkGuard guard)
     {
         int depth = stack.Count;
         TryAddRules(stack, Path.Combine(folder.FullName, ".gitignore"), relative);
@@ -115,9 +115,9 @@ public sealed class CodeFileLister(IOptionsMonitor<CodeOptions> options, ILogger
                         continue;
                     }
 
-                    WalkFolder(directory, path, stack, files);
+                    WalkFolder(directory, path, stack, files, guard);
                 }
-                else if (entry.Name != ".git" && !IsIgnored(stack, path, false))
+                else if (entry.Name != ".git" && !IsIgnored(stack, path, false) && guard.IsInside(path))
                 {
                     files.Add(path);
                 }
@@ -180,9 +180,21 @@ public sealed class CodeFileLister(IOptionsMonitor<CodeOptions> options, ILogger
             }
 
             // A deleted file stays in the index, and a nested repository shows as a folder. Neither is a file.
-            return [.. listed.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries)
-                .Where(path => File.Exists(Path.Combine(root, path)))
-                .Distinct(StringComparer.Ordinal)];
+            // A tracked link to a file outside the folder is no file of the source.
+            SourceLinkGuard guard = new(root);
+            List<string> files = [];
+            foreach (string path in listed.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries).Distinct(StringComparer.Ordinal))
+            {
+                if (!File.Exists(Path.Combine(root, path)))
+                    continue;
+
+                if (guard.IsInside(path))
+                    files.Add(path);
+                else
+                    logger.LogDebug("The lister skipped the file {Path} in {Root}: it is a link to a place outside the folder.", path, root);
+            }
+
+            return files;
         }
         catch (Exception exception) when (exception is Win32Exception or IOException or TimeoutException or InvalidOperationException)
         {

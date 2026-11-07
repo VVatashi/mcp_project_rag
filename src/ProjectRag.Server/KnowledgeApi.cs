@@ -92,11 +92,13 @@ internal static class KnowledgeApi
             return TypedResults.Ok(source);
         });
 
-        api.MapDelete("/sources/{sourceId:int}", static async Task<Results<NoContent, NotFound>> (int sourceId, SourceStore sources, CodeGraphBuilder graphBuilder, CancellationToken cancellationToken) =>
+        api.MapDelete("/sources/{sourceId:int}", static async Task<Results<NoContent, NotFound>> (int sourceId, SourceStore sources, CodeGraphBuilder graphBuilder, Indexer indexer, CancellationToken cancellationToken) =>
         {
             Source? existing = await sources.GetAsync(sourceId, null, cancellationToken);
             if (!await sources.DeleteAsync(sourceId, cancellationToken))
                 return TypedResults.NotFound();
+
+            indexer.Forget(sourceId);
 
             // The extractor keeps the loaded projects of a code base in memory until it is told to drop them.
             if (existing is not null)

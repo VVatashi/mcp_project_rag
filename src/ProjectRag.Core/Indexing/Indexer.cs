@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -83,6 +84,23 @@ public sealed class Indexer(
     internal static string CodeFileVersion(CodeChunkingOptions options, ICodeChunker chunker) =>
         string.Create(CultureInfo.InvariantCulture, $"code:2;{options.Fingerprint()};{chunker.GetType().Name}:{chunker.Version}");
 
+    // The files of code sources that are binary or hold a NUL character have no document, so the stored size and time cannot skip them.
+    // The indexer remembers their size and time in memory. A restart forgets them and reads each file once.
+    private readonly ConcurrentDictionary<(int SourceId, string Path), UnreadableFile> _unreadable = new();
+
+    /// <summary>
+    /// Forgets the skipped files of a source, for example after the source is deleted.
+    /// </summary>
+    /// <param name="sourceId">The key of the source.</param>
+    public void Forget(int sourceId)
+    {
+        foreach ((int id, string path) in _unreadable.Keys)
+        {
+            if (id == sourceId)
+                _unreadable.TryRemove((id, path), out _);
+        }
+    }
+
     /// <summary>
     /// Runs the indexer over a source.
     /// </summary>
@@ -94,7 +112,10 @@ public sealed class Indexer(
     {
         Source? source = await sources.GetAsync(sourceId, null, cancellationToken);
         if (source is null)
+        {
+            Forget(sourceId);
             return null;
+        }
 
         IndexRun run = await runs.StartAsync(sourceId, cancellationToken);
         progress?.Invoke(run);
@@ -167,13 +188,20 @@ public sealed class Indexer(
         IReadOnlyList<string> paths = isCode ? await codeFiles.ListAsync(source, cancellationToken) : SourceScanner.Scan(source);
         run.FilesSeen = paths.Count + source.Urls.Count;
         List<string> skipped = [];
-        List<string> seen = [];
+        HashSet<string> seen = new(StringComparer.Ordinal);
+        SourceLinkGuard? guard = source.RootPath.Length > 0 ? new SourceLinkGuard(source.RootPath) : null;
         foreach (string path in paths)
         {
             cancellationToken.ThrowIfCancellationRequested();
             FileInfo info = new(Path.Combine(source.RootPath, path));
             if (!info.Exists)
                 continue;
+
+            if (guard is not null && !guard.IsInside(path))
+            {
+                logger.LogDebug("The indexer skipped the file {Path} of the source {Source}: it is a link to a place outside the folder.", path, source.Name);
+                continue;
+            }
 
             // A file over the limit is not seen, so its old document leaves the search.
             long limit = !isCode ? options.MaxFileBytes
@@ -188,9 +216,15 @@ public sealed class Indexer(
                 continue;
             }
 
-            seen.Add(path);
             // PostgreSQL keeps microseconds, so the time of the file loses its last digit before the comparison.
             DateTime modifiedAt = Microseconds(info.LastWriteTimeUtc);
+            if (isCode && _unreadable.TryGetValue((source.SourceId, path), out UnreadableFile known) && known.SizeBytes == info.Length && known.ModifiedAt == modifiedAt)
+            {
+                logger.LogDebug("The indexer skipped the file {Path} of the code source {Source}: it was binary or held a NUL character, and it did not change.", path, source.Name);
+                continue;
+            }
+
+            seen.Add(path);
             (DocumentFileState? state, string fileVersion) = reader.State(path);
             if (state is not null && state.SizeBytes == info.Length && state.ModifiedAt == modifiedAt && state.ParserVersion == fileVersion)
             {
@@ -214,24 +248,44 @@ public sealed class Indexer(
             if (bytes is null)
             {
                 seen.Remove(path);
+                _unreadable[(source.SourceId, path)] = new UnreadableFile(info.Length, modifiedAt);
                 logger.LogDebug("The indexer skipped the binary file {Path} of the code source {Source}.", path, source.Name);
                 continue;
             }
 
             if (isCode && CodeLanguages.FromPath(path) != CodeLanguages.Markdown)
             {
-                if (!await StoreCodeAsync(reader, path, bytes, modifiedAt, run, changes, cancellationToken))
+                if (await StoreCodeAsync(reader, path, bytes, modifiedAt, run, changes, cancellationToken))
+                {
+                    _unreadable.TryRemove((source.SourceId, path), out _);
+                }
+                else
                 {
                     seen.Remove(path);
+                    _unreadable[(source.SourceId, path)] = new UnreadableFile(info.Length, modifiedAt);
                     logger.LogDebug("The indexer skipped the file {Path} of the code source {Source}: the text holds a NUL character.", path, source.Name);
                 }
             }
             else
             {
+                if (isCode)
+                    _unreadable.TryRemove((source.SourceId, path), out _);
+
                 await StoreAsync(reader, path, bytes, modifiedAt, run, warnings, cancellationToken);
             }
 
             progress?.Invoke(run);
+        }
+
+        if (isCode)
+        {
+            // A file that left the list needs no entry any more.
+            HashSet<string> listed = new(paths, StringComparer.Ordinal);
+            foreach ((int sourceId, string path) in _unreadable.Keys)
+            {
+                if (sourceId == source.SourceId && !listed.Contains(path))
+                    _unreadable.TryRemove((sourceId, path), out _);
+            }
         }
 
         await SyncPagesAsync(reader, run, warnings, seen, progress, cancellationToken);
@@ -247,8 +301,7 @@ public sealed class Indexer(
             warnings.Add($"The folder {source.RootPath} holds no matching files. The indexer kept the {storedFiles} stored documents. Delete the source to remove them.");
         else
         {
-            HashSet<string> kept = [.. seen];
-            changes.Removed.AddRange(reader.Known.Keys.Where(path => !DocumentReader.IsWebPage(path) && !kept.Contains(path)));
+            changes.Removed.AddRange(reader.Known.Keys.Where(path => !DocumentReader.IsWebPage(path) && !seen.Contains(path)));
             run.DocumentsRemoved = await documents.DeleteMissingAsync(source.SourceId, seen, cancellationToken);
         }
 
@@ -261,7 +314,7 @@ public sealed class Indexer(
 
     // A page goes to its server at most once in the interval of the refresh. The time of the document is the time of the last request.
     // A new version of the parser or of the replacements requests the page at once. A page that fails keeps its old document.
-    private async Task SyncPagesAsync(Reader reader, IndexRun run, List<string> warnings, List<string> seen, Action<IndexRun>? progress, CancellationToken cancellationToken)
+    private async Task SyncPagesAsync(Reader reader, IndexRun run, List<string> warnings, HashSet<string> seen, Action<IndexRun>? progress, CancellationToken cancellationToken)
     {
         TimeSpan refresh = TimeSpan.FromHours(Math.Max(0, indexing.CurrentValue.PageRefreshHours));
         foreach (string url in reader.Source.Urls)
@@ -514,6 +567,8 @@ public sealed class Indexer(
         warnings.Add($"The chunks got no vectors: {reason} {count} chunks wait for the next run.");
         logger.LogWarning("The run {RunId} over {Source} wrote no vectors: {Reason}", run.RunId, source.Name, reason);
     }
+
+    private readonly record struct UnreadableFile(long SizeBytes, DateTime ModifiedAt);
 
     // The state of one run: the source, the chunker and the stored documents with their versions.
     private sealed record Reader(Source Source, DocumentChunker Chunker, string ParserVersion, Dictionary<string, DocumentFileState> Known, CodeChunkers Chunkers, CodeChunkingOptions CodeOptions)
