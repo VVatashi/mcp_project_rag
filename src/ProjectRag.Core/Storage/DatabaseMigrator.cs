@@ -21,7 +21,17 @@ public static class DatabaseMigrator
     /// </summary>
     /// <param name="connectionString">The connection string of the database.</param>
     /// <param name="loggers">The loggers of the application. The runner logs each migration through them.</param>
-    public static void MigrateUp(string connectionString, ILoggerFactory loggers)
+    public static void MigrateUp(string connectionString, ILoggerFactory loggers) => Migrate(connectionString, loggers, null);
+
+    /// <summary>
+    /// Applies the migrations up to a version.
+    /// </summary>
+    /// <param name="connectionString">The connection string of the database.</param>
+    /// <param name="loggers">The loggers of the application.</param>
+    /// <param name="version">The number of the last migration to apply.</param>
+    public static void MigrateUp(string connectionString, ILoggerFactory loggers, long version) => Migrate(connectionString, loggers, version);
+
+    private static void Migrate(string connectionString, ILoggerFactory loggers, long? version)
     {
         ArgumentException.ThrowIfNullOrEmpty(connectionString);
         ArgumentNullException.ThrowIfNull(loggers);
@@ -37,6 +47,10 @@ public static class DatabaseMigrator
             .BuildServiceProvider(validateScopes: false);
 
         using IServiceScope scope = services.CreateScope();
-        scope.ServiceProvider.GetRequiredService<IMigrationRunner>().MigrateUp();
+        IMigrationRunner runner = scope.ServiceProvider.GetRequiredService<IMigrationRunner>();
+        if (version is { } last)
+            runner.MigrateUp(last);
+        else
+            runner.MigrateUp();
     }
 }

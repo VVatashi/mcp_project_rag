@@ -56,9 +56,24 @@ public sealed class LlamaEmbeddingClientTests
     [Fact]
     public void FormatQuery_PutsTheQueryIntoTheTemplate()
     {
-        EmbeddingModel model = new(1, "model", 4, "Instruct: find\nQuery:{text}", "{text}");
+        EmbeddingModel model = new(1, "model", 4, "{text}");
 
-        Assert.Equal("Instruct: find\nQuery:what is a texture", model.FormatQuery("what is a texture"));
+        Assert.Equal("Instruct: find\nQuery:what is a texture", EmbeddingModel.FormatQuery("what is a texture", "Instruct: find\nQuery:{text}"));
         Assert.Equal("chunk", model.FormatDocument("chunk"));
+    }
+
+    [Fact]
+    public void FormatQuery_UsesTheTemplateOfEachSearch()
+    {
+        EmbeddingOptions options = new();
+
+        string documentation = EmbeddingModel.FormatQuery("find the update", options.QueryTemplate);
+        string code = EmbeddingModel.FormatQuery("find the update", options.CodeQueryTemplate);
+
+        Assert.EndsWith("\nQuery:find the update", documentation, StringComparison.Ordinal);
+        Assert.Contains("documentation", documentation, StringComparison.Ordinal);
+        Assert.StartsWith("Instruct: Given a description of a behavior, a concept or an API, retrieve the source code that implements or uses it\nQuery:", code, StringComparison.Ordinal);
+        Assert.EndsWith("find the update", code, StringComparison.Ordinal);
+        Assert.NotEqual(documentation, code);
     }
 }

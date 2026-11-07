@@ -8,7 +8,7 @@ namespace ProjectRag.Core.Embeddings;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The registry embeds the probe text and looks for the model by its name, its dimensions and its templates.
+/// The registry embeds the probe text and looks for the model by its name, its dimensions and its template of chunks. The templates of queries are no part of the identity.
 /// A known model must give the stored vector of the probe: a cosine below 0.999 means other weights, another quantization or another pooling under the same name.
 /// The search then works with the full text search only, and the indexer writes no vectors. An unknown model goes into the database with its own HNSW index.
 /// </para>
@@ -74,7 +74,7 @@ public sealed class EmbeddingModelRegistry(IEmbeddingClient client, EmbeddingSto
     {
         EmbeddingOptions settings = options.CurrentValue;
         // A known model keeps its own probe text, so a change of the option does not look like another model.
-        IReadOnlyList<StoredModel> candidates = await store.FindModelsAsync(settings.Model, settings.QueryTemplate, settings.DocumentTemplate, cancellationToken);
+        IReadOnlyList<StoredModel> candidates = await store.FindModelsAsync(settings.Model, settings.DocumentTemplate, cancellationToken);
         string probeText = candidates.Count > 0 ? candidates[0].ProbeText : settings.ProbeText;
         float[] probe;
         // The gate holds the callers of the status, so a server that hangs must not hold it for the whole timeout of the client.
@@ -107,12 +107,12 @@ public sealed class EmbeddingModelRegistry(IEmbeddingClient client, EmbeddingSto
                     "Check the weights, the quantization and the pooling of the server, or give the model a new name.");
             }
 
-            return new EmbeddingModelStatus(new EmbeddingModel(known.ModelId, settings.Model, probe.Length, settings.QueryTemplate, settings.DocumentTemplate), null);
+            return new EmbeddingModelStatus(new EmbeddingModel(known.ModelId, settings.Model, probe.Length, settings.DocumentTemplate), null);
         }
 
-        short modelId = await store.AddModelAsync(settings.Model, settings.QueryTemplate, settings.DocumentTemplate, probeText, probe, cancellationToken);
+        short modelId = await store.AddModelAsync(settings.Model, settings.DocumentTemplate, probeText, probe, cancellationToken);
         logger.LogInformation("The database knows a new embedding model {Model} with {Dims} dimensions as model {ModelId}.", settings.Model, probe.Length, modelId);
-        return new EmbeddingModelStatus(new EmbeddingModel(modelId, settings.Model, probe.Length, settings.QueryTemplate, settings.DocumentTemplate), null);
+        return new EmbeddingModelStatus(new EmbeddingModel(modelId, settings.Model, probe.Length, settings.DocumentTemplate), null);
     }
 
     private static double Cosine(float[] a, float[] b)

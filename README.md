@@ -131,6 +131,46 @@ The indexer runs over a new or changed source at once and over all sources every
 
 A file that the indexer cannot read counts as failed, and the run goes on. The state of each run is on the pages Status and Sources.
 
+### Code sources
+
+A source with `"kind": "code"` is a local code base. It needs a `rootPath` and no `urls`. The kind of a source cannot change.
+The folder must be a work tree of Git or a plain folder. In a work tree the file list comes from `git ls-files --cached --others --exclude-standard`, so it follows every rule of Git.
+In a plain folder, or when Git fails, the indexer walks the folder and reads the `.gitignore` files itself. The walk does not enter a folder with its own `.git`.
+Both lists skip `bin`, `obj` and `node_modules`. They skip every path with a segment that starts with a dot, unless a pattern of `dotGlobs` matches the path.
+
+| Field | Default for a code source |
+| --- | --- |
+| `includeGlobs` | `**/*` |
+| `excludeGlobs` | `**/artifacts/**`, the lock files of npm, `**/*.min.js`, `**/*.min.css`, `**/*.map` |
+| `dotGlobs` | `.github/**/*.yml`, `.github/**/*.yaml`, `.editorconfig`, `.config/*.json` |
+
+The indexer keeps the exact text of each file as a document with a language, such as `csharp` or `json`. It skips binary files and large files, see `Code:MaxFileBytes` and `Code:MaxConfigFileBytes`.
+A Markdown file goes through the pipeline of the documents, so `search` finds it. The other files have no chunks and no vectors. Only the exact search reads them.
+
+Two MCP tools read code sources:
+
+| Tool | What it does |
+| --- | --- |
+| `code_grep` | Finds a text or a regular expression of .NET. It takes `codebase`, `regex`, `caseSensitive`, `path`, `language` and `limit`. It answers with the lines of each file |
+| `code_read` | Reads lines of a file: `codebase`, `path`, `startLine` and `endLine`. It gives 200 lines by default and 500 at most |
+
+The web API has the same functions in `GET /api/code/grep` and `GET /api/code/lines`.
+
+#### Watcher and updates of the code graph
+
+The server watches the folder of each code source and starts a run of the indexer after a burst of changes. The watcher skips `.git`, `bin`, `obj`, `node_modules`, `artifacts` and dot folders.
+It waits `Watch:QuietMilliseconds` without a change, but no longer than `Watch:MaxDelaySeconds`. If the system loses events, the watcher asks for a run at once.
+The scan of `Indexing:ScanIntervalMinutes` stays as a safety net. A folder that the watcher cannot follow gets a new try at the next refresh.
+
+After a run, the code graph updates in place when all of these hold:
+
+1. The graph has no error, and the extractor version and the build properties are unchanged.
+2. The run only changed the content of `.cs` files that exist already.
+3. The run changed no project, solution, `Directory.Packages.props`, `global.json` or `nuget.config`.
+4. The change reaches at most `Code:IncrementalMaxFiles` files. These are the changed files and the files that refer to their symbols.
+
+Otherwise, or if the update fails, the run builds the whole graph. The status of the graph shows the last full build, the last update and the number of updates since.
+
 A Pascal data center GPU embeds about 1200 tokens per second. The three OpenGL specifications in `data/` give about 3000 chunks and took about 18 minutes the first time.
 
 ## Connect a client
@@ -172,7 +212,7 @@ A client with Streamable HTTP takes this entry:
 | Tool | What it does |
 | --- | --- |
 | `list_categories` | Lists the categories of the documents, such as `csharp` or `vulkan`, with their counts |
-| `list_sources` | Lists the sources with their descriptions and counts |
+| `list_sources` | Lists the sources with their kinds, descriptions and counts |
 | `search` | Searches the chunks. It takes a query, the categories, the names of sources and a number of hits. A text that several places share appears once, and the hit names the other places as copies. A copy may differ in a few words, and its similarity below 1 shows that |
 | `find_documents` | Finds documents by a part of the path or the title, with tolerance for typos |
 | `read_document` | Reads the text of a document from an offset. A hit gives the offset in `charStart` |
@@ -192,7 +232,7 @@ On a shared machine, set a token in `appsettings.Local.json`.
 | --- | --- |
 | `GET /api/status` | The state of the database, the models, the counts and the indexer |
 | `GET /api/sources` | The sources |
-| `POST /api/sources` | Adds a source: `name`, `description`, `rootPath`, `includeGlobs`, `excludeGlobs`, `categoryRules`, `replacements` |
+| `POST /api/sources` | Adds a source: `name`, `kind`, `description`, `rootPath`, `includeGlobs`, `excludeGlobs`, `dotGlobs`, `categoryRules`, `replacements` |
 | `PUT /api/sources/{id}` | Changes a source |
 | `DELETE /api/sources/{id}` | Deletes a source with its documents. The files stay |
 | `POST /api/sources/{id}/index` | Puts a source into the queue of the indexer |
@@ -209,6 +249,8 @@ On a shared machine, set a token in `appsettings.Local.json`.
 | `GET /api/documents/{id}/file` | The original file |
 | `GET /api/chunks/{id}` | A chunk with its section, pages, neighbors, links and backlinks |
 | `POST /api/search` | The search: `query`, `categories`, `sources`, `limit`, `rerank` |
+| `GET /api/code/grep?pattern=&sourceId=&regex=&caseSensitive=&path=&language=&limit=` | The exact search in the code sources: `matches`, `filesMatched`, `truncated`, `elapsedMs`. A wrong regular expression gives 400 |
+| `GET /api/code/lines?documentId=&start=&end=` | Lines of a file of a code source, up to 2000 |
 
 ## Configuration
 
@@ -221,7 +263,8 @@ The server reads `src/ProjectRag.Server/appsettings.json`. Put the settings of o
 | `Server:Token` | empty | The bearer token of `/api` and `/mcp`. Empty turns the check off |
 | `Embedding:BaseUrl` | `http://127.0.0.1:8195` | The embedding server |
 | `Embedding:Model` | `Qwen3-Embedding-4B-Q8_0` | The name of the model. A new name starts a new set of vectors |
-| `Embedding:QueryTemplate` | an English instruction | The template of a query. `{text}` marks the query |
+| `Embedding:QueryTemplate` | an English instruction | The template of a query of the documentation search. `{text}` marks the query |
+| `Embedding:CodeQueryTemplate` | an English instruction | The template of a query of `code_search`. The templates of the queries do not change the stored vectors |
 | `Embedding:BatchSize`, `Embedding:Parallelism` | 4, 2 | The texts in one request and the requests in flight |
 | `Rerank:Enabled` | `true` | The search orders its hits with the reranker |
 | `Rerank:BaseUrl` | `http://127.0.0.1:8196` | The reranker |
@@ -238,6 +281,23 @@ The server reads `src/ProjectRag.Server/appsettings.json`. Put the settings of o
 | `Chunking:MaxFileBytes` | 64 MB | The size of the largest file |
 | `Indexing:ScanIntervalMinutes` | 10 | The interval of the scans of all sources. 0 turns them off |
 | `Indexing:PageRefreshHours` | 24 | The hours between two requests of a web page |
+| `Code:GitPath` | `git` | The Git program that lists the files of a code source |
+| `Code:GitTimeoutSeconds` | 60 | The time limit of a Git command |
+| `Code:MaxFileBytes` | 1 MB | The largest file of a code source. The indexer skips a larger file |
+| `Code:MaxConfigFileBytes` | 256 KB | The largest JSON, XML, YAML or TOML file of a code source |
+| `Code:GraphTimeoutMinutes` | 15 | The time limit of the build of a code graph |
+| `Code:IncrementalMaxFiles` | 300 | The most files that one incremental update of the code graph may read. A larger change builds the whole graph. 0 turns updates off |
+| `Watch:Enabled` | true | Watch the folders of the code sources for changes |
+| `Watch:RefreshSeconds` | 60 | The interval at which the watcher reads the list of sources |
+| `Watch:QuietMilliseconds` | 2000 | The time without changes that ends a burst and starts a run |
+| `Watch:MaxDelaySeconds` | 30 | The longest wait from the first change of a burst to the run |
+| `CodeGraph:MsBuildPath` | empty | The folder of MSBuild for the code graph. Empty takes the newest installed .NET SDK |
+| `CodeGraph:MaxDegreeOfParallelism` | half the processors | The projects that the code graph reads at once |
+| `CodeGraph:KeepWorkspaceMinutes` | 30 | The minutes that the loaded projects of a code base stay in memory without a change, for fast updates. 0 keeps none |
+| `CodeGraph:MaxKeptWorkspaces` | 2 | The most code bases whose loaded projects stay in memory. A large code base keeps more than 1 GB. 0 keeps none |
+| `CodeChunking:MaxChars` | 2400 | The size of a chunk of code. A change splits every code file again |
+| `CodeChunking:MinChars` | 400 | Neighbor members of one type merge into one chunk below this size |
+| `CodeChunking:OverlapLines` | 2 | The lines that a part of a long member repeats from the part before it |
 
 ## Development
 

@@ -40,6 +40,15 @@
     <PackageVersion Include="PdfPig" Version="0.1.16" />
   </ItemGroup>
 
+  <!-- Roslyn: the extractor of the code graph -->
+  <ItemGroup>
+    <PackageVersion Include="Microsoft.Build.Framework" Version="17.11.48" />
+    <PackageVersion Include="Microsoft.Build.Locator" Version="1.11.2" />
+    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="5.9.0" />
+    <PackageVersion Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" Version="5.9.0" />
+    <PackageVersion Include="Microsoft.VisualStudio.SolutionPersistence" Version="1.0.52" />
+  </ItemGroup>
+
   <!-- Server -->
   <ItemGroup>
     <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="2.3.0" />

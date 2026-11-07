@@ -11,6 +11,11 @@ public sealed class DocumentSummary
     public string Category { get; init; } = string.Empty;
 
     /// <summary>
+    /// Gets the language of a document of a code source, such as <c>csharp</c>, or <see langword="null"/> for a document of a source of documentation.
+    /// </summary>
+    public string? Language { get; init; }
+
+    /// <summary>
     /// Gets the key of the document.
     /// </summary>
     public long DocumentId { get; init; }

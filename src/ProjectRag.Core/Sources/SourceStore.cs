@@ -16,7 +16,7 @@ public sealed class SourceStore(Database database)
 {
     // The counts come from subqueries. A join of documents and chunks would multiply the rows.
     private const string SelectSql = """
-        SELECT s.source_id, s.name, s.description, s.root_path, s.urls, s.include_globs, s.exclude_globs, s.category_rules::text AS category_rules, s.replacements::text AS replacements, s.created_at, s.indexed_at,
+        SELECT s.source_id, s.name, s.description, s.root_path, s.urls, s.include_globs, s.exclude_globs, s.kind, s.dot_globs, s.category_rules::text AS category_rules, s.replacements::text AS replacements, s.build_properties::text AS build_properties, s.created_at, s.indexed_at,
                (SELECT count(*) FROM document d WHERE d.source_id = s.source_id) AS document_count,
                ARRAY(SELECT DISTINCT d.category COLLATE "C" FROM document d WHERE d.source_id = s.source_id ORDER BY 1) AS categories,
                (SELECT count(*) FROM chunk c JOIN document d USING (document_id) WHERE d.source_id = s.source_id) AS chunk_count,
@@ -80,6 +80,19 @@ public sealed class SourceStore(Database database)
     }
 
     /// <summary>
+    /// Reads the folders of the sources that have one. The query is cheap, because it counts no documents.
+    /// </summary>
+    /// <param name="cancellationToken">The token that cancels the query.</param>
+    /// <returns>The folders.</returns>
+    public async Task<IReadOnlyList<SourceFolder>> ListFoldersAsync(CancellationToken cancellationToken)
+    {
+        await using NpgsqlConnection connection = await database.OpenAsync(cancellationToken);
+        IEnumerable<FolderRow> rows = await connection.QueryAsync<FolderRow>(new CommandDefinition(
+            "SELECT source_id, name, root_path, dot_globs FROM source WHERE root_path <> '' ORDER BY source_id", cancellationToken: cancellationToken));
+        return [.. rows.Select(static row => new SourceFolder(row.SourceId, row.Name, row.RootPath, row.DotGlobs))];
+    }
+
+    /// <summary>
     /// Adds a source.
     /// </summary>
     /// <param name="input">The fields of the source. The caller has checked them.</param>
@@ -92,15 +105,15 @@ public sealed class SourceStore(Database database)
         await using NpgsqlConnection connection = await database.OpenAsync(cancellationToken);
         return await connection.ExecuteScalarAsync<int>(new CommandDefinition(
             """
-            INSERT INTO source (name, description, root_path, urls, include_globs, exclude_globs, category_rules, replacements)
-            VALUES (@Name, @Description, @RootPath, @Urls, @IncludeGlobs, @ExcludeGlobs, CAST(@CategoryRules AS jsonb), CAST(@Replacements AS jsonb))
+            INSERT INTO source (name, description, root_path, urls, include_globs, exclude_globs, kind, dot_globs, category_rules, replacements, build_properties)
+            VALUES (@Name, @Description, @RootPath, @Urls, @IncludeGlobs, @ExcludeGlobs, @Kind, @DotGlobs, CAST(@CategoryRules AS jsonb), CAST(@Replacements AS jsonb), COALESCE(CAST(@BuildProperties AS jsonb), '{}'::jsonb))
             RETURNING source_id
             """,
             Parameters(input, 0), cancellationToken: cancellationToken));
     }
 
     /// <summary>
-    /// Changes a source. The documents stay until the next run of the indexer.
+    /// Changes a source. The documents stay until the next run of the indexer. The kind of the source stays as it is.
     /// </summary>
     /// <param name="sourceId">The key of the source.</param>
     /// <param name="input">The new fields. The caller has checked them.</param>
@@ -114,8 +127,9 @@ public sealed class SourceStore(Database database)
         int count = await connection.ExecuteAsync(new CommandDefinition(
             """
             UPDATE source
-            SET name = @Name, description = @Description, root_path = @RootPath, urls = @Urls, include_globs = @IncludeGlobs, exclude_globs = @ExcludeGlobs,
-                category_rules = CAST(@CategoryRules AS jsonb), replacements = CAST(@Replacements AS jsonb)
+            SET name = @Name, description = @Description, root_path = @RootPath, urls = @Urls, include_globs = @IncludeGlobs, exclude_globs = @ExcludeGlobs, dot_globs = @DotGlobs,
+                category_rules = CAST(@CategoryRules AS jsonb), replacements = CAST(@Replacements AS jsonb),
+                build_properties = COALESCE(CAST(@BuildProperties AS jsonb), build_properties)
             WHERE source_id = @SourceId
             """,
             Parameters(input, sourceId), cancellationToken: cancellationToken));
@@ -155,13 +169,27 @@ public sealed class SourceStore(Database database)
         Urls = input.CleanUrls().ToArray(),
         IncludeGlobs = input.Includes().ToArray(),
         ExcludeGlobs = input.Excludes().ToArray(),
+        Kind = input.EffectiveKind(),
+        DotGlobs = input.DotGlobsOrDefault().ToArray(),
         CategoryRules = JsonSerializer.Serialize(input.Rules().Select(static rule => new CategoryRule { Pattern = rule.Pattern.Trim(), Category = rule.Category.Trim() }), JsonOptions),
         Replacements = JsonSerializer.Serialize(
             (input.Replacements ?? []).Select(static replacement => new TextReplacement { Pattern = replacement.Pattern.Trim(), Find = replacement.Find, Replace = replacement.Replace ?? string.Empty }),
             JsonOptions),
+        BuildProperties = input.BuildProperties is null ? null : JsonSerializer.Serialize(input.BuildProperties, JsonOptions),
     };
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
+    private sealed class FolderRow
+    {
+        public int SourceId { get; init; }
+
+        public string Name { get; init; } = string.Empty;
+
+        public string RootPath { get; init; } = string.Empty;
+
+        public string[] DotGlobs { get; init; } = [];
+    }
 
     // Npgsql reads text[] as string[]. The public type exposes read-only lists.
     private sealed class SourceRow
@@ -180,9 +208,15 @@ public sealed class SourceStore(Database database)
 
         public string[] ExcludeGlobs { get; init; } = [];
 
+        public string Kind { get; init; } = SourceKind.Docs;
+
+        public string[] DotGlobs { get; init; } = [];
+
         public string CategoryRules { get; init; } = "[]";
 
         public string Replacements { get; init; } = "[]";
+
+        public string BuildProperties { get; init; } = "{}";
 
         public DateTime CreatedAt { get; init; }
 
@@ -205,8 +239,11 @@ public sealed class SourceStore(Database database)
             Urls = Urls,
             IncludeGlobs = IncludeGlobs,
             ExcludeGlobs = ExcludeGlobs,
+            Kind = Kind,
+            DotGlobs = DotGlobs,
             CategoryRules = JsonSerializer.Deserialize<List<CategoryRule>>(CategoryRules, JsonOptions) ?? [],
             Replacements = JsonSerializer.Deserialize<List<TextReplacement>>(Replacements, JsonOptions) ?? [],
+            BuildProperties = JsonSerializer.Deserialize<Dictionary<string, string>>(BuildProperties, JsonOptions) ?? [],
             CreatedAt = CreatedAt,
             IndexedAt = IndexedAt,
             DocumentCount = DocumentCount,

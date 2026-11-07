@@ -7,6 +7,10 @@ using Microsoft.Extensions.Options;
 
 using Npgsql;
 
+using ProjectRag.Core.Code;
+using ProjectRag.Core.Code.Chunks;
+using ProjectRag.Core.Code.Diagrams;
+using ProjectRag.Core.Code.Graph;
 using ProjectRag.Core.Documents;
 using ProjectRag.Core.Embeddings;
 using ProjectRag.Core.Indexing;
@@ -48,6 +52,9 @@ public static class KnowledgeBaseServiceCollectionExtensions
         services.Configure<RerankOptions>(configuration.GetSection(RerankOptions.SectionName));
         services.Configure<IndexingOptions>(configuration.GetSection(IndexingOptions.SectionName));
         services.Configure<SearchOptions>(configuration.GetSection(SearchOptions.SectionName));
+        services.Configure<WatchOptions>(configuration.GetSection(WatchOptions.SectionName));
+        services.Configure<CodeOptions>(configuration.GetSection(CodeOptions.SectionName));
+        services.Configure<CodeChunkingOptions>(configuration.GetSection(CodeChunkingOptions.SectionName));
 
         services.AddHttpClient(LlamaEmbeddingClient.HttpClientName, static (provider, http) =>
             http.Timeout = TimeSpan.FromSeconds(Math.Max(1, provider.GetRequiredService<IOptions<EmbeddingOptions>>().Value.TimeoutSeconds)));
@@ -71,9 +78,21 @@ public static class KnowledgeBaseServiceCollectionExtensions
         services.AddSingleton<IndexRunStore>();
         services.AddSingleton<SearchStore>();
         services.AddSingleton<EmbeddingModelRegistry>();
+        services.AddSingleton<CodeFileLister>();
+        services.AddSingleton<CodeSearchStore>();
+        services.AddSingleton<CodeSearchService>();
+        services.AddSingleton<CodeChunkers>();
+        services.AddSingleton<CodeChunkStore>();
+        services.AddSingleton<CodeTierSearch>();
+        services.AddSingleton<CodeGraphStore>();
+        services.AddSingleton<CodeGraphBuilder>();
+        services.AddSingleton<CodeGraphService>();
+        services.AddSingleton<CodeDiagramService>();
         services.AddSingleton<Indexer>();
         services.AddSingleton<IndexScheduler>();
         services.AddHostedService<IndexWorker>();
+        services.AddHostedService<SourceWatcher>();
+        services.AddSingleton<QueryModels>();
         services.AddSingleton<SearchService>();
         services.AddSingleton<StatusService>();
         return services;

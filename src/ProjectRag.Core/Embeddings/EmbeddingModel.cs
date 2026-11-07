@@ -3,19 +3,27 @@ namespace ProjectRag.Core.Embeddings;
 /// <summary>
 /// An embedding model that the database knows: the vectors of the chunks and of the queries must come from it.
 /// </summary>
+/// <remarks>
+/// The identity of a model leaves out the template of a query, because the template changes no vector of a document. Each search brings its own template.
+/// </remarks>
 /// <param name="ModelId">The key of the model in the table <c>embedding_model</c>.</param>
 /// <param name="Name">The name of the model.</param>
 /// <param name="Dims">The number of dimensions of a vector.</param>
-/// <param name="QueryTemplate">The template of a query.</param>
 /// <param name="DocumentTemplate">The template of a chunk.</param>
-public sealed record EmbeddingModel(short ModelId, string Name, int Dims, string QueryTemplate, string DocumentTemplate)
+public sealed record EmbeddingModel(short ModelId, string Name, int Dims, string DocumentTemplate)
 {
     /// <summary>
-    /// Puts a query into the template of the queries.
+    /// Puts a query into a template of queries.
     /// </summary>
     /// <param name="query">The query.</param>
+    /// <param name="template">The template, such as <see cref="EmbeddingOptions.QueryTemplate"/>.</param>
     /// <returns>The text for the embedding model.</returns>
-    public string FormatQuery(string query) => QueryTemplate.Replace(EmbeddingOptions.TextPlaceholder, query, StringComparison.Ordinal);
+    public static string FormatQuery(string query, string template)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        ArgumentNullException.ThrowIfNull(template);
+        return template.Replace(EmbeddingOptions.TextPlaceholder, query, StringComparison.Ordinal);
+    }
 
     /// <summary>
     /// Puts a chunk into the template of the chunks.

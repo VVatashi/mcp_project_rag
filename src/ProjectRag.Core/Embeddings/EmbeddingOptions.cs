@@ -30,9 +30,15 @@ public sealed class EmbeddingOptions
     public string Model { get; set; } = "Qwen3-Embedding-4B-Q8_0";
 
     /// <summary>
-    /// Gets or sets the template of a query. <see cref="TextPlaceholder"/> marks the place of the query.
+    /// Gets or sets the template of a query of the documentation search. <see cref="TextPlaceholder"/> marks the place of the query.
+    /// A template is no part of the identity of a model, so a change keeps the stored vectors.
     /// </summary>
     public string QueryTemplate { get; set; } = "Instruct: Given a question about a software project, retrieve passages of its documentation that answer the question\nQuery:{text}";
+
+    /// <summary>
+    /// Gets or sets the template of a query of the code search. <see cref="TextPlaceholder"/> marks the place of the query.
+    /// </summary>
+    public string CodeQueryTemplate { get; set; } = "Instruct: Given a description of a behavior, a concept or an API, retrieve the source code that implements or uses it\nQuery:{text}";
 
     /// <summary>
     /// Gets or sets the template of a chunk. <see cref="TextPlaceholder"/> marks the place of the chunk.

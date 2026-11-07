@@ -1,39 +1,32 @@
 using System.Text.RegularExpressions;
 
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 using ProjectRag.Core.Documents;
 using ProjectRag.Core.Embeddings;
-using ProjectRag.Core.Reranking;
 using ProjectRag.Core.Sources;
 
 namespace ProjectRag.Core.Search;
 
 /// <summary>
-/// Answers a query with chunks: the hybrid search finds the candidates, and the reranker orders them.
+/// Answers a query with chunks of documentation: the hybrid search finds the candidates, and the reranker orders them.
 /// </summary>
 /// <remarks>
 /// Each model is optional. Without the embedding server the search uses the full text search only.
 /// Without the reranker it keeps the order of the fusion. The result names the legs that worked.
+/// The search covers documentation and Markdown. The chunks of code files belong to the code search.
 /// </remarks>
 /// <param name="store">The SQL of the search.</param>
 /// <param name="sources">The store of the sources.</param>
-/// <param name="models">The registry of the embedding model.</param>
-/// <param name="embedder">The client of the embedding server.</param>
-/// <param name="reranker">The client of the reranker.</param>
+/// <param name="queryModels">The embedding of the query and the reranker.</param>
 /// <param name="searchOptions">The options of the search.</param>
-/// <param name="rerankOptions">The options of the reranker.</param>
-/// <param name="logger">The logger.</param>
+/// <param name="embeddingOptions">The options of the embedding model, for the template of the query.</param>
 public sealed partial class SearchService(
     SearchStore store,
     SourceStore sources,
-    EmbeddingModelRegistry models,
-    IEmbeddingClient embedder,
-    IRerankClient reranker,
+    QueryModels queryModels,
     IOptionsMonitor<SearchOptions> searchOptions,
-    IOptionsMonitor<RerankOptions> rerankOptions,
-    ILogger<SearchService> logger)
+    IOptionsMonitor<EmbeddingOptions> embeddingOptions)
 {
     /// <summary>
     /// Searches the knowledge base.
@@ -51,42 +44,13 @@ public sealed partial class SearchService(
             throw new ArgumentException("The query is empty.");
 
         SearchOptions options = searchOptions.CurrentValue;
-        RerankOptions rerank = rerankOptions.CurrentValue;
         int limit = Math.Clamp(request.Limit ?? options.DefaultLimit, 1, options.MaxLimit);
         int[] sourceIds = await ResolveSourcesAsync(request.Sources, cancellationToken);
         string[] categories = await ResolveCategoriesAsync(request.Categories, cancellationToken);
         List<string> notes = [];
 
-        EmbeddingModel? model = null;
-        float[]? vector = null;
-        EmbeddingModelStatus status = await models.GetStatusAsync(cancellationToken);
-        if (status.Model is { } current)
-        {
-            // A busy or hung server must not hold the search. The full text search answers without it.
-            using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeout.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, options.QueryTimeoutSeconds)));
-            try
-            {
-                vector = (await embedder.EmbedAsync([current.FormatQuery(query)], timeout.Token))[0];
-                model = current;
-            }
-            catch (HttpRequestException exception)
-            {
-                models.Invalidate();
-                notes.Add($"The vector search did not work: {exception.Message}");
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                notes.Add($"The vector search did not work: the embedding server did not answer in {options.QueryTimeoutSeconds} seconds.");
-            }
-        }
-        else
-        {
-            notes.Add($"The vector search did not work: {status.Problem}");
-        }
-
-        bool useReranker = (request.Rerank ?? rerank.Enabled) && rerank.Candidates > 1;
-        int candidates = useReranker ? Math.Max(limit, rerank.Candidates) : limit;
+        (EmbeddingModel? model, float[]? vector) = await queryModels.EmbedAsync(query, embeddingOptions.CurrentValue.QueryTemplate, notes, cancellationToken);
+        (bool useReranker, int candidates) = queryModels.PlanRerank(request.Rerank, limit);
         // The copies of a text take places of the candidates, so the store finds twice as many.
         IReadOnlyList<SearchHit> found = await store.SearchAsync(model, vector, query, sourceIds, categories, candidates * 2, options, cancellationToken);
         IReadOnlyList<SearchHit> hits = [.. MergeCopies(found).Take(candidates)];
@@ -95,19 +59,14 @@ public sealed partial class SearchService(
         bool reranked = false;
         if (useReranker && hits.Count > 1)
         {
-            try
+            IReadOnlyList<double>? scores = await queryModels.RerankAsync(query, [.. hits.Select(static hit => TextChunk.Compose(hit.Heading, hit.Body))], notes, cancellationToken);
+            if (scores is not null)
             {
-                IReadOnlyList<double> scores = await reranker.RerankAsync(query, [.. hits.Select(static hit => TextChunk.Compose(hit.Heading, hit.Body))], cancellationToken);
                 for (int i = 0; i < hits.Count; i++)
                     hits[i].RerankScore = scores[i];
 
                 hits = [.. hits.OrderByDescending(static hit => hit.RerankScore).ThenByDescending(static hit => hit.Score)];
                 reranked = true;
-            }
-            catch (Exception exception) when (exception is HttpRequestException || (exception is TaskCanceledException && !cancellationToken.IsCancellationRequested))
-            {
-                logger.LogWarning("The reranker did not work: {Reason}", exception.Message);
-                notes.Add($"The reranker did not work: {exception.Message}");
             }
         }
 

@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 
 using Npgsql;
 
+using ProjectRag.Core.Code;
 using ProjectRag.Core.Documents;
 using ProjectRag.Core.Embeddings;
 using ProjectRag.Core.Indexing;
@@ -397,6 +398,163 @@ public sealed class KnowledgeBaseTests : IAsyncLifetime
 
         Assert.False(status.IsReady);
         Assert.Contains("cosine", status.Problem, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Registry_FindsTheSameModelWithAnotherQueryTemplate()
+    {
+        ServiceProvider services = RequireDatabase();
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        EmbeddingModelStatus first = await services.GetRequiredService<EmbeddingModelRegistry>().GetStatusAsync(cancellationToken);
+        EmbeddingOptions changed = new()
+        {
+            Model = services.GetRequiredService<IOptionsMonitor<EmbeddingOptions>>().CurrentValue.Model,
+            QueryTemplate = "Another query: {text}",
+            CodeQueryTemplate = "Another code query: {text}",
+        };
+
+        using EmbeddingModelRegistry other = new(
+            new FakeEmbeddingClient(0),
+            services.GetRequiredService<EmbeddingStore>(),
+            new FixedOptions<EmbeddingOptions>(changed),
+            TimeProvider.System,
+            NullLogger<EmbeddingModelRegistry>.Instance);
+        EmbeddingModelStatus second = await other.GetStatusAsync(cancellationToken);
+
+        Assert.True(first.IsReady);
+        Assert.True(second.IsReady, second.Problem);
+        Assert.Equal(first.Model!.ModelId, second.Model!.ModelId);
+    }
+
+    [Fact]
+    public async Task CodeSource_IndexesTheExactTextAndTheGrepFindsIt()
+    {
+        ServiceProvider services = RequireDatabase();
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        Write("src/Scene.cs", "namespace Demo;\r\npublic sealed class Scene\r\n{\r\n    public int Count_1 = 50%;\r\n}\r\n");
+        Write("docs/guide.md", "# Guide\n\nThe Scene holds the objects of a level.\n");
+        Write("tasks.txt", "todo one\ntodo two\ntodo three\ntodo four\ntodo five\n");
+        File.WriteAllBytes(Path.Combine(_root, "data.bin"), [1, 2, 0, 3, 4]);
+        Write("big.json", "{\"a\": \"" + new string('x', 300_000) + "\"}");
+        Write("node_modules/lib/index.js", "class Scene {}");
+        Write(".hidden/secret.cs", "class Scene {}");
+        SourceStore sources = services.GetRequiredService<SourceStore>();
+        int sourceId = await sources.AddAsync(new SourceInput { Name = "demo", Kind = SourceKind.Code, RootPath = _root }, cancellationToken);
+        Indexer indexer = services.GetRequiredService<Indexer>();
+
+        IndexRun first = (await indexer.RunAsync(sourceId, null, cancellationToken))!;
+
+        Assert.Equal(IndexRun.Succeeded, first.Status);
+        Assert.Equal(3, first.DocumentsAdded);
+        Source source = (await sources.GetAsync(sourceId, null, cancellationToken))!;
+        Assert.Equal(SourceKind.Code, source.Kind);
+        Assert.Equal(SourceInput.DefaultCodeDotGlobs, source.DotGlobs);
+        Assert.Equal(3, source.DocumentCount);
+        DocumentStore documents = services.GetRequiredService<DocumentStore>();
+        (IReadOnlyList<DocumentSummary> items, _) = await documents.ListAsync([sourceId], string.Empty, string.Empty, 0, 10, cancellationToken);
+        Assert.Equal(["docs/guide.md", "src/Scene.cs", "tasks.txt"], items.Select(static item => item.Path).Order(StringComparer.Ordinal));
+        DocumentSummary scene = items.Single(static item => item.Path == "src/Scene.cs");
+        Assert.Equal("csharp", scene.Language);
+        Assert.Equal("Scene.cs", scene.Title);
+        Assert.True(scene.ChunkCount > 0);
+        Assert.Equal("markdown", items.Single(static item => item.Path == "docs/guide.md").Language);
+        Assert.True(items.Single(static item => item.Path == "docs/guide.md").ChunkCount > 0);
+        Assert.Equal("text", items.Single(static item => item.Path == "tasks.txt").Language);
+        CodeSearchService code = services.GetRequiredService<CodeSearchService>();
+        SearchResult found = await services.GetRequiredService<SearchService>().SearchAsync(new SearchRequest { Query = "objects of a level", Sources = ["demo"] }, cancellationToken);
+        Assert.Equal("docs/guide.md", found.Hits[0].Path);
+
+        CodeGrepResult literal = await code.GrepAsync(new CodeGrepRequest { Pattern = "Scene", Source = "demo", Path = "**/*.cs" }, cancellationToken);
+        CodeMatch hit = Assert.Single(literal.Matches);
+        Assert.Equal(("src/Scene.cs", "csharp", 2, 21, 5, "public sealed class Scene"), (hit.Path, hit.Language, hit.Line, hit.Column, hit.Length, hit.Text));
+        Assert.Equal(1, literal.FilesMatched);
+        Assert.False(literal.Truncated);
+
+        CodeGrepResult all = await code.GrepAsync(new CodeGrepRequest { Pattern = "scene", CaseSensitive = false }, cancellationToken);
+        Assert.Equal(["docs/guide.md", "src/Scene.cs"], all.Matches.Select(static match => match.Path));
+        Assert.Equal(2, all.FilesMatched);
+        Assert.Empty((await code.GrepAsync(new CodeGrepRequest { Pattern = "scene" }, cancellationToken)).Matches);
+        Assert.Single((await code.GrepAsync(new CodeGrepRequest { Pattern = "Scene", Language = "markdown" }, cancellationToken)).Matches);
+        Assert.Single((await code.GrepAsync(new CodeGrepRequest { Pattern = "Scene", Path = "Scene.cs" }, cancellationToken)).Matches);
+        Assert.Empty((await code.GrepAsync(new CodeGrepRequest { Pattern = "Scene", Path = "src/*.md" }, cancellationToken)).Matches);
+
+        // The marks of LIKE in the text are literal characters.
+        Assert.Equal(4, Assert.Single((await code.GrepAsync(new CodeGrepRequest { Pattern = "50%" }, cancellationToken)).Matches).Line);
+        Assert.Equal(4, Assert.Single((await code.GrepAsync(new CodeGrepRequest { Pattern = "Count_1" }, cancellationToken)).Matches).Line);
+        Assert.Empty((await code.GrepAsync(new CodeGrepRequest { Pattern = "Coun_1" }, cancellationToken)).Matches);
+
+        CodeGrepResult regex = await code.GrepAsync(new CodeGrepRequest { Pattern = @"class\s+(\w+)", IsRegex = true, SourceId = sourceId }, cancellationToken);
+        CodeMatch pattern = Assert.Single(regex.Matches);
+        Assert.Equal(("src/Scene.cs", 2, 15, "class Scene".Length), (pattern.Path, pattern.Line, pattern.Column, pattern.Length));
+
+        CodeGrepResult limited = await code.GrepAsync(new CodeGrepRequest { Pattern = "todo", Limit = 3 }, cancellationToken);
+        Assert.Equal(3, limited.Matches.Count);
+        Assert.True(limited.Truncated);
+        Assert.False((await code.GrepAsync(new CodeGrepRequest { Pattern = "todo", Limit = 5 }, cancellationToken)).Truncated);
+
+        CodeSearchException bad = await Assert.ThrowsAsync<CodeSearchException>(() => code.GrepAsync(new CodeGrepRequest { Pattern = "(", IsRegex = true }, cancellationToken));
+        Assert.Equal("Pattern", bad.Field);
+
+        CodeLines lines = (await code.ReadLinesAsync(scene.DocumentId, 2, 3, cancellationToken))!;
+        Assert.Equal((2, 3, 5), (lines.Start, lines.End, lines.LineCount));
+        Assert.Equal(["public sealed class Scene", "{"], lines.Lines);
+        Assert.Equal("csharp", lines.Document.Language);
+        CodeLines window = (await code.ReadLinesAsync(scene.DocumentId, 4, 100, cancellationToken))!;
+        Assert.Equal(["    public int Count_1 = 50%;", "}"], window.Lines);
+        Assert.Equal(5, window.End);
+        CodeLines beyond = (await code.ReadLinesAsync(scene.DocumentId, 9, null, cancellationToken))!;
+        Assert.Empty(beyond.Lines);
+        Assert.Null(await code.ReadLinesAsync(scene.DocumentId + 1000, 1, null, cancellationToken));
+    }
+
+    [Fact]
+    public async Task CodeSource_FollowsTheChangesOfTheFiles()
+    {
+        ServiceProvider services = RequireDatabase();
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        Write("a.cs", "class A {}\n");
+        Write("b.txt", "plain text\n");
+        Write("c.md", "# C\n\nA note.\n");
+        int sourceId = await services.GetRequiredService<SourceStore>().AddAsync(new SourceInput { Name = "demo", Kind = SourceKind.Code, RootPath = _root }, cancellationToken);
+        Indexer indexer = services.GetRequiredService<Indexer>();
+        CodeSearchService code = services.GetRequiredService<CodeSearchService>();
+        await indexer.RunAsync(sourceId, null, cancellationToken);
+
+        IndexRun same = (await indexer.RunAsync(sourceId, null, cancellationToken))!;
+        Assert.Equal(3, same.DocumentsUnchanged);
+
+        Write("a.cs", "class A {}\nclass Rotation {}\n");
+        File.WriteAllBytes(Path.Combine(_root, "b.txt"), [(byte)'a', 0, (byte)'b']);
+        File.Delete(Path.Combine(_root, "c.md"));
+        IndexRun changed = (await indexer.RunAsync(sourceId, null, cancellationToken))!;
+
+        Assert.Equal(1, changed.DocumentsUpdated);
+        Assert.Equal(2, changed.DocumentsRemoved);
+        CodeMatch match = Assert.Single((await code.GrepAsync(new CodeGrepRequest { Pattern = "Rotation" }, cancellationToken)).Matches);
+        Assert.Equal(("a.cs", 2), (match.Path, match.Line));
+        Assert.Empty((await code.GrepAsync(new CodeGrepRequest { Pattern = "plain" }, cancellationToken)).Matches);
+        Assert.Equal(1, (await services.GetRequiredService<SourceStore>().GetAsync(sourceId, null, cancellationToken))!.DocumentCount);
+    }
+
+    [Fact]
+    public async Task CodeSource_IsTheOnlyKindThatTheGrepReads()
+    {
+        ServiceProvider services = RequireDatabase();
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        Write("note.md", "# Note\n\nNeedle in the docs.\n");
+        SourceStore sources = services.GetRequiredService<SourceStore>();
+        int docsId = await sources.AddAsync(new SourceInput { Name = "docs", RootPath = _root }, cancellationToken);
+        await services.GetRequiredService<Indexer>().RunAsync(docsId, null, cancellationToken);
+        CodeSearchService code = services.GetRequiredService<CodeSearchService>();
+
+        Assert.Equal(SourceKind.Docs, (await sources.GetAsync(docsId, null, cancellationToken))!.Kind);
+        Assert.Empty((await code.GrepAsync(new CodeGrepRequest { Pattern = "Needle" }, cancellationToken)).Matches);
+        Assert.Equal("Source", (await Assert.ThrowsAsync<CodeSearchException>(() => code.GrepAsync(new CodeGrepRequest { Pattern = "Needle", Source = "docs" }, cancellationToken))).Field);
+        Assert.Equal("SourceId", (await Assert.ThrowsAsync<CodeSearchException>(() => code.GrepAsync(new CodeGrepRequest { Pattern = "Needle", SourceId = docsId }, cancellationToken))).Field);
+        Assert.Equal("Source", (await Assert.ThrowsAsync<CodeSearchException>(() => code.GrepAsync(new CodeGrepRequest { Pattern = "Needle", Source = "missing" }, cancellationToken))).Field);
+        DocumentSummary note = (await services.GetRequiredService<DocumentStore>().FindAsync("docs", "note.md", cancellationToken))!;
+        Assert.Null(note.Language);
+        Assert.Null(await code.ReadLinesAsync(note.DocumentId, 1, null, cancellationToken));
     }
 
     private ServiceProvider RequireDatabase()

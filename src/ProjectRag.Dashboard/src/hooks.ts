@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useEffectEvent, useState } from 'react';
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react';
 
 export interface Loaded<T> {
   data: T | undefined;
@@ -12,15 +12,20 @@ export interface Loaded<T> {
  */
 export function useLoad<T>(load: () => Promise<T>, keys: readonly unknown[], intervalMs = 0): Loaded<T> {
   const [data, setData] = useState<T>();
-  const [error, setError] = useState<string>();
+  const [failure, setFailure] = useState<{ message: string; keys: readonly unknown[] }>();
   const [version, setVersion] = useState(0);
   const loadLatest = useEffectEvent(load);
+  const lastKeys = useRef(keys);
 
   const reload = useCallback(() => setVersion((value) => value + 1), []);
 
   useEffect(() => {
     let active = true;
     let busy = false;
+    if (!sameKeys(lastKeys.current, keys)) {
+      lastKeys.current = keys;
+      setFailure(undefined);
+    }
     const run = async () => {
       // A slow server must not collect a pile of polls.
       if (busy) return;
@@ -29,10 +34,10 @@ export function useLoad<T>(load: () => Promise<T>, keys: readonly unknown[], int
         const value = await loadLatest();
         if (active) {
           setData(value);
-          setError(undefined);
+          setFailure(undefined);
         }
       } catch (exception) {
-        if (active) setError(exception instanceof Error ? exception.message : String(exception));
+        if (active) setFailure({ message: exception instanceof Error ? exception.message : String(exception), keys });
       } finally {
         busy = false;
       }
@@ -48,5 +53,10 @@ export function useLoad<T>(load: () => Promise<T>, keys: readonly unknown[], int
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...keys, version, intervalMs]);
 
+  const error = failure && sameKeys(failure.keys, keys) ? failure.message : undefined;
   return { data, error, reload };
+}
+
+function sameKeys(a: readonly unknown[], b: readonly unknown[]): boolean {
+  return a.length === b.length && a.every((value, index) => Object.is(value, b[index]));
 }
