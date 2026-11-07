@@ -115,7 +115,7 @@ public sealed class EmbeddingModelRegistry(IEmbeddingClient client, EmbeddingSto
         return new EmbeddingModelStatus(new EmbeddingModel(modelId, settings.Model, probe.Length, settings.DocumentTemplate), null);
     }
 
-    private static double Cosine(float[] a, float[] b)
+    internal static double Cosine(float[] a, float[] b)
     {
         if (a.Length != b.Length)
             return 0;

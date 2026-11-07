@@ -1,4 +1,4 @@
-import { formatDate, formatDuration, formatNumber } from '../format';
+import { formatCost, formatDate, formatDuration, formatNumber } from '../format';
 import type { IndexRun } from '../types';
 import { Empty, RunBadge } from './Common';
 
@@ -22,6 +22,8 @@ export function RunsTable({ runs }: { runs: IndexRun[] }) {
             <th className="num">Failed</th>
             <th className="num">Vectors reused</th>
             <th className="num">Embedded</th>
+            <th className="num">Remote</th>
+            <th className="num">Remote cost</th>
           </tr>
         </thead>
         <tbody>
@@ -41,6 +43,8 @@ export function RunsTable({ runs }: { runs: IndexRun[] }) {
               <td className="num">{formatNumber(run.documentsFailed)}</td>
               <td className="num">{formatNumber(run.chunksReused)}</td>
               <td className="num">{formatNumber(run.chunksEmbedded)}</td>
+              <td className="num">{formatNumber(run.chunksEmbeddedRemote)}</td>
+              <td className="num">{run.chunksEmbeddedRemote > 0 ? formatCost(run.remoteCost) : '—'}</td>
             </tr>
           ))}
         </tbody>

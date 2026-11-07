@@ -29,6 +29,10 @@ export function formatNumber(value: number): string {
   return number.format(value);
 }
 
+export function formatCost(value: number): string {
+  return `$${value.toFixed(value < 0.01 ? 5 : 3)}`;
+}
+
 export function formatBytes(value: number): string {
   if (value < 1024) return `${value} B`;
   const units = ['KB', 'MB', 'GB'];

@@ -266,6 +266,14 @@ The server reads `src/ProjectRag.Server/appsettings.json`. Put the settings of o
 | `Embedding:QueryTemplate` | an English instruction | The template of a query of the documentation search. `{text}` marks the query |
 | `Embedding:CodeQueryTemplate` | an English instruction | The template of a query of `code_search`. The templates of the queries do not change the stored vectors |
 | `Embedding:BatchSize`, `Embedding:Parallelism` | 4, 2 | The texts in one request and the requests in flight |
+| `Embedding:Remote:Enabled` | `false` | The indexer may embed with a remote API of the OpenAI kind next to the local server. The search never uses it |
+| `Embedding:Remote:Sources` | `[]` | The names of the sources that use the remote API. An empty list means no source |
+| `Embedding:Remote:BaseUrl`, `Embedding:Remote:Model` | `https://openrouter.ai/api/`, `qwen/qwen3-embedding-4b` | The API and the name of the model there. The client posts to `v1/embeddings` |
+| `Embedding:Remote:ApiKeyVariable` | `OPENROUTER_API_KEY` | The name of the environment variable that holds the API key. Without a key the remote API stays off and the run shows a warning |
+| `Embedding:Remote:Parallelism`, `Embedding:Remote:BatchSize` | 4, 32 | The requests in flight and the texts in one request |
+| `Embedding:Remote:TimeoutSeconds`, `Embedding:Remote:Retries` | 120, 2 | The time limit of a request, and the repeats after the status 429 or 5xx. The pause doubles from one second and follows `Retry-After` |
+| `Embedding:Remote:MaxCostPerRun` | 1.0 | The cost in USD at which the remote workers of a run stop. The local server embeds the rest |
+| `Embedding:Remote:PricePerMillionTokens` | 0.02 | The price in USD of one million tokens. The cost of an answer is the larger of the reported `usage.cost` and the tokens times this price. Without tokens, the client estimates them as the characters of the texts divided by 3 |
 | `Rerank:Enabled` | `true` | The search orders its hits with the reranker |
 | `Rerank:BaseUrl` | `http://127.0.0.1:8196` | The reranker |
 | `Rerank:Candidates` | 30 | The candidates that the reranker orders |
@@ -280,6 +288,7 @@ The server reads `src/ProjectRag.Server/appsettings.json`. Put the settings of o
 | `Chunking:MinChars` | 400 | A shorter chunk at the end of a section takes in the next small sections of the third level or deeper: its subsections and its siblings. A section that fits whole with its subsections under `MaxChars` becomes one chunk. A short text under a title also takes in the small subsections that follow it. 0 keeps each chunk in one section |
 | `Chunking:MaxFileBytes` | 64 MB | The size of the largest file |
 | `Indexing:ScanIntervalMinutes` | 10 | The interval of the scans of all sources. 0 turns them off |
+| `Indexing:EmbeddingRoundSize` | 128 | The chunks of one round of embeddings. A source with the remote API uses the larger of this value and 4 × `Remote:Parallelism` × `Remote:BatchSize` |
 | `Indexing:PageRefreshHours` | 24 | The hours between two requests of a web page |
 | `Code:GitPath` | `git` | The Git program that lists the files of a code source |
 | `Code:GitTimeoutSeconds` | 60 | The time limit of a Git command |

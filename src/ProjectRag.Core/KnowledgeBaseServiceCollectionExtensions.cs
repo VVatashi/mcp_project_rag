@@ -49,6 +49,7 @@ public static class KnowledgeBaseServiceCollectionExtensions
 
         services.Configure<ChunkingOptions>(configuration.GetSection(ChunkingOptions.SectionName));
         services.Configure<EmbeddingOptions>(configuration.GetSection(EmbeddingOptions.SectionName));
+        services.Configure<RemoteEmbeddingOptions>(configuration.GetSection(RemoteEmbeddingOptions.SectionName));
         services.Configure<RerankOptions>(configuration.GetSection(RerankOptions.SectionName));
         services.Configure<IndexingOptions>(configuration.GetSection(IndexingOptions.SectionName));
         services.Configure<SearchOptions>(configuration.GetSection(SearchOptions.SectionName));
@@ -58,6 +59,8 @@ public static class KnowledgeBaseServiceCollectionExtensions
 
         services.AddHttpClient(LlamaEmbeddingClient.HttpClientName, static (provider, http) =>
             http.Timeout = TimeSpan.FromSeconds(Math.Max(1, provider.GetRequiredService<IOptions<EmbeddingOptions>>().Value.TimeoutSeconds)));
+        services.AddHttpClient(RemoteEmbeddingClient.HttpClientName, static (provider, http) =>
+            http.Timeout = TimeSpan.FromSeconds(Math.Max(1, provider.GetRequiredService<IOptions<RemoteEmbeddingOptions>>().Value.TimeoutSeconds)));
         services.AddHttpClient(LlamaRerankClient.HttpClientName, static (provider, http) =>
             http.Timeout = TimeSpan.FromSeconds(Math.Max(1, provider.GetRequiredService<IOptions<RerankOptions>>().Value.TimeoutSeconds)));
         // A page of documentation has no reason to take long. The name in User-Agent lets the owner of a site see who reads it.
@@ -68,6 +71,8 @@ public static class KnowledgeBaseServiceCollectionExtensions
             http.DefaultRequestHeaders.UserAgent.ParseAdd("ProjectRag/1.0");
         }).ConfigurePrimaryHttpMessageHandler(static () => new HttpClientHandler { AutomaticDecompression = DecompressionMethods.All });
         services.AddSingleton<IEmbeddingClient, LlamaEmbeddingClient>();
+        services.AddSingleton<IRemoteEmbeddingClient, RemoteEmbeddingClient>();
+        services.AddSingleton<RemoteEmbeddingGuard>();
         services.AddSingleton<IPageClient, HttpPageClient>();
         services.AddSingleton<IRerankClient, LlamaRerankClient>();
 

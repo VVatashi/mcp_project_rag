@@ -2,10 +2,20 @@
 
 export interface KnowledgeStatus {
   database: string | null;
-  embedding: { url: string; name: string; modelId: number | null; dims: number | null; problem: string | null };
+  embedding: { url: string; name: string; modelId: number | null; dims: number | null; problem: string | null; remote: RemoteEmbedding };
   reranker: { url: string; enabled: boolean; healthy: boolean };
   counts: { sources: number; documents: number; chunks: number; embeddedChunks: number } | null;
   indexer: { current: IndexRun | null; queued: number[] };
+}
+
+export interface RemoteEmbedding {
+  enabled: boolean;
+  model: string;
+  sources: string[];
+  unavailable: string | null;
+  guardPassed: boolean | null;
+  problem: string | null;
+  checkedAt: string | null;
 }
 
 export type SourceKind = 'docs' | 'code';
@@ -79,6 +89,8 @@ export interface IndexRun {
   documentsFailed: number;
   chunksReused: number;
   chunksEmbedded: number;
+  chunksEmbeddedRemote: number;
+  remoteCost: number;
   warning: string | null;
   error: string | null;
 }
