@@ -147,7 +147,7 @@ public sealed class CodeTierSearchTests : IAsyncLifetime
 
         IndexRun first = (await indexer.RunAsync(sourceId, null, cancellationToken))!;
         Assert.Equal((3, 0), (first.ChunksEmbedded, first.ChunksReused));
-        Assert.Equal("code:2;100;0;2;BlockChunker:1", await ReadVersionAsync(services, "Items.cs", cancellationToken));
+        Assert.Equal("code:2;100;0;2;1000;BlockChunker:1", await ReadVersionAsync(services, "Items.cs", cancellationToken));
 
         IndexRun same = (await indexer.RunAsync(sourceId, null, cancellationToken))!;
         Assert.Equal((1, 0, 0), (same.DocumentsUnchanged, same.ChunksEmbedded, same.ChunksReused));
@@ -160,7 +160,33 @@ public sealed class CodeTierSearchTests : IAsyncLifetime
         _blocks.Version = 2;
         IndexRun newChunker = (await indexer.RunAsync(sourceId, null, cancellationToken))!;
         Assert.Equal((1, 3, 0), (newChunker.DocumentsUpdated, newChunker.ChunksReused, newChunker.ChunksEmbedded));
-        Assert.Equal("code:2;100;0;2;BlockChunker:2", await ReadVersionAsync(services, "Items.cs", cancellationToken));
+        Assert.Equal("code:2;100;0;2;1000;BlockChunker:2", await ReadVersionAsync(services, "Items.cs", cancellationToken));
+    }
+
+    [Fact]
+    public async Task Indexer_StoresADataFileWithoutChunksAndDoesNotReadItAgain()
+    {
+        ServiceProvider services = RequireDatabase();
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        string atlas = "{\"glyphs\": [" + string.Join(", ", Enumerable.Range(1000, 400)) + "]}\n";
+        Write("fonts/atlas.json", atlas);
+        Write("config/app.json", "{\n  \"host\": \"SceneHost\"\n}\n");
+        int sourceId = await services.GetRequiredService<SourceStore>().AddAsync(new SourceInput { Name = "demo", Kind = SourceKind.Code, RootPath = _root }, cancellationToken);
+        Indexer indexer = services.GetRequiredService<Indexer>();
+
+        IndexRun first = (await indexer.RunAsync(sourceId, null, cancellationToken))!;
+
+        Assert.Equal((IndexRun.Succeeded, 2), (first.Status, first.DocumentsAdded));
+        List<ChunkRow> rows = await ReadChunksAsync(services, cancellationToken);
+        Assert.Equal("config/app.json", Assert.Single(rows.Select(static row => row.Path).Distinct()));
+        Assert.Equal(rows.Count, first.ChunksEmbedded);
+        Assert.NotEqual(string.Empty, await ReadVersionAsync(services, "fonts/atlas.json", cancellationToken));
+        CodeGrepResult grep = await services.GetRequiredService<CodeSearchService>().GrepAsync(new CodeGrepRequest { Pattern = "1399", Path = "fonts/atlas.json" }, cancellationToken);
+        Assert.Equal("fonts/atlas.json", Assert.Single(grep.Matches).Path);
+
+        IndexRun second = (await indexer.RunAsync(sourceId, null, cancellationToken))!;
+
+        Assert.Equal((2, 0, 0, 0), (second.DocumentsUnchanged, second.DocumentsAdded, second.DocumentsUpdated, second.ChunksEmbedded));
     }
 
     [Fact]

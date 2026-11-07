@@ -17,7 +17,7 @@ public sealed class LineCodeChunkerTests
     public void Split_ReportsTheChunkerAndItsHeading()
     {
         Assert.True(Chunker.Supports("anything"));
-        Assert.Equal(1, Chunker.Version);
+        Assert.Equal(2, Chunker.Version);
         CodeChunk chunk = Assert.Single(Chunker.Split("src/a.glsl", "void main() {}\n", new CodeChunkingOptions()));
         Assert.Equal("src/a.glsl", chunk.Heading);
     }
@@ -36,12 +36,12 @@ public sealed class LineCodeChunkerTests
     [Fact]
     public void Split_StartsANewChunkWhenTheNextBlockDoesNotFit()
     {
-        const string content = "0123456789\n\nabcdefghij\n\nKLMNOPQRST\n";
+        const string content = "ABCDEFGHIJ\n\nabcdefghij\n\nKLMNOPQRST\n";
 
         IReadOnlyList<CodeChunk> chunks = Chunker.Split("a.txt", content, new CodeChunkingOptions { MaxChars = 24 });
 
         Assert.Equal(2, chunks.Count);
-        Assert.Equal("0123456789\n\nabcdefghij", content[chunks[0].Start..chunks[0].End]);
+        Assert.Equal("ABCDEFGHIJ\n\nabcdefghij", content[chunks[0].Start..chunks[0].End]);
         Assert.Equal((1, 3), (chunks[0].LineStart, chunks[0].LineEnd));
         Assert.Equal("KLMNOPQRST", content[chunks[1].Start..chunks[1].End]);
         Assert.Equal((5, 5), (chunks[1].LineStart, chunks[1].LineEnd));
@@ -53,7 +53,7 @@ public sealed class LineCodeChunkerTests
     {
         string content = string.Join('\n', Enumerable.Range(1, 10).Select(static i => $"line{i:D2}")) + "\n";
 
-        IReadOnlyList<CodeChunk> chunks = Chunker.Split("a.txt", content, new CodeChunkingOptions { MaxChars = 20, OverlapLines = 1 });
+        IReadOnlyList<CodeChunk> chunks = Chunker.Split("a.txt", content, new CodeChunkingOptions { MaxChars = 32, OverlapLines = 1 });
 
         Assert.Equal([(1, 3), (3, 5), (5, 7), (7, 9), (9, 10)], chunks.Select(static chunk => (chunk.LineStart, chunk.LineEnd)));
         Assert.Equal([0, 6, 6, 6, 6], chunks.Select(static chunk => chunk.OverlapChars));
@@ -83,6 +83,28 @@ public sealed class LineCodeChunkerTests
         Assert.Equal(["head", new string('x', 30), new string('x', 30), new string('x', 30), new string('x', 10) + "\n\ntail"], chunks.Select(chunk => content[chunk.Start..chunk.End]));
         Assert.Equal([1, 3, 3, 3, 3], chunks.Select(static chunk => chunk.LineStart));
         Assert.Equal([1, 3, 3, 3, 5], chunks.Select(static chunk => chunk.LineEnd));
+    }
+
+    [Fact]
+    public void Split_CountsADigitAsThreeCharacters()
+    {
+        string content = string.Concat(Enumerable.Repeat("1234567890", 300)) + "\n";
+
+        IReadOnlyList<CodeChunk> chunks = Chunker.Split("a.json", content, new CodeChunkingOptions { MaxChars = 900 });
+
+        AssertInvariants(content, chunks, 900);
+        Assert.Equal(Enumerable.Repeat(300, 10), chunks.Select(static chunk => chunk.End - chunk.Start));
+    }
+
+    [Fact]
+    public void Split_KeepsADigitBlockAndALongDigitLineWithinTheWeightedLimit()
+    {
+        string content = "1234567890\n1234567890\n1234567890\n\n" + new string('7', 100) + "\nabc 12 def\n";
+
+        IReadOnlyList<CodeChunk> chunks = Chunker.Split("a.txt", content, new CodeChunkingOptions { MaxChars = 60, OverlapLines = 1 });
+
+        AssertInvariants(content, chunks, 60);
+        Assert.True(chunks.Count > 4);
     }
 
     [Fact]
@@ -128,6 +150,7 @@ public sealed class LineCodeChunkerTests
         {
             CodeChunk chunk = chunks[i];
             Assert.InRange(chunk.End - chunk.Start, 1, maxChars);
+            Assert.InRange(content[chunk.Start..chunk.End].Sum(static c => char.IsAsciiDigit(c) ? 3 : 1), 1, maxChars);
             Assert.True(chunk.Start >= 0 && chunk.End <= content.Length);
             Assert.Equal(1 + content[..chunk.Start].Count(static c => c == '\n'), chunk.LineStart);
             Assert.Equal(1 + content[..(chunk.End - 1)].Count(static c => c == '\n'), chunk.LineEnd);

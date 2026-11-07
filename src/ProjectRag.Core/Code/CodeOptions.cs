@@ -31,6 +31,12 @@ public sealed class CodeOptions
     public long MaxConfigFileBytes { get; set; } = 256 * 1024;
 
     /// <summary>
+    /// Gets or sets the length of a line in characters over which a file of JSON, XML, YAML, TOML or text is a data file.
+    /// The indexer stores the document of a data file but makes no chunks and no vectors for it.
+    /// </summary>
+    public int DataLineChars { get; set; } = 1000;
+
+    /// <summary>
     /// Gets or sets the most minutes that the build of the code graph of one code source may run.
     /// </summary>
     public int GraphTimeoutMinutes { get; set; } = 15;

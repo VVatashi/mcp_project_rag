@@ -146,6 +146,7 @@ Both lists skip `bin`, `obj` and `node_modules`. They skip every path with a seg
 
 The indexer keeps the exact text of each file as a document with a language, such as `csharp` or `json`. It skips binary files and large files, see `Code:MaxFileBytes` and `Code:MaxConfigFileBytes`.
 A Markdown file goes through the pipeline of the documents, so `search` finds it. The other files have no chunks and no vectors. Only the exact search reads them.
+A JSON, XML, YAML, TOML or text file with a line longer than `Code:DataLineChars` is a data file, for example a font atlas. The indexer stores its document for `code_grep` and `code_read` but makes no chunks and no vectors for it.
 
 Two MCP tools read code sources:
 
@@ -294,6 +295,7 @@ The server reads `src/ProjectRag.Server/appsettings.json`. Put the settings of o
 | `Code:GitTimeoutSeconds` | 60 | The time limit of a Git command |
 | `Code:MaxFileBytes` | 1 MB | The largest file of a code source. The indexer skips a larger file |
 | `Code:MaxConfigFileBytes` | 256 KB | The largest JSON, XML, YAML or TOML file of a code source |
+| `Code:DataLineChars` | 1000 | The length of a line over which a JSON, XML, YAML, TOML or text file is a data file without chunks. A change reads the files again |
 | `Code:GraphTimeoutMinutes` | 15 | The time limit of the build of a code graph |
 | `Code:IncrementalMaxFiles` | 300 | The most files that one incremental update of the code graph may read. A larger change builds the whole graph. 0 turns updates off |
 | `Watch:Enabled` | true | Watch the folders of the code sources for changes |

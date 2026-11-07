@@ -33,7 +33,7 @@ public sealed partial class DocumentChunker
     };
 
     // The size of a digit of code, a formula or a table in characters.
-    private const int DigitWeight = 3;
+    internal const int DigitWeight = 3;
 
     private readonly int _maxChars;
     private readonly int _atomicMaxChars;

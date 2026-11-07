@@ -90,14 +90,15 @@ public sealed class Indexer(
     ILogger<Indexer> logger)
 {
     /// <summary>
-    /// Gets the version of a code file: the layout of the stored chunks, the limits of the chunks and the chunker.
+    /// Gets the version of a code file: the layout of the stored chunks, the limits of the chunks, the line length of the data files and the chunker.
     /// A change of one of them reads the files again. A change of the reader of documents does not.
     /// </summary>
     /// <param name="options">The limits of the chunks.</param>
     /// <param name="chunker">The chunker of the language of the file.</param>
-    /// <returns>The version, for example <c>code:2;2400;400;2;LineCodeChunker:1</c>.</returns>
-    internal static string CodeFileVersion(CodeChunkingOptions options, ICodeChunker chunker) =>
-        string.Create(CultureInfo.InvariantCulture, $"code:2;{options.Fingerprint()};{chunker.GetType().Name}:{chunker.Version}");
+    /// <param name="dataLineChars">The value of <see cref="CodeOptions.DataLineChars"/>.</param>
+    /// <returns>The version, for example <c>code:2;2400;400;2;1000;LineCodeChunker:2</c>.</returns>
+    internal static string CodeFileVersion(CodeChunkingOptions options, ICodeChunker chunker, int dataLineChars) =>
+        string.Create(CultureInfo.InvariantCulture, $"code:2;{options.Fingerprint()};{dataLineChars};{chunker.GetType().Name}:{chunker.Version}");
 
     // The files of code sources that are binary or hold a NUL character have no document, so the stored size and time cannot skip them.
     // The indexer remembers their size and time in memory. A restart forgets them and reads each file once.
@@ -199,9 +200,9 @@ public sealed class Indexer(
     private async Task SyncFilesAsync(Source source, IndexRun run, CodeFileChanges changes, List<string> warnings, Action<IndexRun>? progress, CancellationToken cancellationToken)
     {
         ChunkingOptions options = chunking.CurrentValue;
-        Reader reader = new(source, new DocumentChunker(options), ParserVersion(options), await documents.GetFileStatesAsync(source.SourceId, cancellationToken), chunkers, codeChunking.CurrentValue);
-        bool isCode = source.Kind == SourceKind.Code;
         CodeOptions codeOptions = code.CurrentValue;
+        Reader reader = new(source, new DocumentChunker(options), ParserVersion(options), await documents.GetFileStatesAsync(source.SourceId, cancellationToken), chunkers, codeChunking.CurrentValue, codeOptions);
+        bool isCode = source.Kind == SourceKind.Code;
         IReadOnlyList<string> paths = isCode ? await codeFiles.ListAsync(source, cancellationToken) : SourceScanner.Scan(source);
         run.FilesSeen = paths.Count + source.Urls.Count;
         List<string> skipped = [];
@@ -397,7 +398,11 @@ public sealed class Indexer(
 
         string language = CodeLanguages.FromPath(path);
         DocumentFile file = new(hash, fileVersion, bytes.LongLength, modifiedAt, SourceScanner.Category(reader.Source, path), language);
-        List<CodeChunkRow> chunks = SplitCode(reader, path, language, content);
+        bool isData = CodeDataFiles.IsData(language, content, reader.CodeSettings);
+        if (isData)
+            logger.LogDebug("The indexer made no chunks for the data file {Path} of the code source {Source}: a line is longer than {Limit} characters.", path, reader.Source.Name, reader.CodeSettings.DataLineChars);
+
+        List<CodeChunkRow> chunks = isData ? [] : SplitCode(reader, path, language, content);
         run.ChunksReused += await documents.SaveCodeAsync(reader.Source.SourceId, path, Path.GetFileName(path), content, file, chunks, cancellationToken);
         if (state is null)
         {
@@ -908,13 +913,13 @@ public sealed class Indexer(
     private readonly record struct UnreadableFile(long SizeBytes, DateTime ModifiedAt);
 
     // The state of one run: the source, the chunker and the stored documents with their versions.
-    private sealed record Reader(Source Source, DocumentChunker Chunker, string ParserVersion, Dictionary<string, DocumentFileState> Known, CodeChunkers Chunkers, CodeChunkingOptions CodeOptions)
+    private sealed record Reader(Source Source, DocumentChunker Chunker, string ParserVersion, Dictionary<string, DocumentFileState> Known, CodeChunkers Chunkers, CodeChunkingOptions CodeOptions, ProjectRag.Core.Code.CodeOptions CodeSettings)
     {
         public (DocumentFileState? State, string FileVersion) State(string path)
         {
             string language = CodeLanguages.FromPath(path);
             if (Source.Kind == SourceKind.Code && language != CodeLanguages.Markdown)
-                return (Known.GetValueOrDefault(path), CodeFileVersion(CodeOptions, Chunkers.For(language)));
+                return (Known.GetValueOrDefault(path), CodeFileVersion(CodeOptions, Chunkers.For(language), CodeSettings.DataLineChars));
 
             return (Known.GetValueOrDefault(path), FileVersion(ParserVersion, SourceScanner.Replacements(Source, path)));
         }
