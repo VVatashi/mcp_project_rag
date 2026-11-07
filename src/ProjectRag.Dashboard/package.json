@@ -12,6 +12,7 @@
     "check-math": "node scripts/check-math.mjs"
   },
   "dependencies": {
+    "@hpcc-js/wasm-graphviz": "1.30.0",
     "katex": "0.16.47",
     "pdfjs-dist": "6.3.289",
     "react": "19.3.1",

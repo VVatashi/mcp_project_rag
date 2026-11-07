@@ -57,6 +57,7 @@ public sealed class SearchStore(Database database)
                     JOIN chunk c USING (chunk_id)
                     JOIN document d USING (document_id)
                     WHERE ce.model_id = {model.ModelId}
+                      AND c.kind = 'prose'
                       AND (cardinality(@SourceIds) = 0 OR d.source_id = ANY (@SourceIds))
                       AND (cardinality(@Categories) = 0 OR d.category = ANY (@Categories))
                       AND (cardinality(@Categories) > 0 OR NOT d.category = ANY (@HiddenCategories))
@@ -79,6 +80,7 @@ public sealed class SearchStore(Database database)
                 JOIN document d USING (document_id), q
                 WHERE numnode(q.tsq) > 0
                   AND c.tsv @@ q.tsq
+                  AND c.kind = 'prose'
                   AND (cardinality(@SourceIds) = 0 OR d.source_id = ANY (@SourceIds))
                   AND (cardinality(@Categories) = 0 OR d.category = ANY (@Categories))
                   AND (cardinality(@Categories) > 0 OR NOT d.category = ANY (@HiddenCategories))
@@ -104,11 +106,7 @@ public sealed class SearchStore(Database database)
         await using NpgsqlConnection connection = await database.OpenAsync(cancellationToken);
         await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
         if (hasVector)
-        {
-            string settings = string.Create(CultureInfo.InvariantCulture,
-                $"SET LOCAL hnsw.iterative_scan = 'relaxed_order'; SET LOCAL hnsw.ef_search = {Math.Clamp(options.Pool, 40, 1000)}");
-            await connection.ExecuteAsync(new CommandDefinition(settings, transaction: transaction, cancellationToken: cancellationToken));
-        }
+            await ConfigureVectorScanAsync(connection, transaction, options, cancellationToken);
 
         IEnumerable<SearchHit> hits = await connection.QueryAsync<SearchHit>(new CommandDefinition(
             sql,
@@ -126,6 +124,26 @@ public sealed class SearchStore(Database database)
             },
             transaction, cancellationToken: cancellationToken));
         return [.. hits];
+    }
+
+    /// <summary>
+    /// Turns on the iterative scan of the HNSW index for the current transaction.
+    /// </summary>
+    /// <remarks>
+    /// The HNSW index of a model holds the vectors of every kind of chunk, and the searches filter by kind and by source after the walk.
+    /// The iterative scan walks on until enough rows pass the filter. The limit of scanned tuples is raised, because the default of 20000
+    /// stops too early when the wanted kind is a small share of the index, such as the documentation next to a large code base.
+    /// </remarks>
+    /// <param name="connection">The connection.</param>
+    /// <param name="transaction">The transaction that holds the settings.</param>
+    /// <param name="options">The options of the search.</param>
+    /// <param name="cancellationToken">The token that cancels the command.</param>
+    /// <returns>A task that completes after the settings.</returns>
+    internal static Task ConfigureVectorScanAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, SearchOptions options, CancellationToken cancellationToken)
+    {
+        string settings = string.Create(CultureInfo.InvariantCulture,
+            $"SET LOCAL hnsw.iterative_scan = 'relaxed_order'; SET LOCAL hnsw.max_scan_tuples = 100000; SET LOCAL hnsw.ef_search = {Math.Clamp(options.Pool, 40, 1000)}");
+        return connection.ExecuteAsync(new CommandDefinition(settings, transaction: transaction, cancellationToken: cancellationToken));
     }
 
     /// <summary>

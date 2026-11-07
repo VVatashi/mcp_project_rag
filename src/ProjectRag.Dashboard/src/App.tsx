@@ -4,6 +4,10 @@ import { getToken, setToken } from './api';
 import { numberOrNull } from './format';
 import { AnchorPage } from './pages/AnchorPage';
 import { ChunkPage } from './pages/ChunkPage';
+import { CodeDiagramPage } from './pages/CodeDiagramPage';
+import { CodeFilePage } from './pages/CodeFilePage';
+import { CodePage } from './pages/CodePage';
+import { CodeSymbolPage } from './pages/CodeSymbolPage';
 import { DocumentPage } from './pages/DocumentPage';
 import { DocumentsPage } from './pages/DocumentsPage';
 import { SearchPage } from './pages/SearchPage';
@@ -13,6 +17,7 @@ import { StatusPage } from './pages/StatusPage';
 const sections = [
   { route: '/status', label: 'Status' },
   { route: '/search', label: 'Search' },
+  { route: '/code', label: 'Code' },
   { route: '/sources', label: 'Sources' },
   { route: '/documents', label: 'Documents' },
 ] as const;
@@ -35,6 +40,25 @@ function AnchorRoute() {
   const [parameters] = useSearchParams();
   const name = parameters.get('name');
   return id === null || !name ? <Navigate to="/documents" replace /> : <AnchorPage documentId={id} name={name} />;
+}
+
+function CodeFileRoute() {
+  const id = numberOrNull(useParams().documentId);
+  const [parameters] = useSearchParams();
+  const lineValue = numberOrNull(parameters.get('line'));
+  const endValue = numberOrNull(parameters.get('end'));
+  const line = lineValue !== null && lineValue >= 1 ? Math.floor(lineValue) : null;
+  const end = line !== null && endValue !== null && endValue > line ? Math.floor(endValue) : null;
+  return id === null ? <Navigate to="/code" replace /> : <CodeFilePage key={`${id}:${line}:${end}`} documentId={id} line={line} end={end} />;
+}
+
+function CodeSymbolRoute() {
+  const [parameters] = useSearchParams();
+  const sourceId = numberOrNull(parameters.get('source'));
+  const docId = parameters.get('id');
+  const project = parameters.get('project');
+  if (sourceId === null || !docId) return <Navigate to="/code?tab=symbols" replace />;
+  return <CodeSymbolPage key={`${sourceId}:${docId}:${project ?? ''}`} sourceId={sourceId} docId={docId} project={project} />;
 }
 
 function DocumentsRoute() {
@@ -74,6 +98,10 @@ export function App() {
             <Route path="/" element={<Navigate to="/status" replace />} />
             <Route path="/status" element={<StatusPage />} />
             <Route path="/search" element={<SearchPage />} />
+            <Route path="/code" element={<CodePage />} />
+            <Route path="/code/symbol" element={<CodeSymbolRoute />} />
+            <Route path="/code/diagram" element={<CodeDiagramPage />} />
+            <Route path="/code/files/:documentId" element={<CodeFileRoute />} />
             <Route path="/sources" element={<SourcesPage />} />
             <Route path="/documents" element={<DocumentsRoute />} />
             <Route path="/documents/:documentId/anchors" element={<AnchorRoute />} />

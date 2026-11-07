@@ -2,7 +2,9 @@ using System.Reflection;
 
 using ModelContextProtocol.Protocol;
 
+using ProjectRag.Code;
 using ProjectRag.Core;
+using ProjectRag.Core.Code.Graph;
 using ProjectRag.Core.Storage;
 using ProjectRag.Server;
 
@@ -21,6 +23,18 @@ builder.Services.Configure<ServerOptions>(builder.Configuration.GetSection(Serve
 builder.Services.AddKnowledgeBase(builder.Configuration);
 builder.Services.AddProblemDetails();
 
+// MSBuild must register before any of its types loads. Without a .NET SDK the code sources keep the exact search and get no graph.
+string? msbuildProblem = null;
+try
+{
+    MsBuildRegistration.Register(builder.Configuration[$"{CodeGraphOptions.SectionName}:{nameof(CodeGraphOptions.MsBuildPath)}"]);
+    builder.Services.AddRoslynCodeGraph(builder.Configuration);
+}
+catch (CodeGraphException exception)
+{
+    msbuildProblem = exception.Message;
+}
+
 string version = Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "0.0.0";
 builder.Services
     .AddMcpServer(options =>
@@ -33,6 +47,8 @@ builder.Services
     .WithTools<KnowledgeTools>();
 
 WebApplication app = builder.Build();
+if (msbuildProblem is not null)
+    app.Logger.LogWarning("The code graph is off: {Problem}", msbuildProblem);
 
 // A database that is down or old stops the start with the exit code 1, before the server opens its port.
 try

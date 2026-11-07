@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The Roslyn extractor of the code graph. It loads the projects of a code base with MSBuild and reads the symbols and the references. -->
+
+  <ItemGroup>
+    <ProjectReference Include="..\ProjectRag.Core\ProjectRag.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" />
+    <PackageReference Include="Microsoft.Build.Locator" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
+    <PackageReference Include="Microsoft.VisualStudio.SolutionPersistence" />
+  </ItemGroup>
+
+  <!-- The build check of the Locator fails when the project loads the runtime assets of MSBuild. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Build.Framework" ExcludeAssets="runtime" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

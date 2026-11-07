@@ -78,6 +78,44 @@ public sealed class SourceTests : IDisposable
         Assert.Same(SourceInput.DefaultExcludeGlobs, input.Excludes());
     }
 
+    [Fact]
+    public void Validate_TakesACodeSourceWithItsDefaults()
+    {
+        SourceInput input = new() { Name = "axion", Kind = SourceKind.Code, RootPath = _root };
+
+        Assert.Empty(input.Validate());
+        Assert.Same(SourceInput.DefaultCodeIncludeGlobs, input.Includes());
+        Assert.Same(SourceInput.DefaultCodeExcludeGlobs, input.Excludes());
+        Assert.Same(SourceInput.DefaultCodeDotGlobs, input.DotGlobsOrDefault());
+        Assert.Equal(["**/*"], input.Includes());
+        Assert.Contains("**/artifacts/**", input.Excludes());
+        Assert.Equal([".github/**/*.yml", ".github/**/*.yaml", ".editorconfig", ".config/*.json"], input.DotGlobsOrDefault());
+        Assert.Empty(new SourceInput { RootPath = _root, Kind = SourceKind.Code, DotGlobs = [] }.DotGlobsOrDefault());
+    }
+
+    [Fact]
+    public void Validate_KeepsTheDefaultsOfADocsSourceWhenTheKindIsLeftOut()
+    {
+        SourceInput input = new() { Name = "docs", RootPath = _root };
+
+        Assert.Empty(input.Validate());
+        Assert.Equal(SourceKind.Docs, input.EffectiveKind());
+        Assert.Same(SourceInput.DefaultIncludeGlobs, input.Includes());
+        Assert.Same(SourceInput.DefaultExcludeGlobs, input.Excludes());
+        Assert.Empty(input.DotGlobsOrDefault());
+    }
+
+    [Fact]
+    public void Validate_ChecksTheKindAndTheFolderOfACodeSource()
+    {
+        Assert.Contains(nameof(SourceInput.Kind), new SourceInput { Name = "a", RootPath = _root, Kind = "binary" }.Validate().Keys);
+        Assert.Contains(nameof(SourceInput.RootPath), new SourceInput { Name = "a", Kind = SourceKind.Code }.Validate().Keys);
+        Assert.Contains(nameof(SourceInput.RootPath), new SourceInput { Name = "a", Kind = SourceKind.Code, Urls = ["https://example.com/a.html"] }.Validate().Keys);
+        Assert.Contains(nameof(SourceInput.RootPath), new SourceInput { Name = "a", Kind = SourceKind.Code, RootPath = Path.Combine(_root, "missing") }.Validate().Keys);
+        Assert.Contains(nameof(SourceInput.Urls), new SourceInput { Name = "a", Kind = SourceKind.Code, RootPath = _root, Urls = ["https://example.com/a.html"] }.Validate().Keys);
+        Assert.Contains(nameof(SourceInput.DotGlobs), new SourceInput { Name = "a", Kind = SourceKind.Code, RootPath = _root, DotGlobs = [" "] }.Validate().Keys);
+    }
+
     private void Write(string path)
     {
         string full = Path.Combine(_root, path);

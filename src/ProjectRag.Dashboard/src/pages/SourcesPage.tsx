@@ -2,25 +2,47 @@ import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router';
 
 import { api } from '../api';
-import { Empty, ErrorBanner, Panel, Progress } from '../components/Common';
+import { Badge, Empty, ErrorBanner, Panel, Progress } from '../components/Common';
 import { RunsTable } from '../components/RunsTable';
 import { formatDate, formatNumber, percent } from '../format';
 import { useLoad } from '../hooks';
-import type { CategoryRule, Source, SourceInput, TextReplacement } from '../types';
+import type { CategoryRule, Source, SourceInput, SourceKind, TextReplacement } from '../types';
+
+const codeIncludeHint = '**/*';
+const codeExcludeHint = '**/artifacts/**\n**/package-lock.json\n**/packages.lock.json\n**/yarn.lock\n**/pnpm-lock.yaml\n**/*.min.js\n**/*.min.css\n**/*.map';
+const codeDotHint = '.github/**/*.yml\n.github/**/*.yaml\n.editorconfig\n.config/*.json';
 
 interface FormState {
   sourceId: number | null;
+  kind: SourceKind;
   name: string;
   description: string;
   rootPath: string;
   urls: string;
   includeGlobs: string;
   excludeGlobs: string;
+  dotGlobs: string;
   categoryRules: string;
   replacements: string;
+  buildProperties: string;
+  buildPropertiesOriginal: string;
 }
 
-const emptyForm: FormState = { sourceId: null, name: '', description: '', rootPath: '', urls: '', includeGlobs: '', excludeGlobs: '', categoryRules: '', replacements: '' };
+const emptyForm: FormState = {
+  sourceId: null,
+  kind: 'docs',
+  name: '',
+  description: '',
+  rootPath: '',
+  urls: '',
+  includeGlobs: '',
+  excludeGlobs: '',
+  dotGlobs: '',
+  categoryRules: '',
+  replacements: '',
+  buildProperties: '',
+  buildPropertiesOriginal: '',
+};
 
 // A rule of a category is a line "pattern = category", for example "ECMA-33*.pdf = csharp".
 function readRules(text: string): CategoryRule[] {
@@ -46,6 +68,24 @@ function readReplacements(text: string): TextReplacement[] {
   return value;
 }
 
+function readBuildProperties(text: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const line of lines(text)) {
+    const at = line.indexOf('=');
+    const name = at < 0 ? line : line.slice(0, at).trim();
+    if (at < 0 || !/^[A-Za-z0-9_.-]+$/.test(name)) throw new Error(`Wrong line "${line}". Write Name=value, for example Configuration=Release.`);
+    result[name] = line.slice(at + 1).trim();
+  }
+
+  return result;
+}
+
+function writeBuildProperties(properties: Record<string, string>): string {
+  return Object.entries(properties)
+    .map(([name, value]) => `${name}=${value}`)
+    .join('\n');
+}
+
 function writeRules(rules: CategoryRule[]): string {
   return rules.map((rule) => `${rule.pattern} = ${rule.category}`).join('\n');
 }
@@ -62,6 +102,7 @@ export function SourcesPage() {
   const runs = useLoad(() => api.runs(null, 15), [], 4000);
   const [form, setForm] = useState<FormState | null>(null);
   const [error, setError] = useState<string>();
+  const [propertiesError, setPropertiesError] = useState<string>();
   const [busy, setBusy] = useState(false);
 
   const act = async (action: () => Promise<unknown>) => {
@@ -80,18 +121,24 @@ export function SourcesPage() {
     }
   };
 
-  const edit = (source: Source) =>
+  const edit = (source: Source) => {
+    setPropertiesError(undefined);
     setForm({
       sourceId: source.sourceId,
+      kind: source.kind,
       name: source.name,
       description: source.description,
       rootPath: source.rootPath,
       urls: source.urls.join('\n'),
       includeGlobs: source.includeGlobs.join('\n'),
       excludeGlobs: source.excludeGlobs.join('\n'),
+      dotGlobs: source.dotGlobs.join('\n'),
       categoryRules: writeRules(source.categoryRules),
       replacements: source.replacements.length > 0 ? JSON.stringify(source.replacements, null, 2) : '',
+      buildProperties: writeBuildProperties(source.buildProperties ?? {}),
+      buildPropertiesOriginal: writeBuildProperties(source.buildProperties ?? {}),
     });
+  };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -104,16 +151,30 @@ export function SourcesPage() {
       return;
     }
 
+    const isCode = form.kind === 'code';
+    let buildProperties: Record<string, string> | null = null;
+    if (isCode && form.buildProperties !== form.buildPropertiesOriginal) {
+      try {
+        buildProperties = readBuildProperties(form.buildProperties);
+      } catch (exception) {
+        setPropertiesError(exception instanceof Error ? exception.message : String(exception));
+        return;
+      }
+    }
+    setPropertiesError(undefined);
     const input: SourceInput = {
+      kind: form.kind,
       name: form.name,
       description: form.description,
       rootPath: form.rootPath,
-      urls: lines(form.urls),
+      urls: isCode ? [] : lines(form.urls),
       includeGlobs: lines(form.includeGlobs),
       // An empty field keeps the default patterns for a new source.
       excludeGlobs: form.sourceId === null && !form.excludeGlobs.trim() ? null : lines(form.excludeGlobs),
+      dotGlobs: isCode ? (form.sourceId === null && !form.dotGlobs.trim() ? null : lines(form.dotGlobs)) : null,
       categoryRules: readRules(form.categoryRules),
       replacements,
+      buildProperties,
     };
     const saved = await act(() => (form.sourceId === null ? api.addSource(input) : api.updateSource(form.sourceId, input)));
     if (saved) setForm(null);
@@ -131,7 +192,10 @@ export function SourcesPage() {
       <Panel
         title="Sources"
         actions={
-          <button type="button" className="button button--primary" onClick={() => setForm(emptyForm)} disabled={form !== null}>
+          <button type="button" className="button button--primary" onClick={() => {
+              setPropertiesError(undefined);
+              setForm(emptyForm);
+            }} disabled={form !== null}>
             Add a source
           </button>
         }
@@ -139,6 +203,14 @@ export function SourcesPage() {
         {form && (
           <form className="form" onSubmit={(event) => void submit(event)}>
             <div className="form__row">
+              <label>
+                Kind
+                <select value={form.kind} disabled={form.sourceId !== null} onChange={(event) => setForm({ ...form, kind: event.target.value as SourceKind })}>
+                  <option value="docs">Docs</option>
+                  <option value="code">Code</option>
+                </select>
+                <small>{form.sourceId === null ? 'Docs are read as text and searched by meaning. Code is searched for exact text.' : 'The kind cannot change.'}</small>
+              </label>
               <label>
                 Name
                 <input
@@ -153,19 +225,25 @@ export function SourcesPage() {
               <label className="form__wide">
                 Folder
                 <input value={form.rootPath} onChange={(event) => setForm({ ...form, rootPath: event.target.value })} placeholder="C:\Docs\my-project" />
-                <small>The absolute path of a folder on this machine. A source of web pages only leaves it empty.</small>
+                <small>
+                  {form.kind === 'code'
+                    ? 'The absolute path of the root folder of the code.'
+                    : 'The absolute path of a folder on this machine. A source of web pages only leaves it empty.'}
+                </small>
               </label>
             </div>
-            <label>
-              Web pages
-              <textarea
-                rows={3}
-                value={form.urls}
-                onChange={(event) => setForm({ ...form, urls: event.target.value })}
-                placeholder="https://registry.khronos.org/KTX/specs/2.0/ktxspec.v2.html"
-              />
-              <small>One address per line. The indexer reads each page next to the files and requests it again after Indexing:PageRefreshHours, 24 hours by default.</small>
-            </label>
+            {form.kind === 'docs' && (
+              <label>
+                Web pages
+                <textarea
+                  rows={3}
+                  value={form.urls}
+                  onChange={(event) => setForm({ ...form, urls: event.target.value })}
+                  placeholder="https://registry.khronos.org/KTX/specs/2.0/ktxspec.v2.html"
+                />
+                <small>One address per line. The indexer reads each page next to the files and requests it again after Indexing:PageRefreshHours, 24 hours by default.</small>
+              </label>
+            )}
             <label>
               Description
               <input
@@ -181,7 +259,7 @@ export function SourcesPage() {
                   rows={4}
                   value={form.includeGlobs}
                   onChange={(event) => setForm({ ...form, includeGlobs: event.target.value })}
-                  placeholder={'Empty: Markdown, text, PDF and HTML\n**/*.md'}
+                  placeholder={form.kind === 'code' ? `Empty: ${codeIncludeHint}` : 'Empty: Markdown, text, PDF and HTML\n**/*.md'}
                 />
               </label>
               <label>
@@ -190,33 +268,71 @@ export function SourcesPage() {
                   rows={4}
                   value={form.excludeGlobs}
                   onChange={(event) => setForm({ ...form, excludeGlobs: event.target.value })}
-                  placeholder={'Empty: .git, node_modules, bin, obj\n**/drafts/**'}
+                  placeholder={form.kind === 'code' ? `Empty:\n${codeExcludeHint}` : 'Empty: .git, node_modules, bin, obj\n**/drafts/**'}
                 />
               </label>
             </div>
-            <label>
-              Categories
-              <textarea
-                rows={4}
-                value={form.categoryRules}
-                onChange={(event) => setForm({ ...form, categoryRules: event.target.value })}
-                placeholder={'ECMA-33*.pdf = csharp\nvkspec.pdf = vulkan'}
-              />
-              <small>A line "pattern = category" gives the matching documents a category. The first matching line wins. Other documents take the name of the source.</small>
-            </label>
-            <label>
-              Replacements
-              <textarea
-                rows={4}
-                className="mono"
-                value={form.replacements}
-                onChange={(event) => setForm({ ...form, replacements: event.target.value })}
-                placeholder={'[{ "pattern": "Metal-*.pdf", "find": "sparse_color-(Tv?)\\\\b", "replace": "sparse_color<$1>" }]'}
-              />
-              <small>
-                JSON: a pattern of the files, a regular expression of .NET and its replacement. They fix errors of a published file in its Markdown before the chunks. A change reads the matching files again.
-              </small>
-            </label>
+            {form.kind === 'code' && (
+              <label>
+                Dot files
+                <textarea
+                  rows={4}
+                  value={form.dotGlobs}
+                  onChange={(event) => setForm({ ...form, dotGlobs: event.target.value })}
+                  placeholder={`Empty:\n${codeDotHint}`}
+                />
+                <small>One pattern per line. Files and folders that start with a dot are skipped, except the ones that match these patterns.</small>
+              </label>
+            )}
+            {form.kind === 'code' && (
+              <label>
+                Build properties
+                <textarea
+                  rows={3}
+                  value={form.buildProperties}
+                  onChange={(event) => {
+                    setPropertiesError(undefined);
+                    setForm({ ...form, buildProperties: event.target.value });
+                  }}
+                  placeholder={'Configuration=Release\nDefineConstants=WINDOWS'}
+                  aria-invalid={propertiesError !== undefined}
+                />
+                {propertiesError ? (
+                  <small className="field-error" role="alert">
+                    {propertiesError}
+                  </small>
+                ) : (
+                  <small>One Name=value per line. These global MSBuild properties set the view of the build for the code graph.</small>
+                )}
+              </label>
+            )}
+            {form.kind === 'docs' && (
+              <>
+                <label>
+                  Categories
+                  <textarea
+                    rows={4}
+                    value={form.categoryRules}
+                    onChange={(event) => setForm({ ...form, categoryRules: event.target.value })}
+                    placeholder={'ECMA-33*.pdf = csharp\nvkspec.pdf = vulkan'}
+                  />
+                  <small>A line "pattern = category" gives the matching documents a category. The first matching line wins. Other documents take the name of the source.</small>
+                </label>
+                <label>
+                  Replacements
+                  <textarea
+                    rows={4}
+                    className="mono"
+                    value={form.replacements}
+                    onChange={(event) => setForm({ ...form, replacements: event.target.value })}
+                    placeholder={'[{ "pattern": "Metal-*.pdf", "find": "sparse_color-(Tv?)\\\\b", "replace": "sparse_color<$1>" }]'}
+                  />
+                  <small>
+                    JSON: a pattern of the files, a regular expression of .NET and its replacement. They fix errors of a published file in its Markdown before the chunks. A change reads the matching files again.
+                  </small>
+                </label>
+              </>
+            )}
             <div className="form__actions">
               <button type="submit" className="button button--primary" disabled={busy}>
                 {form.sourceId === null ? 'Add and index' : 'Save and index'}
@@ -247,7 +363,7 @@ export function SourcesPage() {
                 {sources.data.map((source) => (
                   <tr key={source.sourceId}>
                     <td>
-                      <strong>{source.name}</strong>
+                      <strong>{source.name}</strong> <Badge tone={source.kind === 'code' ? 'info' : 'muted'}>{source.kind}</Badge>
                       {source.description && <div className="muted small">{source.description}</div>}
                     </td>
                     <td className="mono small">

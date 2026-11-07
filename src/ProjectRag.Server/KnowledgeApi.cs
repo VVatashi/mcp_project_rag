@@ -1,7 +1,11 @@
 using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Mvc;
 
 using Npgsql;
 
+using ProjectRag.Core.Code;
+using ProjectRag.Core.Code.Diagrams;
+using ProjectRag.Core.Code.Graph;
 using ProjectRag.Core.Documents;
 using ProjectRag.Core.Embeddings;
 using ProjectRag.Core.Indexing;
@@ -53,10 +57,19 @@ internal static class KnowledgeApi
             }
         });
 
-        api.MapPut("/sources/{sourceId:int}", static async Task<Results<Ok<Source>, NotFound, ValidationProblem, Conflict<string>>> (int sourceId, SourceInput input, SourceStore sources, DocumentStore documents, IndexScheduler scheduler, CancellationToken cancellationToken) =>
+        api.MapPut("/sources/{sourceId:int}", static async Task<Results<Ok<Source>, NotFound, ValidationProblem, Conflict<string>>> (int sourceId, SourceInput input, SourceStore sources, DocumentStore documents, IndexScheduler scheduler, CodeGraphBuilder graphBuilder, CancellationToken cancellationToken) =>
         {
             Normalize(input);
-            if (input.Validate() is { Count: > 0 } errors)
+            if (await sources.GetAsync(sourceId, null, cancellationToken) is not { } existing)
+                return TypedResults.NotFound();
+
+            // An update that leaves the kind out keeps the kind of the source.
+            input.Kind ??= existing.Kind;
+            Dictionary<string, string[]> errors = input.Validate();
+            if (input.EffectiveKind() != existing.Kind)
+                errors[nameof(SourceInput.Kind)] = [$"The kind of a source cannot change. The source is a {existing.Kind} source."];
+
+            if (errors.Count > 0)
                 return TypedResults.ValidationProblem(errors);
 
             try
@@ -71,13 +84,26 @@ internal static class KnowledgeApi
 
             // The new rules give the stored documents their categories at once. A run of the indexer may wait for hours behind the vectors of a large source.
             Source source = (await sources.GetAsync(sourceId, null, cancellationToken))!;
+            if (existing.RootPath != source.RootPath)
+                graphBuilder.Release(existing);
+
             await documents.ApplyCategoriesAsync(source, cancellationToken);
             scheduler.Enqueue(sourceId);
             return TypedResults.Ok(source);
         });
 
-        api.MapDelete("/sources/{sourceId:int}", static async Task<Results<NoContent, NotFound>> (int sourceId, SourceStore sources, CancellationToken cancellationToken) =>
-            await sources.DeleteAsync(sourceId, cancellationToken) ? TypedResults.NoContent() : TypedResults.NotFound());
+        api.MapDelete("/sources/{sourceId:int}", static async Task<Results<NoContent, NotFound>> (int sourceId, SourceStore sources, CodeGraphBuilder graphBuilder, CancellationToken cancellationToken) =>
+        {
+            Source? existing = await sources.GetAsync(sourceId, null, cancellationToken);
+            if (!await sources.DeleteAsync(sourceId, cancellationToken))
+                return TypedResults.NotFound();
+
+            // The extractor keeps the loaded projects of a code base in memory until it is told to drop them.
+            if (existing is not null)
+                graphBuilder.Release(existing);
+
+            return TypedResults.NoContent();
+        });
 
         api.MapPost("/sources/{sourceId:int}/index", static async Task<Results<Accepted<IndexRequestResult>, NotFound>> (int sourceId, SourceStore sources, IndexScheduler scheduler, CancellationToken cancellationToken) =>
         {
@@ -144,6 +170,110 @@ internal static class KnowledgeApi
         api.MapGet("/chunks/{chunkId:long}", static async Task<Results<Ok<ChunkDetail>, NotFound>> (long chunkId, StructureStore structure, EmbeddingModelRegistry models, CancellationToken cancellationToken) =>
             await structure.GetChunkAsync(chunkId, await CurrentModelIdAsync(models, cancellationToken), cancellationToken) is { } chunk ? TypedResults.Ok(chunk) : TypedResults.NotFound());
 
+        api.MapGet("/code/grep", static async Task<Results<Ok<CodeGrepResult>, ValidationProblem>> (
+            string? pattern, int? sourceId, bool? regex, bool? caseSensitive, string? path, string? language, int? limit, CodeSearchService code, CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                return TypedResults.Ok(await code.GrepAsync(
+                    new CodeGrepRequest { Pattern = pattern ?? string.Empty, SourceId = sourceId, IsRegex = regex ?? false, CaseSensitive = caseSensitive ?? true, Path = path, Language = language, Limit = limit },
+                    cancellationToken));
+            }
+            catch (CodeSearchException exception)
+            {
+                return TypedResults.ValidationProblem(new Dictionary<string, string[]> { [exception.Field] = [exception.Message] });
+            }
+        });
+
+        api.MapGet("/code/lines", static async Task<Results<Ok<CodeLines>, NotFound>> (long documentId, int? start, int? end, CodeSearchService code, CancellationToken cancellationToken) =>
+            await code.ReadLinesAsync(documentId, start ?? 1, end, cancellationToken) is { } lines ? TypedResults.Ok(lines) : TypedResults.NotFound());
+
+        api.MapPost("/code/search", static async Task<Results<Ok<CodeSearchResult>, ValidationProblem>> (CodeSearchRequest request, CodeTierSearch search, CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                return TypedResults.Ok(await search.SearchAsync(request, cancellationToken));
+            }
+            catch (CodeSearchException exception)
+            {
+                return TypedResults.ValidationProblem(new Dictionary<string, string[]> { [exception.Field] = [exception.Message] });
+            }
+        });
+
+        api.MapGet("/code/graph", static async Task<Results<Ok<CodeGraphStatus>, NotFound, ValidationProblem>> (int? sourceId, CodeGraphService graph, CancellationToken cancellationToken) =>
+        {
+            if (sourceId is not { } id)
+                return TypedResults.ValidationProblem(new Dictionary<string, string[]> { ["sourceId"] = ["The source is required."] });
+
+            try
+            {
+                return await graph.GetStatusAsync(id, cancellationToken) is { } status ? TypedResults.Ok(status) : TypedResults.NotFound();
+            }
+            catch (CodeSearchException exception)
+            {
+                return TypedResults.ValidationProblem(new Dictionary<string, string[]> { [exception.Field] = [exception.Message] });
+            }
+        });
+
+        api.MapGet("/code/symbols", static async Task<Results<Ok<IReadOnlyList<SymbolMatch>>, ValidationProblem>> (
+            string? q, int? sourceId, string? kind, string? project, int? limit, CodeGraphService graph, CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                return TypedResults.Ok(await graph.SearchSymbolsAsync(q ?? string.Empty, sourceId, kind, project, limit ?? 50, cancellationToken));
+            }
+            catch (CodeSearchException exception)
+            {
+                return TypedResults.ValidationProblem(new Dictionary<string, string[]> { [exception.Field] = [exception.Message] });
+            }
+        });
+
+        api.MapGet("/code/symbols/{symbolId:int}", static async Task<Results<Ok<SymbolDetail>, NotFound>> (int symbolId, CodeGraphService graph, CancellationToken cancellationToken) =>
+            await graph.GetDetailAsync(symbolId, cancellationToken) is { } detail ? TypedResults.Ok(detail) : TypedResults.NotFound());
+
+        api.MapGet("/code/symbol", static async Task<Results<Ok<SymbolDetail>, NotFound, ValidationProblem>> (int? sourceId, string? docId, string? project, CodeGraphService graph, CancellationToken cancellationToken) =>
+        {
+            Dictionary<string, string[]> errors = [];
+            if (sourceId is null)
+                errors["sourceId"] = ["The source is required."];
+
+            if (string.IsNullOrWhiteSpace(docId))
+                errors["docId"] = ["The documentation comment ID is required."];
+
+            if (errors.Count > 0)
+                return TypedResults.ValidationProblem(errors);
+
+            return await graph.GetDetailAsync(sourceId!.Value, docId!.Trim(), project, cancellationToken) is { } detail ? TypedResults.Ok(detail) : TypedResults.NotFound();
+        });
+
+        api.MapGet("/code/symbols/{symbolId:int}/references", static async Task<Results<Ok<CodeReferencePage>, NotFound>> (int symbolId, int? offset, int? limit, string? kind, CodeGraphService graph, CancellationToken cancellationToken) =>
+            await graph.GetReferencesAsync(symbolId, kind, Math.Max(0, offset ?? 0), Math.Clamp(limit ?? 100, 1, CodeGraphService.MaxReferenceLimit), cancellationToken) is { } page ? TypedResults.Ok(page) : TypedResults.NotFound());
+
+        api.MapGet("/code/outline", static async Task<Results<Ok<IReadOnlyList<OutlineNode>>, NotFound, ValidationProblem>> (long? documentId, DocumentStore documents, CodeGraphService graph, CancellationToken cancellationToken) =>
+        {
+            if (documentId is not { } id)
+                return TypedResults.ValidationProblem(new Dictionary<string, string[]> { ["documentId"] = ["The document is required."] });
+
+            return await documents.GetAsync(id, cancellationToken) is null ? TypedResults.NotFound() : TypedResults.Ok(await graph.GetOutlineAsync(id, cancellationToken));
+        });
+
+        api.MapGet("/code/diagrams/projects", static (int? sourceId, bool? includeTests, string? format, CodeDiagramService diagrams, CancellationToken cancellationToken) =>
+            DiagramAsync(format, () => diagrams.GetProjectsAsync(new ProjectsDiagramRequest(sourceId, includeTests), cancellationToken)));
+
+        api.MapGet("/code/diagrams/namespaces", static (
+            int? sourceId, string? project, bool? includeTests, int? minWeight, int? maxNodes, int? maxEdges, string? format, CodeDiagramService diagrams, CancellationToken cancellationToken) =>
+            DiagramAsync(format, () => diagrams.GetNamespacesAsync(new NamespacesDiagramRequest(sourceId, project, includeTests, minWeight, maxNodes, maxEdges), cancellationToken)));
+
+        api.MapGet("/code/diagrams/namespace", static (
+            int? sourceId, [FromQuery(Name = "namespace")] string? ns, string? project, bool? includeExternal, string? members, int? maxNodes, int? maxEdges, string? format, CodeDiagramService diagrams, CancellationToken cancellationToken) =>
+            DiagramAsync(format, () => diagrams.GetNamespaceAsync(new NamespaceDiagramRequest(sourceId, ns, project, includeExternal, members, maxNodes, maxEdges), cancellationToken)));
+
+        api.MapGet("/code/diagrams/type", static (
+            int? sourceId, string? docId, string? project, int? depth, string? direction, string? kinds, bool? includeTests, bool? includeExternal, string? members, bool? neighborMembers, int? maxNodes, bool? neighborEdges, string? format,
+            CodeDiagramService diagrams, CancellationToken cancellationToken) =>
+            DiagramAsync(format, () => diagrams.GetTypeAsync(
+                new TypeDiagramRequest(sourceId, docId, project, depth, direction, kinds, includeTests, includeExternal, members, neighborMembers, maxNodes, neighborEdges), cancellationToken)));
+
         api.MapPost("/search", static async Task<Results<Ok<SearchResult>, ValidationProblem>> (SearchRequest request, SearchService search, CancellationToken cancellationToken) =>
         {
             try
@@ -157,8 +287,46 @@ internal static class KnowledgeApi
         });
     }
 
+    private static async Task<IResult> DiagramAsync(string? format, Func<Task<CodeDiagram>> build)
+    {
+        string kind = string.IsNullOrWhiteSpace(format) ? "json" : format.Trim().ToLowerInvariant();
+        if (kind is not ("json" or "dot" or "plantuml"))
+            return TypedResults.ValidationProblem(new Dictionary<string, string[]> { ["format"] = ["The format must be json, dot or plantuml."] });
+
+        try
+        {
+            CodeDiagram diagram = await build();
+            return kind switch
+            {
+                "dot" => TypedResults.Text(diagram.Dot, "text/plain; charset=utf-8"),
+                "plantuml" => TypedResults.Text(PlantUmlWriter.Write(diagram), "text/plain; charset=utf-8"),
+                _ => TypedResults.Ok(diagram),
+            };
+        }
+        catch (CodeSearchException exception)
+        {
+            return TypedResults.ValidationProblem(new Dictionary<string, string[]> { [exception.Field] = [exception.Message] });
+        }
+        catch (CodeDiagramNotFoundException exception)
+        {
+            return TypedResults.Problem(exception.Message, statusCode: StatusCodes.Status404NotFound, title: "Not Found");
+        }
+    }
+
     private static async Task<short?> CurrentModelIdAsync(EmbeddingModelRegistry models, CancellationToken cancellationToken) =>
         (await models.GetStatusAsync(cancellationToken)).Model?.ModelId;
+
+    private static Dictionary<string, string>? NormalizeProperties(IReadOnlyDictionary<string, string>? properties)
+    {
+        if (properties is null)
+            return null;
+
+        Dictionary<string, string> result = new(StringComparer.Ordinal);
+        foreach ((string key, string? value) in properties)
+            result[key?.Trim() ?? string.Empty] = value ?? string.Empty;
+
+        return result;
+    }
 
     private static void Normalize(SourceInput input)
     {
@@ -169,7 +337,11 @@ internal static class KnowledgeApi
         if (Path.IsPathFullyQualified(input.RootPath))
             input.RootPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(input.RootPath));
 
+        input.Kind = string.IsNullOrWhiteSpace(input.Kind) ? null : input.Kind.Trim().ToLowerInvariant();
+        input.DotGlobs = input.DotGlobs?.Select(static glob => glob?.Trim() ?? string.Empty).ToList();
         input.Description = input.Description?.Trim();
+        // A JSON null as a value reaches the dictionary despite its type.
+        input.BuildProperties = NormalizeProperties(input.BuildProperties);
         input.CategoryRules = input.CategoryRules?.Where(static rule => rule is not null)
             .Select(static rule => new CategoryRule { Pattern = rule.Pattern?.Trim() ?? string.Empty, Category = rule.Category?.Trim() ?? string.Empty }).ToList();
         // The expression and the replacement keep their spaces: a space may be a part of the fix.

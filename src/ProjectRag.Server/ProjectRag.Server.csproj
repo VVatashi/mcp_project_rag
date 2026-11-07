@@ -4,10 +4,16 @@
 
   <ItemGroup>
     <ProjectReference Include="..\ProjectRag.Core\ProjectRag.Core.csproj" />
+    <ProjectReference Include="..\ProjectRag.Code\ProjectRag.Code.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="ModelContextProtocol.AspNetCore" />
+  </ItemGroup>
+
+  <!-- The build check of the MSBuild Locator also runs in the projects that reference the extractor. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Build.Framework" ExcludeAssets="runtime" PrivateAssets="all" />
   </ItemGroup>
 
   <!-- The dashboard build writes wwwroot (npm run build in src/ProjectRag.Dashboard). The program serves it from its output folder. -->

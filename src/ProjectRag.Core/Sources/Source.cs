@@ -41,6 +41,16 @@ public sealed class Source
     public IReadOnlyList<string> ExcludeGlobs { get; init; } = [];
 
     /// <summary>
+    /// Gets the kind of the source: <see cref="SourceKind.Docs"/> or <see cref="SourceKind.Code"/>.
+    /// </summary>
+    public string Kind { get; init; } = SourceKind.Docs;
+
+    /// <summary>
+    /// Gets the patterns that bring dot files back into a code source, for example <c>.github/**/*.yml</c>.
+    /// </summary>
+    public IReadOnlyList<string> DotGlobs { get; init; } = [];
+
+    /// <summary>
     /// Gets the rules that give the documents their categories, in their order. A document without a matching rule takes the name of the source.
     /// </summary>
     public IReadOnlyList<CategoryRule> CategoryRules { get; init; } = [];
@@ -49,6 +59,11 @@ public sealed class Source
     /// Gets the replacements that fix the text of some files, in their order.
     /// </summary>
     public IReadOnlyList<TextReplacement> Replacements { get; init; } = [];
+
+    /// <summary>
+    /// Gets the global MSBuild properties of a code source: the view of the build that the code graph shows. A source of another kind has none.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> BuildProperties { get; init; } = new Dictionary<string, string>();
 
     /// <summary>
     /// Gets the time when the source was added.

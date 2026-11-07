@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ProjectRag.Code\ProjectRag.Code.csproj" />
+  </ItemGroup>
+
+  <!-- The build check of the MSBuild Locator also runs in the projects that reference the extractor. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Build.Framework" ExcludeAssets="runtime" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

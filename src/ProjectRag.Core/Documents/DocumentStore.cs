@@ -23,7 +23,7 @@ public sealed partial class DocumentStore(Database database)
     private const int LongCommandSeconds = 1800;
 
     private const string SummarySql = """
-        SELECT d.document_id, d.source_id, s.name AS source, d.category, d.path, d.title, d.size_bytes, d.modified_at, d.indexed_at,
+        SELECT d.document_id, d.source_id, s.name AS source, d.category, d.language, d.path, d.title, d.size_bytes, d.modified_at, d.indexed_at,
                length(d.content) AS content_length,
                (SELECT count(*) FROM chunk c WHERE c.document_id = d.document_id) AS chunk_count
         FROM document d
@@ -298,17 +298,7 @@ public sealed partial class DocumentStore(Database database)
     {
         await using NpgsqlConnection connection = await database.OpenAsync(cancellationToken);
         await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
-        long documentId = await connection.ExecuteScalarAsync<long>(new CommandDefinition(
-            """
-            INSERT INTO document (source_id, path, title, content, content_hash, parser_version, size_bytes, modified_at, category)
-            VALUES (@SourceId, @Path, @Title, @Content, @ContentHash, @ParserVersion, @SizeBytes, @ModifiedAt, @Category)
-            ON CONFLICT (source_id, path) DO UPDATE
-            SET title = EXCLUDED.title, content = EXCLUDED.content, content_hash = EXCLUDED.content_hash, parser_version = EXCLUDED.parser_version,
-                size_bytes = EXCLUDED.size_bytes, modified_at = EXCLUDED.modified_at, category = EXCLUDED.category, indexed_at = now()
-            RETURNING document_id
-            """,
-            new { SourceId = sourceId, Path = path, structure.Title, structure.Content, file.ContentHash, file.ParserVersion, file.SizeBytes, file.ModifiedAt, file.Category },
-            transaction, cancellationToken: cancellationToken));
+        long documentId = await UpsertDocumentAsync(connection, transaction, sourceId, path, structure.Title, structure.Content, file, cancellationToken);
 
         long[] oldIds = [.. await connection.QueryAsync<long>(new CommandDefinition(
             "SELECT chunk_id FROM chunk WHERE document_id = @DocumentId", new { DocumentId = documentId }, transaction, cancellationToken: cancellationToken))];
@@ -409,9 +399,78 @@ public sealed partial class DocumentStore(Database database)
             },
             transaction, cancellationToken: cancellationToken));
 
-        // The identity gives the new chunks larger keys than the stored chunks, so a smaller key marks a stored chunk. A miss only costs a new embedding.
-        // The copy of the vectors of a large document, such as the 14000 chunks of the Vulkan specification, fills the HNSW index for minutes.
-        long[] newIds = [.. chunkIds.Values];
+        int reused = await ReuseVectorsAsync(connection, transaction, [.. chunkIds.Values], oldIds, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return reused;
+    }
+
+    /// <summary>
+    /// Writes a file of a code source as a document with its exact text and replaces its chunks in one transaction.
+    /// A new chunk with the text of a stored chunk takes over its vectors, as <see cref="SaveAsync"/> does.
+    /// </summary>
+    /// <returns>The number of vectors that the new chunks took over.</returns>
+    internal async Task<int> SaveCodeAsync(int sourceId, string path, string title, string content, DocumentFile file, IReadOnlyList<CodeChunkRow> chunks, CancellationToken cancellationToken)
+    {
+        await using NpgsqlConnection connection = await database.OpenAsync(cancellationToken);
+        await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
+        long documentId = await UpsertDocumentAsync(connection, transaction, sourceId, path, title, content, file, cancellationToken);
+        long[] oldIds = [.. await connection.QueryAsync<long>(new CommandDefinition(
+            "SELECT chunk_id FROM chunk WHERE document_id = @DocumentId", new { DocumentId = documentId }, transaction, cancellationToken: cancellationToken))];
+        await connection.ExecuteAsync(new CommandDefinition(
+            "DELETE FROM section WHERE document_id = @DocumentId; DELETE FROM anchor WHERE document_id = @DocumentId;",
+            new { DocumentId = documentId }, transaction, LongCommandSeconds, cancellationToken: cancellationToken));
+
+        long[] newIds = [.. await connection.QueryAsync<long>(new CommandDefinition(
+            """
+            INSERT INTO chunk (document_id, ordinal, heading, body, char_start, char_end, body_hash, overlap_chars, kind, line_start, line_end, code_tsv)
+            SELECT @DocumentId, v.ordinal, v.heading, v.body, v.char_start, v.char_end, v.body_hash, v.overlap, v.kind, v.line_start, v.line_end,
+                   setweight(to_tsvector('simple', v.heading_tokens), 'A') || setweight(to_tsvector('simple', v.body_tokens), 'B')
+            FROM unnest(@Ordinals, @Headings, @Bodies, @Starts, @Ends, @Hashes, @Overlaps, @Kinds, @LineStarts, @LineEnds, @HeadingTokens, @BodyTokens)
+                 AS v(ordinal, heading, body, char_start, char_end, body_hash, overlap, kind, line_start, line_end, heading_tokens, body_tokens)
+            RETURNING chunk_id
+            """,
+            new
+            {
+                DocumentId = documentId,
+                Ordinals = chunks.Select(static item => item.Ordinal).ToArray(),
+                Headings = chunks.Select(static item => item.Heading).ToArray(),
+                Bodies = chunks.Select(static item => item.Body).ToArray(),
+                Starts = chunks.Select(static item => item.Start).ToArray(),
+                Ends = chunks.Select(static item => item.End).ToArray(),
+                Hashes = chunks.Select(static item => item.Hash).ToArray(),
+                Overlaps = chunks.Select(static item => item.OverlapChars).ToArray(),
+                Kinds = chunks.Select(static item => item.Kind).ToArray(),
+                LineStarts = chunks.Select(static item => item.LineStart).ToArray(),
+                LineEnds = chunks.Select(static item => item.LineEnd).ToArray(),
+                HeadingTokens = chunks.Select(static item => item.HeadingTokens).ToArray(),
+                BodyTokens = chunks.Select(static item => item.BodyTokens).ToArray(),
+            },
+            transaction, LongCommandSeconds, cancellationToken: cancellationToken))];
+
+        int reused = await ReuseVectorsAsync(connection, transaction, newIds, oldIds, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return reused;
+    }
+
+    private static Task<long> UpsertDocumentAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, int sourceId, string path, string title, string content, DocumentFile file, CancellationToken cancellationToken) =>
+        connection.ExecuteScalarAsync<long>(new CommandDefinition(
+            """
+            INSERT INTO document (source_id, path, title, content, content_hash, parser_version, size_bytes, modified_at, category, language)
+            VALUES (@SourceId, @Path, @Title, @Content, @ContentHash, @ParserVersion, @SizeBytes, @ModifiedAt, @Category, @Language)
+            ON CONFLICT (source_id, path) DO UPDATE
+            SET title = EXCLUDED.title, content = EXCLUDED.content, content_hash = EXCLUDED.content_hash, parser_version = EXCLUDED.parser_version,
+                size_bytes = EXCLUDED.size_bytes, modified_at = EXCLUDED.modified_at, category = EXCLUDED.category, language = EXCLUDED.language, indexed_at = now()
+            RETURNING document_id
+            """,
+            new { SourceId = sourceId, Path = path, Title = title, Content = content, file.ContentHash, file.ParserVersion, file.SizeBytes, file.ModifiedAt, file.Category, file.Language },
+            transaction, cancellationToken: cancellationToken));
+
+    // The identity gives the new chunks larger keys than the stored chunks, so a smaller key marks a stored chunk. A miss only costs a new embedding.
+    // The copy of the vectors of a large document, such as the 14000 chunks of the Vulkan specification, fills the HNSW index for minutes.
+    // The old chunks of the document leave after the copy, so an unchanged chunk of an edited file keeps its vector.
+    private static async Task<int> ReuseVectorsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long[] newIds, long[] oldIds, CancellationToken cancellationToken)
+    {
         int reused = newIds.Length == 0 ? 0 : await connection.ExecuteAsync(new CommandDefinition(
             """
             INSERT INTO chunk_embedding (chunk_id, model_id, embedding)
@@ -431,7 +490,6 @@ public sealed partial class DocumentStore(Database database)
                 "DELETE FROM chunk WHERE chunk_id = ANY (@OldIds)", new { OldIds = oldIds }, transaction, LongCommandSeconds, cancellationToken: cancellationToken));
         }
 
-        await transaction.CommitAsync(cancellationToken);
         return reused;
     }
 
@@ -481,4 +539,22 @@ public sealed partial class DocumentStore(Database database)
 /// <param name="SizeBytes">The size in bytes.</param>
 /// <param name="ModifiedAt">The time of the last write in UTC, cut to microseconds like the timestamps of PostgreSQL.</param>
 /// <param name="Category">The category from the rules of the source.</param>
-internal sealed record DocumentFile(string ContentHash, string ParserVersion, long SizeBytes, DateTime ModifiedAt, string Category);
+/// <param name="Language">The language of a file of a code source, or <see langword="null"/> for a source of documentation.</param>
+internal sealed record DocumentFile(string ContentHash, string ParserVersion, long SizeBytes, DateTime ModifiedAt, string Category, string? Language = null);
+
+/// <summary>
+/// A chunk of a code file as the store writes it.
+/// </summary>
+/// <param name="Ordinal">The number of the chunk in the document, from 0.</param>
+/// <param name="Heading">The heading that the models see.</param>
+/// <param name="Body">The exact text of the range.</param>
+/// <param name="Start">The index of the first character in the content.</param>
+/// <param name="End">The index after the last character.</param>
+/// <param name="LineStart">The first line, from 1.</param>
+/// <param name="LineEnd">The last line.</param>
+/// <param name="OverlapChars">The number of characters at the start that the chunk before also holds.</param>
+/// <param name="Kind">The kind of the chunk, <c>code</c> or <c>config</c>.</param>
+/// <param name="Hash">The SHA-256 of the text for the embedding model, which matches the stored chunks with the same text.</param>
+/// <param name="HeadingTokens">The tokens of the heading for the token search.</param>
+/// <param name="BodyTokens">The tokens of the body for the token search.</param>
+internal sealed record CodeChunkRow(int Ordinal, string Heading, string Body, int Start, int End, int LineStart, int LineEnd, int OverlapChars, string Kind, string Hash, string HeadingTokens, string BodyTokens);

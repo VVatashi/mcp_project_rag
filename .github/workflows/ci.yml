@@ -50,6 +50,9 @@ jobs:
           PROJECTRAG_TEST_DATABASE: Host=127.0.0.1;Port=5434;Database=project_rag_test;Username=project_rag;Password=project_rag
         run: dotnet test --project tests/ProjectRag.Core.Tests --configuration Release --no-build
 
+      - name: Test the code graph
+        run: dotnet test --project tests/ProjectRag.Code.Tests --configuration Release --no-build
+
       - name: Check the format
         run: dotnet format ProjectRag.slnx --verify-no-changes --severity warn
 

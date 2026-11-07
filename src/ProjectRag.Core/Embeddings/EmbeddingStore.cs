@@ -15,24 +15,23 @@ namespace ProjectRag.Core.Embeddings;
 public sealed class EmbeddingStore(Database database)
 {
     /// <summary>
-    /// Finds the models with a name and templates. The dimensions complete the identity, and the caller learns them from the probe.
+    /// Finds the models with a name and a template of chunks. The dimensions complete the identity, and the caller learns them from the probe.
     /// </summary>
     /// <param name="name">The name of the model.</param>
-    /// <param name="queryTemplate">The template of a query.</param>
     /// <param name="documentTemplate">The template of a chunk.</param>
     /// <param name="cancellationToken">The token that cancels the query.</param>
     /// <returns>The models, the oldest first. Usually there is one or none.</returns>
-    internal async Task<IReadOnlyList<StoredModel>> FindModelsAsync(string name, string queryTemplate, string documentTemplate, CancellationToken cancellationToken)
+    internal async Task<IReadOnlyList<StoredModel>> FindModelsAsync(string name, string documentTemplate, CancellationToken cancellationToken)
     {
         await using NpgsqlConnection connection = await database.OpenAsync(cancellationToken);
         IEnumerable<StoredModel> rows = await connection.QueryAsync<StoredModel>(new CommandDefinition(
             """
             SELECT model_id, dims, probe_text, probe_embedding::real[] AS probe_embedding
             FROM embedding_model
-            WHERE name = @Name AND query_template = @QueryTemplate AND document_template = @DocumentTemplate
+            WHERE name = @Name AND document_template = @DocumentTemplate
             ORDER BY model_id
             """,
-            new { Name = name, QueryTemplate = queryTemplate, DocumentTemplate = documentTemplate },
+            new { Name = name, DocumentTemplate = documentTemplate },
             cancellationToken: cancellationToken));
         return [.. rows];
     }
@@ -41,24 +40,23 @@ public sealed class EmbeddingStore(Database database)
     /// Adds a model and creates its HNSW index.
     /// </summary>
     /// <param name="name">The name of the model.</param>
-    /// <param name="queryTemplate">The template of a query.</param>
     /// <param name="documentTemplate">The template of a chunk.</param>
     /// <param name="probeText">The text of the probe.</param>
     /// <param name="probeEmbedding">The vector of the probe. Its length gives the dimensions of the model.</param>
     /// <param name="cancellationToken">The token that cancels the query.</param>
     /// <returns>The key of the new model.</returns>
-    public async Task<short> AddModelAsync(string name, string queryTemplate, string documentTemplate, string probeText, float[] probeEmbedding, CancellationToken cancellationToken)
+    public async Task<short> AddModelAsync(string name, string documentTemplate, string probeText, float[] probeEmbedding, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(probeEmbedding);
         await using NpgsqlConnection connection = await database.OpenAsync(cancellationToken);
         await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
         short modelId = await connection.ExecuteScalarAsync<short>(new CommandDefinition(
             """
-            INSERT INTO embedding_model (name, dims, query_template, document_template, probe_text, probe_embedding)
-            VALUES (@Name, @Dims, @QueryTemplate, @DocumentTemplate, @ProbeText, @ProbeEmbedding::real[]::vector)
+            INSERT INTO embedding_model (name, dims, document_template, probe_text, probe_embedding)
+            VALUES (@Name, @Dims, @DocumentTemplate, @ProbeText, @ProbeEmbedding::real[]::vector)
             RETURNING model_id
             """,
-            new { Name = name, Dims = probeEmbedding.Length, QueryTemplate = queryTemplate, DocumentTemplate = documentTemplate, ProbeText = probeText, ProbeEmbedding = probeEmbedding },
+            new { Name = name, Dims = probeEmbedding.Length, DocumentTemplate = documentTemplate, ProbeText = probeText, ProbeEmbedding = probeEmbedding },
             transaction, cancellationToken: cancellationToken));
 
         // The index is partial and over an expression with the dimensions of the model, see the page "Indexing" of the README of pgvector.
