@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Globalization;
+using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -39,6 +40,12 @@ namespace ProjectRag.Core.Indexing;
 /// So a run that stops keeps its vectors, and a new embedding model gets its vectors at the next run.
 /// When the embedding server does not work, the run still succeeds with a warning: the full text search finds the new chunks at once.
 /// </para>
+/// <para>
+/// A source in <see cref="RemoteEmbeddingOptions.Sources"/> also uses the remote backend while <see cref="RemoteEmbeddingGuard"/> passes.
+/// The local workers and the remote workers take chunks from one queue, so the faster backend embeds more.
+/// A failed remote batch goes back to the queue and the remote backend stops for the run. The same happens when the cost of the run reaches the limit.
+/// A local server that is down leaves the chunks to the remote backend alone.
+/// </para>
 /// </remarks>
 /// <param name="sources">The store of the sources.</param>
 /// <param name="documents">The store of the documents.</param>
@@ -55,6 +62,10 @@ namespace ProjectRag.Core.Indexing;
 /// <param name="graph">The step that builds the code graph of a code source.</param>
 /// <param name="chunkers">The chunkers of code files.</param>
 /// <param name="codeChunking">The limits of the chunks of code files.</param>
+/// <param name="embeddingOptions">The options of the local embedding server.</param>
+/// <param name="remoteOptions">The options of the remote embedding backend.</param>
+/// <param name="remote">The client of the remote embedding backend.</param>
+/// <param name="guard">The check of the identity of the remote backend.</param>
 /// <param name="logger">The logger.</param>
 public sealed class Indexer(
     SourceStore sources,
@@ -72,6 +83,10 @@ public sealed class Indexer(
     CodeGraphBuilder graph,
     CodeChunkers chunkers,
     IOptionsMonitor<CodeChunkingOptions> codeChunking,
+    IOptionsMonitor<EmbeddingOptions> embeddingOptions,
+    IOptionsMonitor<RemoteEmbeddingOptions> remoteOptions,
+    IRemoteEmbeddingClient remote,
+    RemoteEmbeddingGuard guard,
     ILogger<Indexer> logger)
 {
     /// <summary>
@@ -122,12 +137,13 @@ public sealed class Indexer(
         logger.LogInformation("The indexer started the run {RunId} over the source {Source} in {Path}.", run.RunId, source.Name, source.RootPath);
         List<string> warnings = [];
         CodeFileChanges changes = new();
+        RemoteTally tally = new();
         try
         {
             await SyncFilesAsync(source, run, changes, warnings, progress, cancellationToken);
             await runs.SaveAsync(run, cancellationToken);
             await graph.BuildAsync(source, changes, warnings, cancellationToken);
-            await EmbedAsync(source, run, warnings, progress, cancellationToken);
+            await EmbedAsync(source, run, tally, warnings, progress, cancellationToken);
             run.Status = IndexRun.Succeeded;
             await sources.MarkIndexedAsync(sourceId, cancellationToken);
         }
@@ -150,8 +166,9 @@ public sealed class Indexer(
         await runs.SaveAsync(run, CancellationToken.None);
         progress?.Invoke(run);
         logger.LogInformation(
-            "The run {RunId} over {Source} ended: {Status}. Files {Files}, added {Added}, updated {Updated}, removed {Removed}, failed {Failed}, vectors reused {Reused}, embedded {Embedded}.",
-            run.RunId, source.Name, run.Status, run.FilesSeen, run.DocumentsAdded, run.DocumentsUpdated, run.DocumentsRemoved, run.DocumentsFailed, run.ChunksReused, run.ChunksEmbedded);
+            "The run {RunId} over {Source} ended: {Status}. Files {Files}, added {Added}, updated {Updated}, removed {Removed}, failed {Failed}, vectors reused {Reused}, embedded {Embedded}: {Local} locally and {Remote} remotely ({RemoteTokens} tokens, {RemoteCost} USD).",
+            run.RunId, source.Name, run.Status, run.FilesSeen, run.DocumentsAdded, run.DocumentsUpdated, run.DocumentsRemoved, run.DocumentsFailed, run.ChunksReused, run.ChunksEmbedded,
+            run.ChunksEmbedded - run.ChunksEmbeddedRemote, run.ChunksEmbeddedRemote, tally.Tokens, run.RemoteCost);
         return run;
     }
 
@@ -486,10 +503,37 @@ public sealed class Indexer(
 
     private static DateTime Microseconds(DateTime time) => new(time.Ticks - (time.Ticks % 10), DateTimeKind.Utc);
 
-    private async Task EmbedAsync(Source source, IndexRun run, List<string> warnings, Action<IndexRun>? progress, CancellationToken cancellationToken)
+    private async Task EmbedAsync(Source source, IndexRun run, RemoteTally tally, List<string> warnings, Action<IndexRun>? progress, CancellationToken cancellationToken)
     {
         EmbeddingModelStatus status = await models.GetStatusAsync(cancellationToken);
-        if (status.Model is not { } model)
+        EmbeddingOptions localSettings = embeddingOptions.CurrentValue;
+        RemoteEmbeddingOptions remoteSettings = remoteOptions.CurrentValue;
+        bool useRemote = remoteSettings.Allows(source.Name);
+        EmbeddingModel? current = status.Model;
+        if (current is null && useRemote)
+        {
+            // The local server is down. The stored model gives the identity, and the guard checks the remote vectors against its probe.
+            IReadOnlyList<StoredModel> stored = await embeddings.FindModelsAsync(localSettings.Model, localSettings.DocumentTemplate, cancellationToken);
+            current = stored.Count > 0 ? new EmbeddingModel(stored[0].ModelId, localSettings.Model, stored[0].Dims, localSettings.DocumentTemplate) : null;
+        }
+
+        if (current is not { } model)
+        {
+            await WarnPendingAsync(source, run, warnings, status.Problem, cancellationToken);
+            return;
+        }
+
+        PoolState pool = new(warnings) { LocalDown = status.Model is null, LocalReason = status.Model is null ? status.Problem : null };
+        if (useRemote)
+        {
+            string? problem = await CheckRemoteAsync(model, localSettings, cancellationToken);
+            if (problem is null)
+                pool.RemoteActive = true;
+            else
+                pool.Warn($"The remote embedding is not used: {problem}");
+        }
+
+        if (pool.LocalDown && !pool.RemoteActive)
         {
             await WarnPendingAsync(source, run, warnings, status.Problem, cancellationToken);
             return;
@@ -502,15 +546,43 @@ public sealed class Indexer(
             while (true)
             {
                 // A run lasts minutes. The registry checks the server again each minute, and another model behind the server stops the run.
-                if ((await models.GetStatusAsync(cancellationToken)).Model?.ModelId != model.ModelId)
+                if (!pool.LocalDown && (await models.GetStatusAsync(cancellationToken)).Model?.ModelId != model.ModelId)
                 {
                     await WarnPendingAsync(source, run, warnings, "The embedding model changed during the run.", cancellationToken);
                     break;
                 }
 
-                IReadOnlyList<PendingChunk> pending = await embeddings.GetPendingAsync(source.SourceId, model.ModelId, roundSize, rejected, cancellationToken);
+                // The guard keeps its answer for a minute, so a long run checks the remote backend again each minute.
+                if (pool.RemoteActive && await CheckRemoteAsync(model, localSettings, cancellationToken) is { } changed)
+                    pool.StopRemote($"The remote embedding stopped: {changed}");
+
+                if (pool.LocalDown && !pool.RemoteActive)
+                {
+                    await WarnPendingAsync(source, run, warnings, pool.LocalReason, cancellationToken);
+                    break;
+                }
+
+                RemoteEmbeddingOptions remoteNow = remoteOptions.CurrentValue;
+                int size = pool.RemoteActive ? Math.Max(roundSize, 4 * Math.Max(1, remoteNow.Parallelism) * Math.Max(1, remoteNow.BatchSize)) : roundSize;
+                IReadOnlyList<PendingChunk> pending = await embeddings.GetPendingAsync(source.SourceId, model.ModelId, size, rejected, cancellationToken);
                 if (pending.Count == 0)
                     break;
+
+                if (pool.RemoteActive)
+                {
+                    int before = run.ChunksEmbedded + rejected.Count;
+                    await EmbedPooledAsync(model, pending, run, tally, pool, rejected, cancellationToken);
+                    if (run.ChunksEmbedded + rejected.Count == before)
+                    {
+                        // Both backends stopped without a vector. The next run embeds the rest.
+                        await WarnPendingAsync(source, run, warnings, pool.LocalReason ?? "No backend embedded the chunks.", cancellationToken);
+                        break;
+                    }
+
+                    await runs.SaveAsync(run, cancellationToken);
+                    progress?.Invoke(run);
+                    continue;
+                }
 
                 try
                 {
@@ -558,6 +630,151 @@ public sealed class Indexer(
         await embeddings.AddEmbeddingsAsync(model.ModelId, [.. chunks.Select((chunk, index) => (chunk.ChunkId, vectors[index]))], cancellationToken);
     }
 
+    // Returns the reason why the remote backend cannot embed for the model, or null when the guard passes.
+    private async Task<string?> CheckRemoteAsync(EmbeddingModel model, EmbeddingOptions localSettings, CancellationToken cancellationToken)
+    {
+        if (remote.Unavailable is { } unavailable)
+            return unavailable;
+
+        IReadOnlyList<StoredModel> stored = await embeddings.FindModelsAsync(localSettings.Model, localSettings.DocumentTemplate, cancellationToken);
+        if (stored.FirstOrDefault(candidate => candidate.ModelId == model.ModelId) is not { } known)
+            return "The database has no probe of the embedding model.";
+
+        return (await guard.CheckAsync(model, known.ProbeText, known.ProbeEmbedding, cancellationToken)).Problem;
+    }
+
+    // The workers of both backends take chunks from one queue until it is empty. A backend that fails puts its batch back for the other one.
+    private async Task EmbedPooledAsync(EmbeddingModel model, IReadOnlyList<PendingChunk> pending, IndexRun run, RemoteTally tally, PoolState pool, HashSet<long> rejected, CancellationToken cancellationToken)
+    {
+        ChunkQueue queue = new(pending);
+        using CancellationTokenSource stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Exception? first = null;
+        List<Task> workers = [];
+
+        async Task Guarded(Func<Task> work)
+        {
+            try
+            {
+                await work();
+            }
+            // The first error stops the other workers and goes on to the caller as it is.
+#pragma warning disable CA1031
+            catch (Exception exception)
+#pragma warning restore CA1031
+            {
+                if (Interlocked.CompareExchange(ref first, exception, null) is null)
+                    stop.Cancel();
+            }
+        }
+
+        EmbeddingOptions localSettings = embeddingOptions.CurrentValue;
+        if (!pool.LocalDown)
+        {
+            int batchSize = Math.Max(1, localSettings.BatchSize);
+            for (int i = 0; i < Math.Max(1, localSettings.Parallelism); i++)
+                workers.Add(Guarded(() => LocalWorkerAsync(model, queue, run, pool, rejected, batchSize, stop.Token)));
+        }
+
+        RemoteEmbeddingOptions remoteSettings = remoteOptions.CurrentValue;
+        for (int i = 0; i < Math.Max(1, remoteSettings.Parallelism); i++)
+            workers.Add(Guarded(() => RemoteWorkerAsync(model, queue, run, tally, pool, remoteSettings, stop.Token)));
+
+        await Task.WhenAll(workers);
+        if (first is not null)
+            ExceptionDispatchInfo.Throw(first);
+    }
+
+    private async Task LocalWorkerAsync(EmbeddingModel model, ChunkQueue queue, IndexRun run, PoolState pool, HashSet<long> rejected, int batchSize, CancellationToken cancellationToken)
+    {
+        while (!pool.LocalDown)
+        {
+            List<PendingChunk> batch = queue.Take(batchSize);
+            if (batch.Count == 0)
+                return;
+
+            try
+            {
+                await EmbedChunksAsync(model, batch, cancellationToken);
+                pool.AddLocal(run, batch.Count);
+            }
+            catch (HttpRequestException exception) when (exception.StatusCode is not null)
+            {
+                logger.LogWarning("The embedding server rejected a batch of {Count} chunks: {Reason}. The indexer tries them one at a time.", batch.Count, exception.Message);
+                for (int i = 0; i < batch.Count; i++)
+                {
+                    try
+                    {
+                        await EmbedChunksAsync(model, [batch[i]], cancellationToken);
+                        pool.AddLocal(run, 1);
+                    }
+                    catch (HttpRequestException single) when (single.StatusCode is not null)
+                    {
+                        pool.Reject(rejected, batch[i].ChunkId);
+                        logger.LogWarning("The embedding server rejected the chunk {ChunkId}: {Reason}", batch[i].ChunkId, single.Message);
+                    }
+                    catch (Exception down) when (IsDown(down, cancellationToken))
+                    {
+                        queue.Return([.. batch.Skip(i)]);
+                        StopLocal(pool, down);
+                        return;
+                    }
+                }
+            }
+            catch (Exception down) when (IsDown(down, cancellationToken))
+            {
+                queue.Return(batch);
+                StopLocal(pool, down);
+                return;
+            }
+        }
+    }
+
+    private async Task RemoteWorkerAsync(EmbeddingModel model, ChunkQueue queue, IndexRun run, RemoteTally tally, PoolState pool, RemoteEmbeddingOptions settings, CancellationToken cancellationToken)
+    {
+        int batchSize = Math.Max(1, settings.BatchSize);
+        while (pool.RemoteActive)
+        {
+            if (pool.RemoteCostReached(run, settings.MaxCostPerRun))
+            {
+                pool.StopRemote(string.Create(CultureInfo.InvariantCulture, $"The remote embedding reached the limit of {settings.MaxCostPerRun:0.####} USD for the run and stopped."));
+                return;
+            }
+
+            List<PendingChunk> batch = queue.Take(batchSize);
+            if (batch.Count == 0)
+                return;
+
+            try
+            {
+                string[] texts = [.. batch.Select(chunk => model.FormatDocument(TextChunk.Compose(chunk.Heading, chunk.Body)))];
+                RemoteEmbedding result = await remote.EmbedAsync(texts, cancellationToken);
+                if (result.Vectors.Any(vector => vector.Length != model.Dims))
+                    throw new RemoteEmbeddingException($"The remote model gives vectors with other dimensions than the {model.Dims} of the stored model.", result.Tokens, result.Cost);
+
+                await embeddings.AddEmbeddingsAsync(model.ModelId, [.. batch.Select((chunk, index) => (chunk.ChunkId, result.Vectors[index]))], cancellationToken);
+                pool.AddRemote(run, tally, batch.Count, result);
+            }
+            catch (Exception failure) when (failure is HttpRequestException or InvalidOperationException || (failure is TaskCanceledException && !cancellationToken.IsCancellationRequested))
+            {
+                logger.LogWarning("The remote embedding failed: {Reason}", failure.Message);
+                queue.Return(batch);
+                if (failure is RemoteEmbeddingException billed)
+                    pool.AddBilled(run, tally, billed.Cost, billed.Tokens);
+                pool.StopRemote($"The remote embedding stopped: {failure.Message} The local server embeds the rest.");
+                return;
+            }
+        }
+    }
+
+    private void StopLocal(PoolState pool, Exception exception)
+    {
+        models.Invalidate();
+        pool.StopLocal(exception.Message);
+    }
+
+    private static bool IsDown(Exception exception, CancellationToken cancellationToken) =>
+        exception is HttpRequestException || (exception is TaskCanceledException && !cancellationToken.IsCancellationRequested);
+
     private async Task WarnPendingAsync(Source source, IndexRun run, List<string> warnings, string? reason, CancellationToken cancellationToken)
     {
         EmbeddingModelStatus status = await models.GetStatusAsync(cancellationToken);
@@ -566,6 +783,126 @@ public sealed class Indexer(
             : "all";
         warnings.Add($"The chunks got no vectors: {reason} {count} chunks wait for the next run.");
         logger.LogWarning("The run {RunId} over {Source} wrote no vectors: {Reason}", run.RunId, source.Name, reason);
+    }
+
+    // The tokens that the remote backend reported in a run. The table of the runs keeps no tokens, so only the log shows them.
+    private sealed class RemoteTally
+    {
+        public long Tokens;
+    }
+
+    // The chunks of a round that wait for a backend. A worker takes as many chunks as its batch holds.
+    private sealed class ChunkQueue(IEnumerable<PendingChunk> chunks)
+    {
+        private readonly List<PendingChunk> _items = [.. chunks];
+
+        public List<PendingChunk> Take(int count)
+        {
+            lock (_items)
+            {
+                int taken = Math.Min(count, _items.Count);
+                List<PendingChunk> batch = _items.GetRange(0, taken);
+                _items.RemoveRange(0, taken);
+                return batch;
+            }
+        }
+
+        public void Return(IReadOnlyList<PendingChunk> batch)
+        {
+            lock (_items)
+                _items.InsertRange(0, batch);
+        }
+    }
+
+    // The state of the backends in one embedding step. The workers of both backends change it, so every change takes the lock.
+    private sealed class PoolState(List<string> warnings)
+    {
+        private readonly Lock _lock = new();
+
+        private volatile bool _localDown;
+        private volatile bool _remoteActive;
+
+        public bool LocalDown
+        {
+            get => _localDown;
+            set => _localDown = value;
+        }
+
+        public string? LocalReason { get; set; }
+
+        public bool RemoteActive
+        {
+            get => _remoteActive;
+            set => _remoteActive = value;
+        }
+
+        public void Warn(string warning)
+        {
+            lock (_lock)
+                warnings.Add(warning);
+        }
+
+        public void StopRemote(string warning)
+        {
+            lock (_lock)
+            {
+                if (!RemoteActive)
+                    return;
+
+                RemoteActive = false;
+                warnings.Add(warning);
+            }
+        }
+
+        public void StopLocal(string reason)
+        {
+            lock (_lock)
+            {
+                if (LocalDown)
+                    return;
+
+                (LocalDown, LocalReason) = (true, reason);
+                warnings.Add($"The local embedding server stopped: {reason}");
+            }
+        }
+
+        public void Reject(HashSet<long> rejected, long chunkId)
+        {
+            lock (_lock)
+                rejected.Add(chunkId);
+        }
+
+        public void AddLocal(IndexRun run, int count)
+        {
+            lock (_lock)
+                run.ChunksEmbedded += count;
+        }
+
+        public void AddRemote(IndexRun run, RemoteTally tally, int count, RemoteEmbedding result)
+        {
+            lock (_lock)
+            {
+                run.ChunksEmbedded += count;
+                run.ChunksEmbeddedRemote += count;
+                run.RemoteCost += result.Cost;
+                tally.Tokens += result.Tokens;
+            }
+        }
+
+        public void AddBilled(IndexRun run, RemoteTally tally, decimal cost, long tokens)
+        {
+            lock (_lock)
+            {
+                run.RemoteCost += cost;
+                tally.Tokens += tokens;
+            }
+        }
+
+        public bool RemoteCostReached(IndexRun run, decimal limit)
+        {
+            lock (_lock)
+                return run.RemoteCost >= limit;
+        }
     }
 
     private readonly record struct UnreadableFile(long SizeBytes, DateTime ModifiedAt);

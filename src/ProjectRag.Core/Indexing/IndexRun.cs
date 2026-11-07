@@ -56,8 +56,14 @@ public sealed class IndexRun
     /// <summary>Gets or sets the number of vectors that new chunks took over from stored chunks with the same text.</summary>
     public int ChunksReused { get; set; }
 
-    /// <summary>Gets or sets the number of chunks that the embedding model embedded.</summary>
+    /// <summary>Gets or sets the number of chunks that the embedding model embedded, locally and remotely.</summary>
     public int ChunksEmbedded { get; set; }
+
+    /// <summary>Gets or sets the part of <see cref="ChunksEmbedded"/> that the remote backend embedded.</summary>
+    public int ChunksEmbeddedRemote { get; set; }
+
+    /// <summary>Gets or sets the cost of the remote backend in this run, in USD.</summary>
+    public decimal RemoteCost { get; set; }
 
     /// <summary>Gets or sets a warning: files that the indexer skipped, or chunks that wait for vectors.</summary>
     public string? Warning { get; set; }

@@ -45,7 +45,8 @@ public sealed class IndexRunStore(Database database)
             SET status = @Status, finished_at = CASE WHEN @Status = 'running' THEN NULL ELSE now() END,
                 files_seen = @FilesSeen, documents_added = @DocumentsAdded, documents_updated = @DocumentsUpdated,
                 documents_removed = @DocumentsRemoved, documents_unchanged = @DocumentsUnchanged, documents_failed = @DocumentsFailed,
-                chunks_reused = @ChunksReused, chunks_embedded = @ChunksEmbedded, warning = @Warning, error = @Error
+                chunks_reused = @ChunksReused, chunks_embedded = @ChunksEmbedded,
+                chunks_embedded_remote = @ChunksEmbeddedRemote, remote_cost = @RemoteCost, warning = @Warning, error = @Error
             WHERE run_id = @RunId
             """,
             run, cancellationToken: cancellationToken));

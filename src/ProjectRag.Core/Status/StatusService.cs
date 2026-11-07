@@ -29,7 +29,20 @@ public sealed record KnowledgeStatus(string? Database, EmbeddingState Embedding,
 /// <param name="ModelId">The key of the model in the database, or <see langword="null"/> when it is not ready.</param>
 /// <param name="Dims">The number of dimensions, or <see langword="null"/> when the model is not ready.</param>
 /// <param name="Problem">The reason why the model is not ready, or <see langword="null"/>.</param>
-public sealed record EmbeddingState(Uri Url, string Name, short? ModelId, int? Dims, string? Problem);
+/// <param name="Remote">The remote backend of the indexer.</param>
+public sealed record EmbeddingState(Uri Url, string Name, short? ModelId, int? Dims, string? Problem, RemoteEmbeddingState Remote);
+
+/// <summary>
+/// The state of the remote embedding backend. The status shows the last check of the indexer and sends no request.
+/// </summary>
+/// <param name="Enabled">A value that tells whether the options enable the backend.</param>
+/// <param name="Model">The name of the model at the backend.</param>
+/// <param name="Sources">The sources that may use the backend.</param>
+/// <param name="Unavailable">The reason why the backend cannot work, for example a missing API key, or <see langword="null"/>.</param>
+/// <param name="GuardPassed">The result of the last identity check, or <see langword="null"/> when no check ran yet.</param>
+/// <param name="Problem">The problem of the last identity check, or <see langword="null"/>.</param>
+/// <param name="CheckedAt">The time of the last identity check, or <see langword="null"/>.</param>
+public sealed record RemoteEmbeddingState(bool Enabled, string Model, IReadOnlyList<string> Sources, string? Unavailable, bool? GuardPassed, string? Problem, DateTimeOffset? CheckedAt);
 
 /// <summary>
 /// The state of the reranker.
@@ -64,13 +77,19 @@ public sealed record IndexerState(IndexRun? Current, IReadOnlyList<int> Queued);
 /// <param name="scheduler">The scheduler of the runs.</param>
 /// <param name="embeddingOptions">The options of the embedding model.</param>
 /// <param name="rerankOptions">The options of the reranker.</param>
+/// <param name="remoteOptions">The options of the remote embedding backend.</param>
+/// <param name="remoteClient">The client of the remote embedding backend.</param>
+/// <param name="guard">The check of the identity of the remote backend.</param>
 public sealed class StatusService(
     Database database,
     EmbeddingModelRegistry models,
     IRerankClient reranker,
     IndexScheduler scheduler,
     IOptionsMonitor<EmbeddingOptions> embeddingOptions,
-    IOptionsMonitor<RerankOptions> rerankOptions)
+    IOptionsMonitor<RerankOptions> rerankOptions,
+    IOptionsMonitor<RemoteEmbeddingOptions> remoteOptions,
+    IRemoteEmbeddingClient remoteClient,
+    RemoteEmbeddingGuard guard)
 {
     /// <summary>
     /// Collects the state.
@@ -84,7 +103,10 @@ public sealed class StatusService(
         RerankOptions rerank = rerankOptions.CurrentValue;
         string? databaseError = null;
         KnowledgeCounts? counts = null;
-        EmbeddingState embeddingState = new(embedding.BaseUrl, embedding.Model, null, null, null);
+        RemoteEmbeddingOptions remote = remoteOptions.CurrentValue;
+        RemoteCheck? check = guard.Last;
+        EmbeddingState embeddingState = new(embedding.BaseUrl, embedding.Model, null, null, null,
+            new RemoteEmbeddingState(remote.Enabled, remote.Model, [.. remote.Sources], remote.Enabled ? remoteClient.Unavailable : null, check?.Ok, check?.Problem, check?.CheckedAt));
         try
         {
             EmbeddingModelStatus model = await models.GetStatusAsync(cancellationToken);

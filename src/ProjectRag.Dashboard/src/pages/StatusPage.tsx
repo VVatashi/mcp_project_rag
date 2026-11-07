@@ -1,7 +1,7 @@
 import { api } from '../api';
 import { Badge, ErrorBanner, Panel, Progress } from '../components/Common';
 import { RunsTable } from '../components/RunsTable';
-import { formatDuration, formatNumber, percent } from '../format';
+import { formatCost, formatDuration, formatNumber, percent } from '../format';
 import { useLoad } from '../hooks';
 
 export function StatusPage() {
@@ -30,6 +30,17 @@ export function StatusPage() {
               {data.embedding.url}
             </p>
             {data.embedding.problem && <p className="card__note card__note--error">{data.embedding.problem}</p>}
+            <p className="card__note">
+              Remote:{' '}
+              {data.embedding.remote.enabled
+                ? `${data.embedding.remote.model} · ${data.embedding.remote.sources.length > 0 ? data.embedding.remote.sources.join(', ') : 'no sources'}`
+                : 'off'}
+              {data.embedding.remote.enabled &&
+                (data.embedding.remote.guardPassed === null ? ' · not checked yet' : data.embedding.remote.guardPassed ? ' · identity check passed' : '')}
+            </p>
+            {data.embedding.remote.enabled && (data.embedding.remote.unavailable ?? data.embedding.remote.problem) && (
+              <p className="card__note card__note--error">{data.embedding.remote.unavailable ?? data.embedding.remote.problem}</p>
+            )}
           </div>
           <div className="card">
             <h3>Reranker</h3>
@@ -67,6 +78,7 @@ export function StatusPage() {
             <p className="muted">
               {formatNumber(current.filesSeen)} files · {formatNumber(current.documentsAdded)} added · {formatNumber(current.documentsUpdated)} updated ·{' '}
               {formatNumber(current.documentsUnchanged)} unchanged · {formatNumber(current.chunksReused)} vectors reused · {formatNumber(current.chunksEmbedded)} chunks embedded
+              {current.chunksEmbeddedRemote > 0 && ` (${formatNumber(current.chunksEmbeddedRemote)} remote, ${formatCost(current.remoteCost)})`}
             </p>
           </div>
         ) : (
