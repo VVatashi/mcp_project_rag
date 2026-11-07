@@ -214,9 +214,10 @@ public sealed partial class CodeGraphService(Database database, SourceStore sour
 
             parameters.Add("Seen", seen.ToArray());
             parameters.Add("Limit", limit - found.Count);
+            // The collation "C" keeps the order the same on every server. A linguistic collation of the database can skip the dots of the names.
             string order = similarity
-                ? "similarity(s.name, @Q) DESC, (s.kind = ANY (@TypeKinds)) DESC, length(s.name), s.full_name, s.doc_id"
-                : "(s.kind = ANY (@TypeKinds)) DESC, length(s.name), s.full_name, s.doc_id";
+                ? "similarity(s.name, @Q) DESC, (s.kind = ANY (@TypeKinds)) DESC, length(s.name), s.full_name COLLATE \"C\", s.doc_id COLLATE \"C\""
+                : "(s.kind = ANY (@TypeKinds)) DESC, length(s.name), s.full_name COLLATE \"C\", s.doc_id COLLATE \"C\"";
             IEnumerable<int> ids = await connection.QueryAsync<int>(new CommandDefinition(
                 $"SELECT s.symbol_id FROM code_symbol s WHERE {condition}{filter} AND NOT (s.symbol_id = ANY (@Seen)) ORDER BY {order} LIMIT @Limit",
                 parameters, cancellationToken: cancellationToken));
